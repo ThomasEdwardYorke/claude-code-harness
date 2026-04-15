@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:docs.claude.com)",
+      "WebSearch",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(npm install:*)",
+      "Bash(pnpm:*)",
+      "Bash(yarn:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(cargo test:*)",
+      "Bash(go test:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ],
+    "ask": [
+      "Bash(git push --force*)",
+      "Bash(git reset --hard*)",
+      "Bash(pip install*)",
+      "Bash(brew install*)"
+    ]
+  }
+}

@@ -1,0 +1,16 @@
+Claude Code Harness
+===================
+
+This project is a generalized, portable derivative of a private harness
+originally developed for a specific script-generation project.
+
+Upstream reference:
+- Chachamaru127/claude-code-harness v3.1.0 (guardrail rule structure,
+  skill taxonomy, and agent composition were informed by this work)
+
+All project-specific references (YouTube Shorts pipeline, OpenAI script
+generation, proprietary annotated data) have been removed or parameterized
+in this distribution. Guardrail rules R01-R09, R12, R13 are domain-neutral.
+Rules R10 and R11 are fully parameterized via harness.config.json.
+
+License: MIT (see LICENSE)

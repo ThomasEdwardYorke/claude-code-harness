@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/OWNER/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
+  "title": "HarnessConfig",
+  "description": "Per-project configuration for Claude Code Harness. Lives at <projectRoot>/harness.config.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional $schema URL (enables editor completion)."
+    },
+    "projectName": {
+      "type": "string",
+      "description": "Human-readable project name shown in messages."
+    },
+    "language": {
+      "type": "string",
+      "enum": ["en", "ja"],
+      "default": "en"
+    },
+    "protectedDirectories": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Directory names that R10 refuses to delete via rm/rmdir/unlink. Empty array disables R10."
+    },
+    "protectedEnvVarNames": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "GITHUB_TOKEN",
+        "GOOGLE_API_KEY"
+      ],
+      "description": "Environment-variable names R11 blocks in Bash commands. Empty array disables R11."
+    },
+    "protectedFileSuffixes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [".env"],
+      "description": "File suffixes whose direct read (cat/head/tail/less/more/open/echo) R13 blocks."
+    },
+    "codex": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": false },
+        "pluginRoot": { "type": "string" }
+      }
+    },
+    "workMode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "bypassRmRf": { "type": "boolean", "default": false },
+        "bypassGitPush": { "type": "boolean", "default": false }
+      }
+    },
+    "tampering": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["approve", "ask", "deny"],
+          "default": "approve"
+        }
+      }
+    }
+  }
+}

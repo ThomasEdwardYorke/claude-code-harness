@@ -1,0 +1,17 @@
+{
+  "name": "claude-code-harness",
+  "owner": {
+    "name": "Claude Code Harness Contributors"
+  },
+  "metadata": {
+    "description": "Portable TypeScript guardrail + agent harness for Claude Code",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "harness",
+      "source": "./plugins/harness",
+      "description": "Guardrails R01-R13, 3 general agents, 5 verb skills, zero native dependencies"
+    }
+  ]
+}

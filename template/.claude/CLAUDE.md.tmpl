@@ -1,0 +1,31 @@
+# CLAUDE.md — {{PROJECT_NAME}}
+
+## Project overview
+
+{{PROJECT_DESCRIPTION}}
+
+<!-- Replace the placeholders above with a short description of the project. -->
+
+## Harness
+
+This project uses [Claude Code Harness](https://github.com/OWNER/claude-code-harness) v{{HARNESS_VERSION}}.
+For guardrail rules, agents, and commands, see the bundled `@CLAUDE-HARNESS.md`
+inside the plugin, or run `/harness-setup` inside a Claude Code session.
+
+Configuration lives in `./harness.config.json` at the project root.
+Edit it to tune `protectedDirectories`, `protectedEnvVarNames`, etc.
+
+## Task management
+
+`Plans.md` is the single source of truth for outstanding work.
+Use labels: `[feature]`, `[fix]`, `[improve]`, `[test]`, `[docs]`, `[refactor]`, `[security]`.
+
+## Development workflow
+
+| Step | Skill |
+|------|-------|
+| Plan | `/harness-plan` |
+| Implement | `/harness-work` |
+| Review | `/harness-review` |
+| Release | `/harness-release` |
+| Configure | `/harness-setup` |

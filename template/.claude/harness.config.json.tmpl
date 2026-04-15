@@ -1,0 +1,25 @@
+{
+  "$schema": "https://raw.githubusercontent.com/OWNER/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
+  "projectName": "{{PROJECT_NAME}}",
+  "language": "en",
+  "protectedDirectories": [],
+  "protectedEnvVarNames": [
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "GITHUB_TOKEN",
+    "GOOGLE_API_KEY"
+  ],
+  "protectedFileSuffixes": [".env"],
+  "codex": {
+    "enabled": false
+  },
+  "workMode": {
+    "bypassRmRf": false,
+    "bypassGitPush": false
+  },
+  "tampering": {
+    "severity": "approve"
+  }
+}

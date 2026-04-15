@@ -1,0 +1,19 @@
+{
+  "name": "harness",
+  "version": "0.1.0",
+  "description": "Portable TypeScript guardrail and agent harness for Claude Code. Provides 13 guardrail rules, 3 general-purpose agents (worker / reviewer / scaffolder), 5 verb skills (plan / work / review / release / setup), and a pure-JS JSON state store with zero native dependencies.",
+  "author": {
+    "name": "Claude Code Harness Contributors"
+  },
+  "homepage": "https://github.com/OWNER/claude-code-harness",
+  "repository": "https://github.com/OWNER/claude-code-harness",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "guardrails",
+    "hooks",
+    "security",
+    "agents"
+  ]
+}

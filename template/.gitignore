@@ -1,0 +1,27 @@
+# Harness runtime state (should never be committed)
+.claude/logs/
+.claude/state/
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# User-specific harness config override
+harness.config.json.local
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+.DS_Store

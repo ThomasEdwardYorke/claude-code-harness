@@ -1,0 +1,22 @@
+node_modules/
+*.log
+.DS_Store
+.vscode/
+.idea/
+coverage/
+.nyc_output/
+tmp/
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+
+# test runtime
+.claude-test/
+
+# Do NOT ignore core/dist/ (we commit the built artifact for zero-install UX)
+# But do ignore intermediate build files
+*.js.map.orig
+
+# User-specific harness config
+harness.config.json.local

@@ -1,0 +1,253 @@
+#!/usr/bin/env node
+/**
+ * bin/harness — Claude Code Harness CLI
+ *
+ * Subcommands:
+ *   harness init                  Create harness.config.json interactively
+ *   harness check                 Verify plugin install integrity
+ *   harness doctor                Diagnose local environment
+ *   harness rules list            List active guardrail rules
+ *   harness rules test <command>  Dry-run a bash command against R01-R13
+ *   harness migrate [--from PATH] Migrate legacy v2 state to the v3 JSON store
+ *   harness --version
+ */
+
+import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Resolve the plugin's own core build. Works whether invoked via `bin/`
+// (which is on PATH once the plugin is installed) or via a direct path.
+function resolveCorePath() {
+  // bin/ lives at plugins/harness/bin/, so core/ is at ../core/dist/index.js
+  const guess = resolve(__dirname, "..", "core", "dist", "index.js");
+  if (existsSync(guess)) return guess;
+  // CLAUDE_PLUGIN_ROOT fallback when the CLI is invoked inside a hook.
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envRoot) {
+    const alt = join(envRoot, "core", "dist", "index.js");
+    if (existsSync(alt)) return alt;
+  }
+  return null;
+}
+
+function printUsage() {
+  process.stdout.write(
+    [
+      "harness — Claude Code Harness CLI",
+      "",
+      "Usage:",
+      "  harness init                  Create harness.config.json (if missing)",
+      "  harness check                 Verify the plugin is installed correctly",
+      "  harness doctor                Diagnose local environment",
+      "  harness rules list            List active guardrail rules",
+      "  harness rules test <cmd>      Dry-run a bash command against R01-R13",
+      "  harness migrate [--from D]    Migrate legacy .claude/state to v3 JSON",
+      "  harness --version",
+      "",
+    ].join("\n"),
+  );
+}
+
+function readVersion() {
+  const pkgPath = resolve(__dirname, "..", ".claude-plugin", "plugin.json");
+  try {
+    const raw = JSON.parse(readFileSync(pkgPath, "utf-8"));
+    return raw.version ?? "0.0.0";
+  } catch {
+    return "unknown";
+  }
+}
+
+// ------------------------------------------------------------
+// Subcommands
+// ------------------------------------------------------------
+
+function cmdInit(cwd) {
+  const out = resolve(cwd, "harness.config.json");
+  if (existsSync(out)) {
+    process.stderr.write(`harness init: ${out} already exists; leaving it untouched.\n`);
+    return 0;
+  }
+  const starter = {
+    projectName: "my-project",
+    language: "en",
+    protectedDirectories: [],
+    protectedEnvVarNames: [
+      "OPENAI_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "GITHUB_TOKEN",
+      "GOOGLE_API_KEY",
+    ],
+    protectedFileSuffixes: [".env"],
+    codex: { enabled: false },
+    workMode: { bypassRmRf: false, bypassGitPush: false },
+    tampering: { severity: "approve" },
+  };
+  writeFileSync(out, JSON.stringify(starter, null, 2) + "\n", "utf-8");
+  process.stdout.write(`harness init: wrote ${out}\n`);
+  return 0;
+}
+
+function cmdCheck() {
+  const checks = [];
+  const corePath = resolveCorePath();
+  checks.push(["core build", corePath !== null ? "OK" : "MISSING"]);
+
+  const pluginRoot = resolve(__dirname, "..");
+  const expected = [
+    [".claude-plugin/plugin.json", "manifest"],
+    ["hooks/hooks.json", "hook registration"],
+    ["scripts/hook-dispatcher.mjs", "dispatcher"],
+    ["agents/worker.md", "worker agent"],
+    ["agents/reviewer.md", "reviewer agent"],
+    ["agents/scaffolder.md", "scaffolder agent"],
+    ["commands/harness-plan.md", "plan command"],
+    ["commands/harness-work.md", "work command"],
+    ["commands/harness-review.md", "review command"],
+    ["commands/harness-release.md", "release command"],
+    ["commands/harness-setup.md", "setup command"],
+  ];
+  for (const [rel, label] of expected) {
+    const path = join(pluginRoot, rel);
+    checks.push([label, existsSync(path) ? "OK" : `MISSING: ${rel}`]);
+  }
+
+  let ok = true;
+  for (const [label, status] of checks) {
+    process.stdout.write(`  ${label.padEnd(24)} ${status}\n`);
+    if (status !== "OK") ok = false;
+  }
+  return ok ? 0 : 1;
+}
+
+async function cmdDoctor() {
+  const out = [];
+  out.push(`harness version:     ${readVersion()}`);
+  out.push(`node version:        ${process.version}`);
+  out.push(`platform:            ${process.platform}/${process.arch}`);
+  out.push(`CLAUDE_PLUGIN_ROOT:  ${process.env.CLAUDE_PLUGIN_ROOT ?? "(unset)"}`);
+  out.push(`CLAUDE_PROJECT_DIR:  ${process.env.CLAUDE_PROJECT_DIR ?? "(unset)"}`);
+  out.push(`cwd:                 ${process.cwd()}`);
+  const corePath = resolveCorePath();
+  out.push(`core build:          ${corePath ?? "NOT FOUND"}`);
+  if (corePath !== null) {
+    try {
+      const stat = statSync(corePath);
+      out.push(`core build mtime:    ${stat.mtime.toISOString()}`);
+    } catch {
+      // ignore
+    }
+  }
+  // Detect an installed codex plugin for the codex-sync agent.
+  const home = process.env.HOME ?? "";
+  const codexDir = join(home, ".claude", "plugins", "cache", "openai-codex", "codex");
+  if (existsSync(codexDir)) {
+    out.push(`codex plugin:        detected at ${codexDir}`);
+  } else {
+    out.push(`codex plugin:        not installed`);
+  }
+  process.stdout.write(out.join("\n") + "\n");
+  return 0;
+}
+
+async function cmdRulesList() {
+  const corePath = resolveCorePath();
+  if (corePath === null) {
+    process.stderr.write("harness rules list: core build not found. Run `npm run build`.\n");
+    return 1;
+  }
+  const rulesPath = corePath.replace("index.js", "guardrails/rules.js");
+  const rulesMod = await import(`file://${rulesPath.replace(/\\/g, "/")}`);
+  for (const rule of rulesMod.GUARD_RULES) {
+    process.stdout.write(`  ${rule.id.padEnd(36)} tool=${rule.toolPattern}\n`);
+  }
+  return 0;
+}
+
+async function cmdRulesTest(command) {
+  if (!command) {
+    process.stderr.write("usage: harness rules test <bash-command>\n");
+    return 2;
+  }
+  const corePath = resolveCorePath();
+  if (corePath === null) {
+    process.stderr.write("harness rules test: core build not found.\n");
+    return 1;
+  }
+  const preToolPath = corePath.replace("index.js", "guardrails/pre-tool.js");
+  const mod = await import(`file://${preToolPath.replace(/\\/g, "/")}`);
+  const result = mod.evaluatePreTool({
+    tool_name: "Bash",
+    tool_input: { command },
+    cwd: process.cwd(),
+  });
+  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  return 0;
+}
+
+async function cmdMigrate(fromDir) {
+  const corePath = resolveCorePath();
+  if (corePath === null) {
+    process.stderr.write("harness migrate: core build not found.\n");
+    return 1;
+  }
+  const migPath = corePath.replace("index.js", "state/migration.js");
+  const mod = await import(`file://${migPath.replace(/\\/g, "/")}`);
+  const target = fromDir ? resolve(fromDir) : process.cwd();
+  const result = mod.migrate(target);
+  process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+  return result.errors.length > 0 ? 1 : 0;
+}
+
+// ------------------------------------------------------------
+// Entry
+// ------------------------------------------------------------
+
+async function main() {
+  const [sub, ...rest] = process.argv.slice(2);
+  if (!sub || sub === "--help" || sub === "-h") {
+    printUsage();
+    return 0;
+  }
+  if (sub === "--version" || sub === "-v") {
+    process.stdout.write(`${readVersion()}\n`);
+    return 0;
+  }
+  switch (sub) {
+    case "init":
+      return cmdInit(process.cwd());
+    case "check":
+      return cmdCheck();
+    case "doctor":
+      return await cmdDoctor();
+    case "rules": {
+      const [action, ...args] = rest;
+      if (action === "list") return await cmdRulesList();
+      if (action === "test") return await cmdRulesTest(args.join(" "));
+      process.stderr.write("usage: harness rules list | test <cmd>\n");
+      return 2;
+    }
+    case "migrate": {
+      const flagIdx = rest.indexOf("--from");
+      const fromDir = flagIdx >= 0 ? rest[flagIdx + 1] : undefined;
+      return await cmdMigrate(fromDir);
+    }
+    default:
+      process.stderr.write(`harness: unknown subcommand '${sub}'\n`);
+      printUsage();
+      return 2;
+  }
+}
+
+main().then(
+  (code) => process.exit(code ?? 0),
+  (err) => {
+    process.stderr.write(`harness: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  },
+);
