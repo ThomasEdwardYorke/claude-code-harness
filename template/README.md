@@ -21,7 +21,7 @@ Then edit the `{{PROJECT_NAME}}` / `{{PROJECT_DESCRIPTION}}` /
 For most projects, installing the plugin is simpler:
 
 ```bash
-claude plugin marketplace add OWNER/claude-code-harness
+claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
 claude plugin install harness@claude-code-harness --scope project
 ```
 

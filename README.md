@@ -69,11 +69,10 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
 ## Known notes (v0.1.0)
 
-1. **Before publishing to a marketplace**, run
-   `scripts/set-owner.sh <your-github-user>` to replace the
-   `OWNER/claude-code-harness` placeholder across docs, schema, and
-   `plugin.json` with your real GitHub owner. Review the diff with
-   `git diff` before committing.
+1. **If you fork this repository**, run
+   `scripts/set-owner.sh <your-github-user>` to rewrite the owner in
+   docs, schema, and `plugin.json` before publishing to your own
+   marketplace. Review the diff with `git diff` before committing.
 2. **Parallel build process**: the v0.1.0 implementation used a mixed
    strategy — Claude Code as the primary author plus three parallel
    Codex agents. Two of the three Codex jobs failed with a Bash

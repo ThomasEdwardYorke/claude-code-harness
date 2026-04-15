@@ -26,7 +26,7 @@
 cp -R .claude .claude.v2.bak
 
 # 2. Install the v3 plugin
-claude plugin marketplace add OWNER/claude-code-harness
+claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
 claude plugin install harness@claude-code-harness --scope project
 
 # 3. Migrate state

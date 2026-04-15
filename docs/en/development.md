@@ -3,7 +3,7 @@
 ## Local setup
 
 ```bash
-git clone https://github.com/OWNER/claude-code-harness
+git clone https://github.com/ThomasEdwardYorke/claude-code-harness
 cd claude-code-harness
 npm install
 npm run build

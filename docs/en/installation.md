@@ -10,7 +10,7 @@ No native toolchain is required. v0.1.0 has zero native dependencies.
 ## Install from the marketplace
 
 ```bash
-claude plugin marketplace add OWNER/claude-code-harness
+claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
 claude plugin install harness@claude-code-harness --scope project
 ```
 

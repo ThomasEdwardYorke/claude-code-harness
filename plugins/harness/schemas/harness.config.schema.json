@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://raw.githubusercontent.com/OWNER/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
+  "$id": "https://raw.githubusercontent.com/ThomasEdwardYorke/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
   "title": "HarnessConfig",
   "description": "Per-project configuration for Claude Code Harness. Lives at <projectRoot>/harness.config.json.",
   "type": "object",

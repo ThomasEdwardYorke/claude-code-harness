@@ -10,7 +10,7 @@ An example with every field populated:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/OWNER/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
+  "$schema": "https://raw.githubusercontent.com/ThomasEdwardYorke/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
   "projectName": "my-app",
   "language": "en",
   "protectedDirectories": ["datasets", "fixtures/gold"],
