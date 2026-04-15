@@ -111,6 +111,10 @@ function cmdCheck() {
     ["commands/harness-review.md", "review command"],
     ["commands/harness-release.md", "release command"],
     ["commands/harness-setup.md", "setup command"],
+    ["commands/branch-merge.md", "branch-merge command"],
+    ["commands/new-feature-branch.md", "new-feature-branch command"],
+    ["commands/coderabbit-review.md", "coderabbit-review command"],
+    ["commands/codex-team.md", "codex-team command"],
   ];
   for (const [rel, label] of expected) {
     const path = join(pluginRoot, rel);

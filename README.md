@@ -67,13 +67,35 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
 ---
 
-## Before publishing
+## Known notes (v0.1.0)
 
-Several docs and the `plugin.json` homepage/repository fields contain
-`OWNER/claude-code-harness` as a placeholder. Run:
+1. **Before publishing to a marketplace**, run
+   `scripts/set-owner.sh <your-github-user>` to replace the
+   `OWNER/claude-code-harness` placeholder across docs, schema, and
+   `plugin.json` with your real GitHub owner. Review the diff with
+   `git diff` before committing.
+2. **Parallel build process**: the v0.1.0 implementation used a mixed
+   strategy — Claude Code as the primary author plus three parallel
+   Codex agents. Two of the three Codex jobs failed with a Bash
+   permission issue on the host; the third (the `codex-sync` agent
+   generalization) finished. Claude Code picked up the failed jobs and
+   completed them directly. Keep this in mind when reproducing the
+   build on a host where `codex-companion.mjs` cannot be spawned: fall
+   back to direct in-session edits.
+3. **State store concurrency**: the pure-JS JSON store in
+   `plugins/harness/core/src/state/` is safe for single-process use.
+   If you run `/breezing`-style parallel sessions against the same
+   project, state writes can race. File locking (e.g.
+   `proper-lockfile`) is planned for v0.2.0; until then, avoid
+   simultaneous multi-session writes on the same project.
+4. **`permission.ts` double-encoding**: the reviewer flagged a
+   CRITICAL-tier design concern in
+   `plugins/harness/core/src/guardrails/permission.ts` — the
+   `PermissionResponse` is packaged via `systemMessage` and then
+   unpacked again in `index.ts`. Current behaviour is correct and
+   tested, but the layering is fragile. A refactor is scheduled for
+   v0.2.0. Do not add new behaviour to that path until then.
 
-```bash
-scripts/set-owner.sh my-github-user
-```
-
-to replace every occurrence with your real GitHub user or organization.
+Plan file `.docs/harness-portability-plan-20260416.md` captures the full
+implementation log and the deferred list (14 residual MEDIUM/LOW/NIT
+items).

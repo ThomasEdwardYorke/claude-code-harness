@@ -20,3 +20,6 @@ tmp/
 
 # User-specific harness config
 harness.config.json.local
+
+# Local-only design notes (not shipped with the plugin)
+.docs/

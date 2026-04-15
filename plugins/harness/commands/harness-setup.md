@@ -64,13 +64,19 @@ And that the following agent definitions exist (v3 layout):
 - `agents/security-auditor.md`
 - `agents/codex-sync.md`
 
-And that the 5 verb skills exist:
+And that the skills exist (5 verb skills plus 4 workflow skills):
 
-- `commands/harness-plan.md`
-- `commands/harness-work.md`
-- `commands/harness-review.md`
-- `commands/harness-release.md`
-- `commands/harness-setup.md`
+- Verb skills
+  - `commands/harness-plan.md`
+  - `commands/harness-work.md`
+  - `commands/harness-review.md`
+  - `commands/harness-release.md`
+  - `commands/harness-setup.md`
+- Workflow skills
+  - `commands/branch-merge.md`
+  - `commands/new-feature-branch.md`
+  - `commands/coderabbit-review.md`
+  - `commands/codex-team.md`
 
 Report each file as OK / MISSING. Exit non-zero if any are missing.
 
@@ -95,7 +101,11 @@ plugins/harness/
 │   ├── harness-work.md
 │   ├── harness-review.md
 │   ├── harness-release.md
-│   └── harness-setup.md
+│   ├── harness-setup.md
+│   ├── branch-merge.md
+│   ├── new-feature-branch.md
+│   ├── coderabbit-review.md
+│   └── codex-team.md
 └── core/
     ├── package.json
     ├── src/
