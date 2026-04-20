@@ -5,6 +5,7 @@ tools: [Read, Write, Edit, Bash, Grep, Glob]
 disallowedTools: [Task]
 model: sonnet
 color: green
+maxTurns: 30
 ---
 
 # Scaffolder Agent
@@ -16,7 +17,7 @@ Responsible for project analysis, documentation updates, harness consistency che
 
 ## How to Invoke
 
-This agent is called from `/sync-status`, `/maintenance`, `/harness-review`, and `/plan-with-agent` commands.
+This agent is called from `/harness-review` (integrity / maintenance), `/harness-plan` (sync), and `/harness-setup` commands.
 
 ## Input
 
@@ -40,10 +41,10 @@ Understand the current state of the project and report it.
    - Check `requirements.txt`, `pyproject.toml`, `package.json`, `setup.py`, or equivalent.
    - Identify libraries in use and their versions.
 2. Verify harness configuration consistency:
-   - Check the `.claude/` directory structure.
-   - Confirm existence of `Plans.md` and `CLAUDE.md`.
-   - Cross-reference `.claude/agents/` file list against what is documented in `CLAUDE.md`.
-   - Cross-reference `.claude/commands/` file list against what is documented in `CLAUDE.md`.
+   - Confirm existence of `Plans.md` and `CLAUDE.md` at project root.
+   - Confirm `harness.config.json` exists and is valid JSON.
+   - Cross-reference installed plugin agents (`plugins/harness/agents/`) against `harness-setup.md` expected layout.
+   - Cross-reference installed plugin commands (`plugins/harness/commands/`) against `harness-setup.md` expected layout.
 3. Check project source file state:
    - Structure of the main application class in the main implementation file.
    - Public entry points and their signatures.
@@ -138,9 +139,10 @@ Update detailed rule files (referenced from the CLAUDE.md index).
 
 | Check Target | What to Verify |
 |-------------|----------------|
-| Agent files | All files in `.claude/agents/` are documented in CLAUDE.md |
-| Command files | All files in `.claude/commands/` are documented in CLAUDE.md |
-| Hook files | All `.claude/hooks/*.sh` files have execute permission |
+| Plugin agents | All files in `plugins/harness/agents/` match `harness-setup.md` expected layout |
+| Plugin commands | All files in `plugins/harness/commands/` match `harness-setup.md` expected layout |
+| Plugin core | `plugins/harness/.claude-plugin/plugin.json`, `hooks/hooks.json`, `scripts/hook-dispatcher.mjs`, `core/dist/index.js` exist |
+| harness.config.json | Valid JSON, required fields present |
 | Plans.md | Pending / WIP / done labels match actual implementation state |
 | Data directories | All data files referenced by the project exist on disk |
 
@@ -161,7 +163,7 @@ Update detailed rule files (referenced from the CLAUDE.md index).
 {
   "mode": "analyze | scaffold | update-state | doc-update",
   "project_type": "python | typescript | other",
-  "harness_version": "v3",
+  "harness_version": "v4",
   "files_created": ["List of generated files (scaffold mode)"],
   "plans_updates": ["Plans.md update details (update-state mode)"],
   "doc_updates": ["Description of updated documents (doc-update mode)"],

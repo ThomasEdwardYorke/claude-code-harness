@@ -64,7 +64,7 @@ And that the following agent definitions exist (v3 layout):
 - `agents/security-auditor.md`
 - `agents/codex-sync.md`
 
-And that the skills exist (5 verb skills plus 4 workflow skills):
+And that the skills exist (5 verb skills plus 7 workflow skills):
 
 - Verb skills
   - `commands/harness-plan.md`
@@ -77,6 +77,13 @@ And that the skills exist (5 verb skills plus 4 workflow skills):
   - `commands/new-feature-branch.md`
   - `commands/coderabbit-review.md`
   - `commands/codex-team.md`
+  - `commands/parallel-worktree.md`
+  - `commands/pseudo-coderabbit-loop.md`
+  - `commands/tdd-implement.md`
+
+And that the following additional agent exists:
+
+- `agents/coderabbit-mimic.md`
 
 Report each file as OK / MISSING. Exit non-zero if any are missing.
 
@@ -95,7 +102,8 @@ plugins/harness/
 │   ├── reviewer.md
 │   ├── scaffolder.md
 │   ├── security-auditor.md
-│   └── codex-sync.md
+│   ├── codex-sync.md
+│   └── coderabbit-mimic.md
 ├── commands/
 │   ├── harness-plan.md
 │   ├── harness-work.md
@@ -105,7 +113,10 @@ plugins/harness/
 │   ├── branch-merge.md
 │   ├── new-feature-branch.md
 │   ├── coderabbit-review.md
-│   └── codex-team.md
+│   ├── codex-team.md
+│   ├── parallel-worktree.md
+│   ├── pseudo-coderabbit-loop.md
+│   └── tdd-implement.md
 └── core/
     ├── package.json
     ├── src/

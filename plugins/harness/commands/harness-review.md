@@ -83,7 +83,7 @@ git diff HEAD~1 -- <changed_files>
 
 ### Step 4: 判定
 
-- **APPROVE**: 自動コミット実行（`--no-commit` でなければ）
+- **APPROVE**: レビュー結果を報告 (コミット・push はしない。実施は `/harness-work` に委譲)
 - **REQUEST_CHANGES**: 問題箇所と修正方針を提示。`/harness-work` で修正後に再レビュー
 
 ---
@@ -246,72 +246,56 @@ script_generate — 保守チェック レポート
 
 ハーネスの全ファイル存在確認・整合性チェック・構文検証を実施する。
 
-### Step 1: フックスクリプトの確認
+### Step 1: Plugin コアファイルの確認
 
-**ファイル存在確認**:
+**harness plugin の核ファイル存在確認**:
 ```
-.claude/hooks/
-├── pretooluse-guard.sh
-├── posttooluse-test-runner.sh
-├── session-init.sh
-├── change-tracker.sh
-├── session-end.sh
-├── notification.sh
-├── hardcode-detector.sh
-├── test-enforcer.sh
-├── import-checker.sh
-└── api-key-scanner.sh
+plugins/harness/
+├── .claude-plugin/plugin.json    # manifest
+├── hooks/hooks.json              # hook 登録
+├── scripts/hook-dispatcher.mjs   # hook dispatcher
+└── core/dist/index.js            # compiled core
 ```
 
-**実行権限確認**:
-```bash
-ls -la .claude/hooks/*.sh
-# 実行権限がない場合: chmod +x .claude/hooks/*.sh
-```
+**hooks.json と settings の整合性確認**:
+- `hooks/hooks.json` に登録された hook が `scripts/` 内に存在するか
+- プロジェクト側の `.claude/settings.local.json` と矛盾がないか
 
-**シェル構文チェック**:
-```bash
-for f in .claude/hooks/*.sh; do
-  bash -n "$f" && echo "OK: $f" || echo "SYNTAX ERROR: $f"
-done
-```
+### Step 2: プロジェクト設定の整合性確認
 
-### Step 2: settings.local.json の整合性確認
-
-| イベント | matcher | フック |
-|---------|---------|--------|
-| PreToolUse | Bash | pretooluse-guard.sh |
-| PreToolUse | Bash\|Edit\|Write | test-enforcer.sh |
-| PostToolUse | Edit\|Write | posttooluse-test-runner.sh |
-| PostToolUse | Edit\|Write | change-tracker.sh |
-| PostToolUse | Edit\|Write | hardcode-detector.sh |
-| PostToolUse | Edit\|Write | import-checker.sh |
-| PostToolUse | Edit\|Write | api-key-scanner.sh |
-| SessionStart | — | session-init.sh |
-| SessionEnd | — | session-end.sh |
+- `harness.config.json` が存在するか
+- `harness.config.json` のフィールドが `harness-work.md` の spec と一致するか
+- `CLAUDE.md` が存在するか
+- `Plans.md` が存在するか (プロジェクトで使用している場合)
 
 ### Step 3: エージェント定義ファイルの確認
 
 ```
-.claude/agents/
-├── worker.md
+plugins/harness/agents/
 ├── worker.md
 ├── reviewer.md
-├── worker.md
-├── worker.md
 ├── scaffolder.md
-└── security-auditor.md
+├── security-auditor.md
+├── codex-sync.md
+└── coderabbit-mimic.md
 ```
 
 ### Step 4: コマンド定義ファイルの確認
 
 ```
-.claude/commands/
+plugins/harness/commands/
 ├── harness-plan.md
 ├── harness-work.md
 ├── harness-review.md
 ├── harness-release.md
-└── harness-setup.md
+├── harness-setup.md
+├── branch-merge.md
+├── new-feature-branch.md
+├── coderabbit-review.md
+├── codex-team.md
+├── parallel-worktree.md
+├── pseudo-coderabbit-loop.md
+└── tdd-implement.md
 ```
 
 ### Step 5: レポート出力
@@ -339,71 +323,18 @@ done
 
 ---
 
-## CodeRabbit Review Loop（`coderabbit` / 旧 /coderabbit-review）
+## CodeRabbit Review Loop（`coderabbit`）
 
-GitHub PR へのプッシュ → CodeRabbit レビュー対応を繰り返すワークフロー。
+**本フローは `/coderabbit-review` スキルに委譲する。**
 
-> CodeRabbit 未設定の場合: `gh pr checks <pr_number>` で `coderabbitai` が表示されない場合、CodeRabbit が未設定の可能性がある。設定が必要かどうかユーザーに確認する。
+`/harness-review coderabbit <pr-number>` で呼ばれた場合、内部的に `/coderabbit-review <pr-number>` を起動する。
 
-### Step 1: 変更をプッシュ
+`/coderabbit-review` は以下を提供:
+- Clear 3 段判定 (APPROVED / unresolved=0 / rate-limited marker 不在)
+- Rate limit 検出 + `/pseudo-coderabbit-loop` への自動切替
+- AI スラップ除去
 
-```bash
-git add <files>
-git commit -m "<prefix>: <message>"
-git push origin <branch>
-```
-
-### Step 2: レビューステータスを確認
-
-プッシュ後、CodeRabbit のレビューには 1〜3 分かかることがある。
-
-```bash
-gh pr checks <pr_number>
-# coderabbitai ... pending → 待機
-# coderabbitai ... pass → 完了
-```
-
-pending の場合、30〜60秒後に再確認。3回確認しても pending の場合はユーザーに報告して指示を仰ぐ。
-
-### Step 3: レビュー内容を取得
-
-```bash
-gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --jq '.[-1].body'
-gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --jq '.[-1] | {submitted_at, state}'
-```
-
-### Step 4: 指摘に対応
-
-- **Actionable comments**: 対応必須
-- **Nitpick comments**: 任意の改善提案（対応推奨）
-- **Additional comments**: 確認済み・問題なし
-
-### Step 5: 修正をコミット・プッシュして繰り返し
-
-```bash
-git add <modified-files>
-git commit -m "fix: CodeRabbitレビュー指摘対応
-
-- <対応内容1>
-- <対応内容2>"
-git push origin <branch>
-```
-
-Step 2 に戻り、指摘がなくなるまで繰り返す。
-
-### Step 6: AIスラップ除去（リファクタリング）
-
-レビュークリア後のクリーンアップとして AI 生成コードの不要物を除去する:
-- 人間なら書かない余計なコメント
-- 過剰な防御的チェックや不要な try/catch
-- ファイルのスタイルと不一致なコード
-
-### 完了条件
-
-- 最新レビューで Actionable comments: 0
-- 最新レビューで Nitpick comments: 0（または「対応不要」と明記）
-- AIスラップ除去を実行済み
-- リファクタリング後のレビューもクリア
+詳細は `commands/coderabbit-review.md` を参照。
 
 ---
 

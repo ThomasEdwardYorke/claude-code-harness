@@ -5,6 +5,7 @@ tools: [Bash, Read]
 disallowedTools: [Write, Edit, Task]
 model: sonnet
 color: cyan
+maxTurns: 10
 ---
 
 # codex-sync - Synchronous Codex Wrapper
