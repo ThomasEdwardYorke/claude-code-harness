@@ -54,6 +54,10 @@ function parseSessionInput(raw) {
         ? parsed
         : {};
 }
+function extractString(obj, key) {
+    const val = obj[key];
+    return typeof val === "string" ? val : undefined;
+}
 export async function route(hookType, input) {
     switch (hookType) {
         case "pre-tool": {
@@ -72,12 +76,13 @@ export async function route(hookType, input) {
         }
         case "pre-compact": {
             const { handlePreCompact } = await import("./hooks/pre-compact.js");
-            const rawInput = input;
+            const raw = input;
             const compactResult = await handlePreCompact({
-                hook_event_name: String(rawInput["hook_event_name"] ?? "PreCompact"),
-                session_id: typeof rawInput["session_id"] === "string" ? rawInput["session_id"] : undefined,
-                cwd: typeof rawInput["cwd"] === "string" ? rawInput["cwd"] : undefined,
-                trigger: typeof rawInput["trigger"] === "string" ? rawInput["trigger"] : undefined,
+                hook_event_name: String(raw["hook_event_name"] ?? "PreCompact"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                trigger: extractString(raw, "trigger"),
+                custom_instructions: extractString(raw, "custom_instructions"),
             });
             const compactHookResult = { decision: compactResult.decision };
             if (compactResult.additionalContext !== undefined) {
@@ -87,13 +92,15 @@ export async function route(hookType, input) {
         }
         case "subagent-stop": {
             const { handleSubagentStop } = await import("./hooks/subagent-stop.js");
-            const rawStop = input;
+            const raw = input;
             const stopResult = await handleSubagentStop({
-                hook_event_name: String(rawStop["hook_event_name"] ?? "SubagentStop"),
-                session_id: typeof rawStop["session_id"] === "string" ? rawStop["session_id"] : undefined,
-                cwd: typeof rawStop["cwd"] === "string" ? rawStop["cwd"] : undefined,
-                agent_type: typeof rawStop["agent_type"] === "string" ? rawStop["agent_type"] : undefined,
-                agent_id: typeof rawStop["agent_id"] === "string" ? rawStop["agent_id"] : undefined,
+                hook_event_name: String(raw["hook_event_name"] ?? "SubagentStop"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                agent_type: extractString(raw, "agent_type"),
+                agent_id: extractString(raw, "agent_id"),
+                agent_transcript_path: extractString(raw, "agent_transcript_path"),
+                last_assistant_message: extractString(raw, "last_assistant_message"),
             });
             const stopHookResult = { decision: stopResult.decision };
             if (stopResult.additionalContext !== undefined) {
@@ -130,7 +137,7 @@ async function main() {
             hookType === "pre-compact" ||
             hookType === "subagent-stop") {
             const parsed = parseSessionInput(raw);
-            result = await route(hookType, { tool_name: `__${hookType}__`, tool_input: {}, ...parsed });
+            result = await route(hookType, parsed);
         }
         else if (!raw.trim()) {
             result = { decision: "approve", reason: "Empty input" };

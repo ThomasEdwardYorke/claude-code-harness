@@ -6,9 +6,11 @@
  * open PRs) and returns it as additionalContext so it survives compaction.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
+
+const MAX_PLANS_SIZE = 512 * 1024;
 
 export interface PreCompactInput {
   hook_event_name: string;
@@ -24,34 +26,41 @@ export interface PreCompactResult {
 }
 
 function readAssignmentTable(projectRoot: string): string | null {
-  const plansPath = resolve(projectRoot, "Plans.md");
-  if (!existsSync(plansPath)) return null;
+  try {
+    const plansPath = resolve(projectRoot, "Plans.md");
+    if (!existsSync(plansPath)) return null;
 
-  const content = readFileSync(plansPath, "utf-8");
-  const lines = content.split("\n");
+    const stat = statSync(plansPath);
+    if (stat.size > MAX_PLANS_SIZE) return null;
 
-  const tableStart = lines.findIndex(
-    (l) => l.includes("担当表") || l.includes("Assignment"),
-  );
-  if (tableStart < 0) return null;
+    const content = readFileSync(plansPath, "utf-8");
+    const lines = content.split("\n");
 
-  const tableLines: string[] = [];
-  for (let i = tableStart; i < lines.length; i++) {
-    const line = lines[i];
-    if (line === undefined) break;
-    tableLines.push(line);
-    if (
-      tableLines.length > 2 &&
-      line.trim() === "" &&
-      (lines[i + 1] === undefined || !lines[i + 1]?.startsWith("|"))
-    ) {
-      break;
+    const tableStart = lines.findIndex(
+      (l) => l.includes("担当表") || l.includes("Assignment"),
+    );
+    if (tableStart < 0) return null;
+
+    const tableLines: string[] = [];
+    for (let i = tableStart; i < lines.length; i++) {
+      const line = lines[i];
+      if (line === undefined) break;
+      tableLines.push(line);
+      if (
+        tableLines.length > 2 &&
+        line.trim() === "" &&
+        (lines[i + 1] === undefined || !lines[i + 1]?.startsWith("|"))
+      ) {
+        break;
+      }
+      if (tableLines.length > 50) break;
     }
-    if (tableLines.length > 50) break;
-  }
 
-  const result = tableLines.join("\n").trim();
-  return result || null;
+    const result = tableLines.join("\n").trim();
+    return result || null;
+  } catch {
+    return null;
+  }
 }
 
 function readOpenPRs(projectRoot: string): string | null {

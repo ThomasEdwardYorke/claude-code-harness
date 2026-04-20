@@ -3,12 +3,21 @@
  * PreCompact / SubagentStop hook ハンドラのテスト
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { handlePreCompact } from "../hooks/pre-compact.js";
 import { handleSubagentStop } from "../hooks/subagent-stop.js";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  for (const d of tempDirs) {
+    rmSync(d, { recursive: true, force: true });
+  }
+  tempDirs.length = 0;
+});
 
 function makeTempProject(opts?: {
   plansContent?: string;
@@ -18,6 +27,7 @@ function makeTempProject(opts?: {
   hasPackageJson?: boolean;
 }): string {
   const dir = mkdtempSync(join(tmpdir(), "harness-test-"));
+  tempDirs.push(dir);
   if (opts?.plansContent) {
     writeFileSync(join(dir, "Plans.md"), opts.plansContent, "utf-8");
   }
@@ -50,7 +60,7 @@ describe("handlePreCompact", () => {
     const result = await handlePreCompact({ ...baseInput, cwd: dir });
     expect(result.decision).toBe("approve");
     expect(typeof result.additionalContext).toBe("string");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("担当表を含む Plans.md がある場合に additionalContext に含まれる", async () => {
@@ -67,7 +77,7 @@ describe("handlePreCompact", () => {
     expect(result.decision).toBe("approve");
     expect(result.additionalContext).toContain("担当表");
     expect(result.additionalContext).toContain("crud");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("trigger が manual でも auto でも動作する", async () => {
@@ -76,7 +86,7 @@ describe("handlePreCompact", () => {
     const manualResult = await handlePreCompact({ ...baseInput, cwd: dir, trigger: "manual" });
     expect(autoResult.decision).toBe("approve");
     expect(manualResult.decision).toBe("approve");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("cwd が未指定でも fallback する", async () => {
@@ -95,7 +105,7 @@ describe("handlePreCompact", () => {
       cwd: dir,
     });
     expect(result.additionalContext).toContain("unknown");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("custom_instructions が渡されても正常動作する", async () => {
@@ -106,7 +116,7 @@ describe("handlePreCompact", () => {
       custom_instructions: "keep the plan context",
     });
     expect(result.decision).toBe("approve");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("存在しないディレクトリでも例外を投げない", async () => {
@@ -131,7 +141,7 @@ describe("handleSubagentStop", () => {
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     expect(result.decision).toBe("approve");
     expect(result.ciTriggered).toBe(true);
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("reviewer では CI を実行しない", async () => {
@@ -161,7 +171,7 @@ describe("handleSubagentStop", () => {
       cwd: dir,
     });
     expect(result.ciTriggered).toBe(true);
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("pyproject.toml がある場合 ruff/mypy を検出する", async () => {
@@ -172,7 +182,7 @@ describe("handleSubagentStop", () => {
     const tools = result.ciResults?.map((r) => r.tool) ?? [];
     expect(tools).toContain("ruff");
     expect(tools).toContain("mypy");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("tests/ がある場合 pytest も検出する", async () => {
@@ -180,7 +190,7 @@ describe("handleSubagentStop", () => {
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     const tools = result.ciResults?.map((r) => r.tool) ?? [];
     expect(tools).toContain("pytest");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("package.json がある場合 typecheck を検出する", async () => {
@@ -188,7 +198,7 @@ describe("handleSubagentStop", () => {
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     const tools = result.ciResults?.map((r) => r.tool) ?? [];
     expect(tools).toContain("typecheck");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("CI チェック対象がない空プロジェクトでも正常動作する", async () => {
@@ -198,7 +208,7 @@ describe("handleSubagentStop", () => {
     expect(result.ciTriggered).toBe(true);
     expect(result.ciResults).toEqual([]);
     expect(result.additionalContext).toContain("CI チェック対象なし");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("agent_type が未指定の場合は CI を実行しない", async () => {
@@ -214,7 +224,7 @@ describe("handleSubagentStop", () => {
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     expect(result.additionalContext).toContain("SubagentStop");
     expect(result.additionalContext).toContain("Worker 完了後 CI チェック結果");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 
   it("公式フィールド agent_transcript_path を受け取れる", async () => {
@@ -226,6 +236,6 @@ describe("handleSubagentStop", () => {
       last_assistant_message: "Done",
     });
     expect(result.decision).toBe("approve");
-    rmSync(dir, { recursive: true, force: true });
+
   });
 });

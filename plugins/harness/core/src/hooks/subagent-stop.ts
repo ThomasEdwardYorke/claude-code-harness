@@ -44,7 +44,7 @@ function runCiCheck(
   try {
     const output = execSync(command, {
       cwd: projectRoot,
-      timeout: 60000,
+      timeout: 30000,
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -61,17 +61,16 @@ function runCiCheck(
 function detectAvailableChecks(projectRoot: string): Array<{ tool: string; command: string }> {
   const checks: Array<{ tool: string; command: string }> = [];
 
-  if (existsSync(resolve(projectRoot, "pyproject.toml")) ||
-      existsSync(resolve(projectRoot, "backend"))) {
+  if (existsSync(resolve(projectRoot, "pyproject.toml"))) {
     checks.push(
-      { tool: "ruff", command: "ruff check backend/ --no-fix 2>&1 || true" },
-      { tool: "mypy", command: "mypy backend/ --no-error-summary 2>&1 || true" },
+      { tool: "ruff", command: "ruff check backend/ --no-fix 2>&1" },
+      { tool: "mypy", command: "mypy backend/ --no-error-summary 2>&1" },
     );
 
     if (existsSync(resolve(projectRoot, "tests"))) {
       checks.push({
         tool: "pytest",
-        command: "pytest tests/ --tb=short -q --no-header 2>&1 || true",
+        command: "pytest tests/ --tb=short -q --no-header 2>&1",
       });
     }
   }
@@ -79,7 +78,7 @@ function detectAvailableChecks(projectRoot: string): Array<{ tool: string; comma
   if (existsSync(resolve(projectRoot, "package.json"))) {
     checks.push({
       tool: "typecheck",
-      command: "npx tsc --noEmit 2>&1 || true",
+      command: "npx tsc --noEmit 2>&1",
     });
   }
 
@@ -90,7 +89,7 @@ export async function handleSubagentStop(
   input: SubagentStopInput,
 ): Promise<SubagentStopResult> {
   const agentType = input.agent_type ?? "";
-  const isWorker = WORKER_AGENT_TYPES.has(agentType) || agentType === "worker";
+  const isWorker = WORKER_AGENT_TYPES.has(agentType);
 
   if (!isWorker) {
     return { decision: "approve", ciTriggered: false };

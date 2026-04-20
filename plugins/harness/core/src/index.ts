@@ -71,35 +71,41 @@ function parseSessionInput(raw: string): Record<string, unknown> {
     : {};
 }
 
+function extractString(obj: Record<string, unknown>, key: string): string | undefined {
+  const val = obj[key];
+  return typeof val === "string" ? val : undefined;
+}
+
 export async function route(
   hookType: HookType,
-  input: HookInput,
+  input: HookInput | Record<string, unknown>,
 ): Promise<HookResult> {
   switch (hookType) {
     case "pre-tool": {
       const { evaluatePreTool } = await import("./guardrails/pre-tool.js");
-      return evaluatePreTool(input);
+      return evaluatePreTool(input as HookInput);
     }
     case "post-tool": {
       const { evaluatePostTool } = await import("./guardrails/post-tool.js");
-      return evaluatePostTool(input);
+      return evaluatePostTool(input as HookInput);
     }
     case "permission": {
       const { evaluatePermission, formatPermissionOutput } = await import(
         "./guardrails/permission.js"
       );
-      const permResult = evaluatePermission(input);
+      const permResult = evaluatePermission(input as HookInput);
       const permJson = formatPermissionOutput(permResult);
       return { decision: permResult.decision, systemMessage: permJson };
     }
     case "pre-compact": {
       const { handlePreCompact } = await import("./hooks/pre-compact.js");
-      const rawInput = input as unknown as Record<string, unknown>;
+      const raw = input as Record<string, unknown>;
       const compactResult = await handlePreCompact({
-        hook_event_name: String(rawInput["hook_event_name"] ?? "PreCompact"),
-        session_id: typeof rawInput["session_id"] === "string" ? rawInput["session_id"] : undefined,
-        cwd: typeof rawInput["cwd"] === "string" ? rawInput["cwd"] : undefined,
-        trigger: typeof rawInput["trigger"] === "string" ? rawInput["trigger"] : undefined,
+        hook_event_name: String(raw["hook_event_name"] ?? "PreCompact"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        trigger: extractString(raw, "trigger"),
+        custom_instructions: extractString(raw, "custom_instructions"),
       });
       const compactHookResult: HookResult = { decision: compactResult.decision };
       if (compactResult.additionalContext !== undefined) {
@@ -109,13 +115,15 @@ export async function route(
     }
     case "subagent-stop": {
       const { handleSubagentStop } = await import("./hooks/subagent-stop.js");
-      const rawStop = input as unknown as Record<string, unknown>;
+      const raw = input as Record<string, unknown>;
       const stopResult = await handleSubagentStop({
-        hook_event_name: String(rawStop["hook_event_name"] ?? "SubagentStop"),
-        session_id: typeof rawStop["session_id"] === "string" ? rawStop["session_id"] : undefined,
-        cwd: typeof rawStop["cwd"] === "string" ? rawStop["cwd"] : undefined,
-        agent_type: typeof rawStop["agent_type"] === "string" ? rawStop["agent_type"] : undefined,
-        agent_id: typeof rawStop["agent_id"] === "string" ? rawStop["agent_id"] : undefined,
+        hook_event_name: String(raw["hook_event_name"] ?? "SubagentStop"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        agent_type: extractString(raw, "agent_type"),
+        agent_id: extractString(raw, "agent_id"),
+        agent_transcript_path: extractString(raw, "agent_transcript_path"),
+        last_assistant_message: extractString(raw, "last_assistant_message"),
       });
       const stopHookResult: HookResult = { decision: stopResult.decision };
       if (stopResult.additionalContext !== undefined) {
@@ -158,7 +166,7 @@ async function main(): Promise<void> {
       hookType === "subagent-stop"
     ) {
       const parsed = parseSessionInput(raw);
-      result = await route(hookType, { tool_name: `__${hookType}__`, tool_input: {}, ...parsed } as HookInput);
+      result = await route(hookType, parsed);
     } else if (!raw.trim()) {
       result = { decision: "approve", reason: "Empty input" };
     } else {

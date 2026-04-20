@@ -131,12 +131,11 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "worker|harness:worker",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" subagent-stop",
-            "timeout": 90
+            "timeout": 120
           }
         ]
       }
