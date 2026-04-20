@@ -3,7 +3,8 @@ name: security-auditor
 description: 認証情報漏洩・インジェクション・ファイル権限の包括的監査エージェント
 tools: [Read, Grep, Glob, Bash]
 disallowedTools: [Write, Edit, Task]
-model: sonnet
+model: opus
+effort: high
 color: red
 maxTurns: 30
 ---

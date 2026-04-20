@@ -70,11 +70,39 @@ export async function route(hookType, input) {
             const permJson = formatPermissionOutput(permResult);
             return { decision: permResult.decision, systemMessage: permJson };
         }
+        case "pre-compact": {
+            const { handlePreCompact } = await import("./hooks/pre-compact.js");
+            const rawInput = input;
+            const compactResult = await handlePreCompact({
+                hook_event_name: String(rawInput["hook_event_name"] ?? "PreCompact"),
+                session_id: typeof rawInput["session_id"] === "string" ? rawInput["session_id"] : undefined,
+                cwd: typeof rawInput["cwd"] === "string" ? rawInput["cwd"] : undefined,
+                trigger: typeof rawInput["trigger"] === "string" ? rawInput["trigger"] : undefined,
+            });
+            const compactHookResult = { decision: compactResult.decision };
+            if (compactResult.additionalContext !== undefined) {
+                compactHookResult.reason = compactResult.additionalContext;
+            }
+            return compactHookResult;
+        }
+        case "subagent-stop": {
+            const { handleSubagentStop } = await import("./hooks/subagent-stop.js");
+            const rawStop = input;
+            const stopResult = await handleSubagentStop({
+                hook_event_name: String(rawStop["hook_event_name"] ?? "SubagentStop"),
+                session_id: typeof rawStop["session_id"] === "string" ? rawStop["session_id"] : undefined,
+                cwd: typeof rawStop["cwd"] === "string" ? rawStop["cwd"] : undefined,
+                agent_type: typeof rawStop["agent_type"] === "string" ? rawStop["agent_type"] : undefined,
+                agent_id: typeof rawStop["agent_id"] === "string" ? rawStop["agent_id"] : undefined,
+            });
+            const stopHookResult = { decision: stopResult.decision };
+            if (stopResult.additionalContext !== undefined) {
+                stopHookResult.reason = stopResult.additionalContext;
+            }
+            return stopHookResult;
+        }
         case "session-start":
         case "session-end": {
-            // Session lifecycle hooks currently act as silent no-ops that just
-            // approve. Projects can extend this later by plugging into the
-            // engine/lifecycle module without touching the hook dispatcher.
             return { decision: "approve" };
         }
         default: {
@@ -97,10 +125,12 @@ async function main() {
     let result;
     try {
         const raw = await readStdin();
-        if (hookType === "session-start" || hookType === "session-end") {
-            // Session hooks only need to swallow arbitrary JSON and approve.
-            parseSessionInput(raw); // validate but discard
-            result = await route(hookType, { tool_name: "__session__", tool_input: {} });
+        if (hookType === "session-start" ||
+            hookType === "session-end" ||
+            hookType === "pre-compact" ||
+            hookType === "subagent-stop") {
+            const parsed = parseSessionInput(raw);
+            result = await route(hookType, { tool_name: `__${hookType}__`, tool_input: {}, ...parsed });
         }
         else if (!raw.trim()) {
             result = { decision: "approve", reason: "Empty input" };
