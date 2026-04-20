@@ -11,7 +11,7 @@
  *   echo '{}' | node dist/index.js session-end
  */
 import type { HookInput, HookResult } from "./types.js";
-type HookType = "pre-tool" | "post-tool" | "permission" | "session-start" | "session-end" | "pre-compact" | "subagent-stop";
+type HookType = "pre-tool" | "post-tool" | "permission" | "session-start" | "session-end" | "pre-compact" | "subagent-stop" | "task-created" | "task-completed";
 export declare function route(hookType: HookType, input: HookInput | Record<string, unknown>): Promise<HookResult>;
 export {};
 //# sourceMappingURL=index.d.ts.map

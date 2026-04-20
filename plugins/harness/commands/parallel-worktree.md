@@ -257,7 +257,69 @@ Plans.md 担当表から行削除、完了セクションに追記。
 
 ---
 
+## Model B 運用ガイド (B-manual)
+
+**前提**: Phase 2 (2026-04-21) で実装された `scripts/parallel-sessions.sh` を使用。
+
+### B-manual の起動フロー
+
+```bash
+# 1. 複数 worktree を一括起動 (各 worktree で独立 claude プロセス)
+scripts/parallel-sessions.sh start-batch crud-projects crud-locations crud-materials
+
+# 2. 各 tmux session にアタッチして指示
+scripts/parallel-sessions.sh attach crud-projects
+# → claude が起動済み。/tdd-implement で実装指示を投入
+
+# 3. coordinator 側で進捗監視
+scripts/monitor-worktrees.sh --watch
+
+# 4. 完了後にクリーンアップ
+scripts/parallel-sessions.sh stop crud-projects
+```
+
+### B-manual の利点 (Model A との差分)
+
+| 項目 | Model A | B-manual |
+|---|---|---|
+| 各 worker の context | 親 context 共有要約 | **独立 1M context** |
+| 各 worker の harness | 限定 tools | **全 harness** (symlink 経由) |
+| Skill tool | 不可 | **可能** |
+| Task tool | 禁止 (OOM) | **可能** (top-level) |
+| 品質ゲート | coordinator 依存 | **各 worker が自律実行** |
+| MCP | 不可 | **可能** |
+
+### B-manual で各 worker が実行するフロー
+
+各 worktree の独立 claude は top-level プロセスなので、Model A の制限がない:
+
+1. `/tdd-implement` を直接実行可能 (Phase 1-8 全て)
+2. `/pseudo-coderabbit-loop --local` を worker 内で実行可能
+3. `codex-team` による Codex セカンドオピニオンも worker 内で完結
+4. PR 作成・CodeRabbit 対応も worker 自身が可能
+
+coordinator の役割は:
+- worktree 生成 / 削除の orchestration
+- Plans.md 担当表の管理
+- マージ順序 / コンフリクト解消
+- 全体進捗の監視
+
+### sibling worktree の .claude/ 共有
+
+`parallel-sessions.sh start` は以下を自動 symlink する:
+- `.claude/` → main repo の `.claude/` (settings, rules)
+- `CLAUDE.local.md` → main repo の `CLAUDE.local.md`
+- `.docs/` → main repo の `.docs/`
+
+git tracked ファイルは worktree に自然に存在:
+- `CLAUDE.md`, `.mcp.json`, `harness.config.json`
+
+user level (`~/.claude/plugins/`) は全 claude プロセスで共有。
+
+---
+
 ## スキル更新履歴
 
+- **v2.0 (2026-04-21)**: Model B (B-manual) 運用ガイド追加。`scripts/parallel-sessions.sh` + symlink による sibling worktree 独立 claude 実行をサポート。
 - **v1.1 (2026-04-21)**: Model A を正直に記述。worker の責務範囲を Phase 2-5 に限定、Phase 5.5-7 は coordinator 責務に明確化。Model B への将来移行パスを記載。
 - **v1 (2026-04-19)**: Round 4 の反省を踏まえて新設。

@@ -20,7 +20,9 @@ type HookType =
   | "session-start"
   | "session-end"
   | "pre-compact"
-  | "subagent-stop";
+  | "subagent-stop"
+  | "task-created"
+  | "task-completed";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -131,6 +133,40 @@ export async function route(
       }
       return stopHookResult;
     }
+    case "task-created": {
+      const { handleTaskCreated } = await import("./hooks/task-lifecycle.js");
+      const raw = input as Record<string, unknown>;
+      const taskResult = await handleTaskCreated({
+        hook_event_name: String(raw["hook_event_name"] ?? "TaskCreated"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        task_id: extractString(raw, "task_id"),
+        task_subject: extractString(raw, "task_subject"),
+        task_status: extractString(raw, "task_status"),
+      });
+      const taskHookResult: HookResult = { decision: taskResult.decision };
+      if (taskResult.additionalContext !== undefined) {
+        taskHookResult.reason = taskResult.additionalContext;
+      }
+      return taskHookResult;
+    }
+    case "task-completed": {
+      const { handleTaskCompleted } = await import("./hooks/task-lifecycle.js");
+      const raw = input as Record<string, unknown>;
+      const taskResult = await handleTaskCompleted({
+        hook_event_name: String(raw["hook_event_name"] ?? "TaskCompleted"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        task_id: extractString(raw, "task_id"),
+        task_subject: extractString(raw, "task_subject"),
+        task_status: extractString(raw, "task_status"),
+      });
+      const taskHookResult: HookResult = { decision: taskResult.decision };
+      if (taskResult.additionalContext !== undefined) {
+        taskHookResult.reason = taskResult.additionalContext;
+      }
+      return taskHookResult;
+    }
     case "session-start":
     case "session-end": {
       return { decision: "approve" };
@@ -163,7 +199,9 @@ async function main(): Promise<void> {
       hookType === "session-start" ||
       hookType === "session-end" ||
       hookType === "pre-compact" ||
-      hookType === "subagent-stop"
+      hookType === "subagent-stop" ||
+      hookType === "task-created" ||
+      hookType === "task-completed"
     ) {
       const parsed = parseSessionInput(raw);
       result = await route(hookType, parsed);
