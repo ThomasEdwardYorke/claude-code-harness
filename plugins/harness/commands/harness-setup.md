@@ -152,7 +152,13 @@ tampering detector, and config loader are green.
 
 ## `localize` — tune for the current project
 
-Guide the user through populating `harness.config.json`:
+Guide the user through populating `harness.config.json`. The full schema
+lives at `plugins/harness/schemas/harness.config.schema.json` (every field
+carries an inline `description`, so editors with JSON-Schema support give
+hover documentation). The quick map below covers the sections most
+projects need to touch.
+
+### Core
 
 - `projectName` — used in messages
 - `language` — `en` or `ja`
@@ -160,9 +166,95 @@ Guide the user through populating `harness.config.json`:
   datasets, generated artifacts)
 - `protectedEnvVarNames` — additions to the default secret-name list
 - `protectedFileSuffixes` — in addition to `.env`
-- `codex.enabled` — whether to surface the `codex-sync` agent
-- `workMode` — per-project bypass defaults for R05 / R06
 - `tampering.severity` — `approve` (warn), `ask` (confirm), `deny` (block)
+
+### Work-mode bypass (R05 / R06)
+
+`workMode` lets work-mode (`HARNESS_WORK_MODE=1` / `harness work …`)
+skip two otherwise-interactive safety prompts. **Nothing else is
+affected** — R10 (`protectedDirectories`) still refuses listed dirs, and
+neither flag exempts `main` / `master` from push protection rules.
+
+| Field | Default | Effect when `true` |
+|-------|---------|--------------------|
+| `workMode.bypassRmRf` | `false` | R05 stops prompting on `rm -rf` (still refused for protected dirs) |
+| `workMode.bypassGitPush` | `false` | R06 downgrades the `git push --force` warning to info (the push itself is still executed) |
+
+### Work dispatcher (`/harness-work`, hooks)
+
+Consumed by `/harness-work`, `/tdd-implement`, `/parallel-worktree`, and
+`stop.ts` / `pre-compact.ts` / `task-lifecycle.ts`.
+
+- `work.plansFile` — relative path to the task / plan file (default
+  `Plans.md`). Hooks read the assignment table here before compaction.
+- `work.assignmentSectionMarkers` — headers used to locate the
+  assignment table (default `["担当表", "Assignment", "In Progress"]`).
+- `work.handoffFiles` — session-handoff files updated on close
+  (existence-optional; missing entries are skipped silently).
+- `work.changeLogFile` — optional change log scanned by
+  `/harness-plan sync`.
+- `work.maxParallel` (1-16, default 4) — fan-out cap for in-process
+  `Task`-tool parallelism.
+- `work.labelPriority` / `work.criticalLabels` — task-label ordering and
+  labels that force full quality gates.
+- `work.testCommand` — canonical test step (overrides per-stack
+  autodetection in `subagent-stop.ts`).
+- `work.qualityGates.*` — enable/disable each phase reminder emitted by
+  the Stop hook (`enforceTddImplement` / `enforcePseudoCoderabbit` /
+  `enforceRealCoderabbit` / `enforceCodexSecondOpinion`, all default
+  `true`).
+- `work.failFast` (default `true`) — abort the batch on first failure.
+
+### Worktree orchestration (`/parallel-worktree`, `parallel-sessions.sh`)
+
+- `worktree.enabled` — `true` / `false` / `"auto"` (default `"auto"`,
+  delegates to `/harness-work` auto-detection).
+- `worktree.maxParallel` (1-16, default 4) — cap on concurrent sibling
+  worktrees.
+- `worktree.parentDir` (default `".."`) — where sibling worktrees go
+  relative to `projectRoot`.
+- `worktree.prefix` / `worktree.defaultBaseBranch` — optional naming and
+  branch-base overrides.
+
+### TDD + pseudo-CodeRabbit (`/tdd-implement`, `/pseudo-coderabbit-loop`)
+
+- `tddEnforce.alwaysRequireRedTest` (default `true`) — refuse to proceed
+  without a failing Red test.
+- `tddEnforce.allowSkipOnDocsTasks` (default `true`) — `[docs]` tasks
+  may skip Red.
+- `tddEnforce.pseudoCoderabbitProfile` — `chill` / `assertive` /
+  `strict` (default `chill`). `chill` / `assertive` match the upstream
+  CodeRabbit profiles verbatim; `strict` is a harness-local extension.
+- `tddEnforce.maxCodexReviewRetries` (default `3`) — Codex review loop
+  cap per round.
+
+### CodeRabbit integration (`/coderabbit-review`, `/pseudo-coderabbit-loop`)
+
+- `codeRabbit.botLogin` (default `"coderabbitai"`) — review author login.
+- `codeRabbit.ratelimitCheckWindowMinutes` (default `15`) — cooldown
+  lookback used for Pro rate-limit detection.
+- `codeRabbit.approvedStateAsClear` (default `true`) — treat PR review
+  state `APPROVED` as an immediate clear signal.
+- `codeRabbit.maxPseudoLoopIterations` (default `5`) — iterations before
+  pseudo-loop escalates to real CodeRabbit.
+- `codeRabbit.proBucketSize` / `codeRabbit.proBucketWindowMinutes`
+  (defaults `5` and `60`) — Pro "5 reviews / 1 hour" bucket for local
+  rate prediction.
+
+### Security (`security-auditor` agent)
+
+- `security.projectChecklistPath` — optional relative path to a
+  project-local security checklist loaded as addendum when present.
+- `security.enabledChecks` — which checks the agent runs (default
+  covers `api-key-leak`, `injection`, `file-permissions`,
+  `dependencies`; `project-specific` becomes effective only when a
+  checklist path is set).
+
+### Codex companion (`codex-sync` agent)
+
+- `codex.enabled` — whether to surface the `codex-sync` agent.
+- `codex.pluginRoot` — explicit path to the Codex plugin install (auto
+  detected by `harness doctor` when unset).
 
 Write the file and run `/harness-setup check` afterwards.
 
