@@ -44,15 +44,15 @@ Model B は各 worktree で独立 `claude` プロセスを起動し、同一 har
 
 ```json
 {
-  "feature_branch": "feature/new-partslist",
+  "feature_branch": "feature/parent-integration",
   "base_dir": "/Users/me/dev/myproject",
   "worktree_parent_dir": "/Users/me/dev",
   "worktree_prefix": "myproject-wt-",
   "sub_tasks": [
     {
       "slug": "frontend-foundation",
-      "task_id": "R4-1",
-      "title": "Vite + React 19 + Tailwind v4 + shadcn/ui scaffold",
+      "task_id": "T-1",
+      "title": "frontend foundation scaffold",
       "description": "...",
       "acceptance_criteria": ["..."],
       "owned_files": ["frontend/**"],
@@ -116,7 +116,7 @@ cd <worktree_dir>
 branch: <feature_branch-slug>
 **main repo には触らない。**
 
-## オプションの伝播 (Phase 1 申送 M-12: --no-commit forward)
+## オプションの伝播 (--no-commit forward 規約: --no-commit forward)
 
 coordinator は `$ARGUMENTS` から以下を抽出し、各 worktree への `/tdd-implement` 呼出に materialize してから渡す:
 
@@ -281,7 +281,7 @@ Plans.md 担当表から行削除、完了セクションに追記。
 ## Phase 7: ドキュメント更新 + セッション引継
 
 - Plans.md 完了セクションに Round 総括
-- `.docs/next-session-prompt.md` を更新 (存在すれば)
+- プロジェクト固有のセッション引継ファイル (`harness.config.json` の `work.handoffFiles` 等で指定、存在すれば) を更新
 - Memory 更新 (恒久情報のみ)
 
 ---
@@ -377,7 +377,7 @@ coordinator の役割は:
 
 `parallel-sessions.sh start` は以下を自動 symlink する:
 - `.claude/` → main repo の `.claude/` (settings, rules)
-- `CLAUDE.local.md` → main repo の `CLAUDE.local.md`
+- プロジェクト固有の個人設定ファイル (存在すれば) → main repo の同名ファイル
 - `.docs/` → main repo の `.docs/`
 
 git tracked ファイルは worktree に自然に存在:
@@ -391,4 +391,4 @@ user level (`~/.claude/plugins/`) は全 claude プロセスで共有。
 
 - **v2.0 (2026-04-21)**: Model B (B-manual) 運用ガイド追加。`scripts/parallel-sessions.sh` + symlink による sibling worktree 独立 claude 実行をサポート。
 - **v1.1 (2026-04-21)**: Model A を正直に記述。worker の責務範囲を Phase 2-5 に限定、Phase 5.5-7 は coordinator 責務に明確化。Model B への将来移行パスを記載。
-- **v1 (2026-04-19)**: Round 4 の反省を踏まえて新設。
+- **v1 (2026-04-19)**: 開発プロセス上の反省を踏まえて新設 (詳細は CHANGELOG.md)。

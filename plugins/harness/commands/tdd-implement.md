@@ -260,7 +260,7 @@ TASK_DESCRIPTION="${ARGS_TOKENS[*]}"
 
 Phase 5.5 クリア後に `git push`。これで Phase 6 の本物 CodeRabbit が走る。
 
-### `--no-commit` による commit/push skip (Phase 1 申送 M-12)
+### `--no-commit` による commit/push skip (--no-commit 規約)
 
 argv 中に `--no-commit` が含まれる場合、Phase 8 の自動 commit + push を **skip** する。`harness-work` / `parallel-worktree` から forward されたフラグをそのまま受け取り、手動でレビューしたい / CodeRabbit 反復で fast iteration したいケースで使う。
 
@@ -276,7 +276,7 @@ else
 fi
 ```
 
-### Plans.md 更新責務 (Phase 1 申送 M-16 / 既存原則の明示)
+### Plans.md 更新責務 (coordinator 専任原則の明示)
 
 **本スキル `/tdd-implement` は leaf worktree 内で呼ばれる設計**。Plans.md の担当表 / 完了セクションの更新は **coordinator 専任** (harness-work / harness-plan が実施)。leaf 内で Plans.md を touch すると worktree 間で衝突するため禁止。
 

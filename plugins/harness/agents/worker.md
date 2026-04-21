@@ -162,10 +162,10 @@ git push -u origin <branch>
 ### 変更ファイル
 - `path/to/file`: {変更内容}
 
-### テスト結果
-- pytest: PASS / FAIL
-- ruff: PASS / FAIL
-- mypy: PASS / FAIL
+### テスト結果 (プロジェクトの慣用コマンドに応じて記載)
+- tests: PASS / FAIL (例: pytest / vitest / cargo test / go test)
+- lint: PASS / FAIL (例: ruff / eslint / clippy / golangci-lint)
+- typecheck: PASS / FAIL (例: mypy / tsc / 言語の型検査)
 
 ### Codex 並列検証サマリ (Phase 4)
 {Codex の独立検証結果}

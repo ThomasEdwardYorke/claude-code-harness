@@ -43,7 +43,7 @@ Grep で以下のパターンを検索:
 確認事項:
 - [ ] `subprocess.run(..., shell=True)` でユーザー入力が使われていないか
 - [ ] ファイルパスにユーザー入力が直接使われていないか (パストラバーサル)
-- [ ] SQL インジェクション: 動的 SQL は `psycopg.sql.Identifier` / bind params を使用
+- [ ] SQL インジェクション: 動的 SQL は prepared statement / parameter binding を使用 (ORM の公式 binding 機構を優先)
 - [ ] XSS: ユーザー入力のエスケープ
 
 ### 3. ファイル権限
@@ -62,11 +62,19 @@ Grep で以下のパターンを検索:
 
 ### 5. プロジェクト固有のセキュリティ
 
-確認事項 (該当する場合):
-- [ ] Excel インポート: `defusedxml` / Zip Bomb 対策 / `wb.save()` 禁止
-- [ ] PDF 生成: WeasyPrint SSRF 対策 (custom `url_fetcher`)
-- [ ] CSRF: signed double-submit + session rotation
-- [ ] Cookie: `Secure` / `HttpOnly` / `SameSite=Strict`
+**汎用 plugin は業務ドメイン固有のチェックを hardcode しない**。各プロジェクトは以下のいずれかでチェックリストを自前宣言する:
+
+- `harness.config.json` の `security.projectChecklistPath` (将来拡張 config、例: `./AGENTS.md` / `./docs/security-checklist.md`)
+- `CLAUDE.md` / `AGENTS.md` に security section を記載
+- `.claude/skills/<project-name>-local-rules/references/security-checklist.md` を project-local skill として配置
+
+確認事項 (抽象化した共通観点、stack-neutral):
+- [ ] ファイルインポート / パース処理: XXE / Zip Bomb / Billion Laughs 等の解析時攻撃への対策
+- [ ] 外部リソース取得 (PDF / HTML / image 生成): SSRF 対策 (URL allowlist / `file://` 限定 / private IP 拒否)
+- [ ] CSRF: token による state-changing request 保護 (double-submit / signed / Referer 検証のいずれか)
+- [ ] Cookie セキュリティ属性: `Secure` / `HttpOnly` / `SameSite` (プロジェクトに適切な値を設定)
+
+**プロジェクト固有の追加チェック**は上記宣言先を参照して実行すること。plugin 本体は具体 library 名を必須化しない (例示が必要な場合は「Python の場合 X ライブラリ、Node.js の場合 Y パッケージ」のように stack-neutral に記述する)。
 
 ---
 

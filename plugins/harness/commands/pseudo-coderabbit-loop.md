@@ -119,15 +119,15 @@ HEAD_BRANCH=$(git branch --show-current)
 
 # BASE_BRANCH fallback:
 # `git config ... | sed ... || echo main` では sed が exit 0 で返すため `||` が発火せず
-# BASE_BRANCH が空文字になる (A-6 r9 Major-6)。別段で取得 + `:-main` 空チェックで確実に既定値を入れる。
+# BASE_BRANCH が空文字になる (開発過程で判明した sed exit 0 の silent fallback 失敗)。別段で取得 + `:-main` 空チェックで確実に既定値を入れる。
 RAW_MERGE=$(git config --get "branch.${HEAD_BRANCH}.merge" 2>/dev/null || true)
 BASE_BRANCH="${RAW_MERGE#refs/heads/}"
 BASE_BRANCH="${BASE_BRANCH:-main}"
 
-# PR number を CLI_PR から反映 (A-6 r7 Major-5): CLI_PR > 既存 PR env
+# PR number を CLI_PR から反映 (開発過程で判明した PR 引数反映不全): CLI_PR > 既存 PR env
 PR="${CLI_PR:-$PR}"
 
-# Mode 判定: --local 明示 or PR 未指定なら local mode で GitHub API を使わない (A-6 r7 Major-4)。
+# Mode 判定: --local 明示 or PR 未指定なら local mode で GitHub API を使わない (開発過程で判明した --local flag 未配線問題)。
 if [ -n "$CLI_LOCAL" ] || [ -z "$PR" ]; then
   MODE="local"
   REPO=""
@@ -161,7 +161,7 @@ print(d.get('reviews', {}).get('profile', '') if isinstance(d, dict) else '')
     # stdlib 限定: reviews: 直下のインデントに一致する profile: のみ許可。
     # 深い階層 (reviews.labels.profile 等) を誤読しないよう first_indent で制約。
     # 値の後続は inline YAML comment `# ...` を許容し、`profile: assertive  # note` を拾える。
-    # quoted heredoc `<<'PYEOF'` で bash エスケープ依存を排除 (A-6 r9 Major-4)。
+    # quoted heredoc `<<'PYEOF'` で bash エスケープ依存を排除 (quoted heredoc への移行)。
     PROFILE=$(python3 <<'PYEOF' 2>/dev/null || true
 import re
 try:

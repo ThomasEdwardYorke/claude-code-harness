@@ -24,12 +24,12 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 ```json
 {
   "repo_root": "/absolute/path/to/repo/or/worktree",
-  "base_branch": "feature/new-partslist",
-  "head_branch": "feature/new-partslist-frontend-foundation",
+  "base_branch": "main",
+  "head_branch": "feature/my-feature",
   "profile": "chill | assertive | strict",
   "path_instructions": [
-    { "glob": "backend/**/*.py", "instruction": "..." },
-    { "glob": "frontend/**/*.{ts,tsx}", "instruction": "..." }
+    { "glob": "<backend-glob>", "instruction": "..." },
+    { "glob": "<frontend-glob>", "instruction": "..." }
   ],
   "project_rules_files": [
     "CLAUDE.md",
@@ -121,7 +121,7 @@ git fetch origin "$BASE_BRANCH" 2>/dev/null || true
 #   2. local $BASE_BRANCH (fetch 失敗 / offline 環境)
 #   検証済み ref が無ければ hard error (exit 1)。
 #   HEAD~10 や HEAD への fallback は「空 diff を clean と誤判定する false-clear review」を
-#   生むため禁止 (A-6 r7 Major-7)。
+#   生むため禁止 (false-clear review を防ぐための開発過程での改定)。
 if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
   BASE_REF="origin/$BASE_BRANCH"
 elif git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then

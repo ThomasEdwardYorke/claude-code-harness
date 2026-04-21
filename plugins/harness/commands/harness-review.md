@@ -59,7 +59,7 @@ git diff HEAD~1 -- <changed_files>
 | **Security** | APIキー漏洩、入力バリデーション、インジェクション対策 |
 | **Performance** | 不要な API 呼び出し、メモリリーク |
 | **Quality** | 命名、単一責任、エラーハンドリング、スタブ禁止 |
-| **Compatibility** | `create_script_from_url`/`create_script_from_sentence` の後方互換性 |
+| **Compatibility** | 既存 public API / function signatures の後方互換性 (プロジェクト固有の互換性要件は CLAUDE.md / AGENTS.md を参照) |
 
 ### Step 3: レビュー結果出力
 
@@ -157,17 +157,17 @@ git diff HEAD~1 -- <changed_files>
   - AC: テストで再発を防止できること
 ```
 
-**よくある問題パターン**:
+**よくある問題パターン** (プロジェクト固有の問題は CLAUDE.md / AGENTS.md / プロジェクト固有 skill を参照):
 
-| 問題 | 調査先 |
+| 問題カテゴリ | 一般的な調査先 |
 |-----|--------|
-| `create_script` が空のページを返す | `protected-data/{genre}.csv` の存在・ヘッダー整合性 |
-| the LLM API エラー | `.env` の `OPENAI_API_KEY`（長さのみ確認）、レートリミット、モデル名 |
-| `the output artifact` のスキーマ不正 | `save_script_json` の出力フォーマット、既存ファイルとのマージ処理 |
+| 外部 API / LLM API エラー | `.env` の関連 API キー（長さのみ確認）、レートリミット、モデル名 / エンドポイント |
+| データ整合性エラー | プロジェクト固有のデータファイル / ディレクトリの存在・スキーマ整合性 (`CLAUDE.md` で宣言) |
+| 出力フォーマット不整合 | シリアライザの出力仕様、既存ファイルとのマージ処理 |
 
 **注意事項**:
-- `protected-data/` への書き込みは行わない
-- `.env` ファイルの中身を直接表示しない（長さのみ確認）
+- プロジェクト固有の保護ディレクトリ (`protectedDirectories`) への書き込みは行わない
+- `.env` ファイルの中身を直接表示しない（長さのみ確認、guardrail R13 が遮断）
 - 修正の実装は必ず `worker` に委譲する
 
 ---
@@ -178,32 +178,47 @@ git diff HEAD~1 -- <changed_files>
 
 ### 1. 依存パッケージの確認
 
+プロジェクトの package manager に応じて実行:
+
 ```bash
-python3 -m pip list --outdated
+# Python:       python3 -m pip list --outdated
+# Node.js:      npm outdated
+# Rust:         cargo outdated
+# Go:           go list -u -m all
 ```
 
-チェック対象: `openai`, `python-dotenv`, `requests`, `beautifulsoup4`, `pydantic`
 - セキュリティ上重要な更新がある場合は警告
-- **実際の更新はユーザー承認後のみ実施**（`pip install --upgrade` は自動実行しない）
+- **実際の更新はユーザー承認後のみ実施**（自動 upgrade は禁止）
 
 ### 2. コード品質チェック
 
+プロジェクトの lint / typecheck コマンドを実行:
+
 ```bash
-python3 -m py_compile the main module
-python3 -m py_compile the entry module
+# プロジェクトの慣用コマンドに従う:
+#   Python:   ruff check / mypy (pyproject.toml あり)
+#   Node.js:  npm run lint / npm run typecheck
+#   Rust:     cargo clippy / cargo check
+#   Go:       go vet ./... / golangci-lint run
+# 実コマンドは harness.config.json の work.testCommand / project scripts を参照
 ```
 
-### 3. protected-data/ の整合性確認
+### 3. プロジェクト固有データの整合性確認 (該当する場合)
 
-- 全9ジャンルの CSV ファイル存在確認
-- ヘッダー行の整合性チェック（全 CSV で同じ列構成か）
-- 空ファイルや壊れた CSV がないか確認
+プロジェクトに固有のデータディレクトリ (`CLAUDE.md` / `AGENTS.md` / `.claude/rules/*.md` で宣言) がある場合:
 
-### 4. ログの整理
+- 必要なファイルの存在確認
+- スキーマ / ヘッダーの整合性チェック
+- 空ファイルや破損の有無
 
-- `.claude/logs/change-log.txt` のサイズ確認
-- 1000 行を超えている場合は警告
-- ログの内容を要約して表示（直近20件）
+具体手順は project-local skill (`.claude/skills/*`) に委譲。
+
+### 4. ログの整理 (該当する場合)
+
+プロジェクトが内部 log を持つ場合 (path は `harness.config.json` の `work.changeLogFile` 等で受ける):
+- ファイルサイズ確認
+- 長大な場合は警告
+- 直近エントリの要約表示
 
 ### 5. ハーネスファイルの整合性
 
@@ -215,29 +230,29 @@ python3 -m py_compile the entry module
 - 長期間「進行中」のままになっているタスクを警告
 - 未着手タスクの件数を表示
 
-### 保守レポートフォーマット
+### 保守レポートフォーマット (汎用テンプレート)
 
 ```
-script_generate — 保守チェック レポート
+<project-name> — 保守チェック レポート
 
 1. 依存パッケージ
-  ✅ 最新: openai, pydantic
-  ⚠️  更新あり: requests (2.31.0 → 2.32.0)
+  ✅ 最新: <package-list>
+  ⚠️  更新あり: <package> (<old-version> → <new-version>)
 
 2. コード品質
-  ✅ 構文エラー: なし
+  ✅ lint / typecheck: クリーン
 
-3. protected-data/ 整合性
-  ✅ 9件のCSVが存在します
+3. プロジェクト固有データ整合性 (該当する場合)
+  ✅ <project-specific check result>
 
 4. ログ
-  ✅ change-log.txt: 234行（正常範囲）
+  ✅ <log-file>: <lines>行（正常範囲）
 
 5. ハーネス整合性
   ✅ 全フック: 存在・実行権限あり
 
 6. Plans.md
-  未着手: 2件 / 進行中: 0件 / 完了: 8件
+  未着手: N件 / 進行中: N件 / 完了: N件
 ```
 
 ---

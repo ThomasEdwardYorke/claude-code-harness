@@ -95,6 +95,7 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
    tested, but the layering is fragile. A refactor is scheduled for
    v0.2.0. Do not add new behaviour to that path until then.
 
-Plan file `.docs/harness-portability-plan-20260416.md` captures the full
-implementation log and the deferred list (14 residual MEDIUM/LOW/NIT
-items).
+Maintainer notes and implementation logs are kept under
+`docs/maintainer/` (excluded from marketplace distribution). See
+`CHANGELOG.md` for user-facing change history and `CONTRIBUTING.md` for
+the plugin generality policy.

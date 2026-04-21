@@ -8,7 +8,7 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>|--te
 
 # Harness Work (v4) — Plans.md 駆動ディスパッチャ
 
-**v4 改修要旨 (2026-04-19)**: 内部委譲化。`/harness-work` はタスク抽出・モード判定・担当表更新の薄いディスパッチャに徹し、実装エンジンは `/tdd-implement` v2 (単一) / `/parallel-worktree` v1 (並列) に委譲。これで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートが**常時強制**される。Round 4 で発覚した「worker agent が品質ゲート省略」問題の構造的解消。
+**v4 改修要旨 (2026-04-19)**: 内部委譲化。`/harness-work` はタスク抽出・モード判定・担当表更新の薄いディスパッチャに徹し、実装エンジンは `/tdd-implement` v2 (単一) / `/parallel-worktree` v1 (並列) に委譲。これで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートが**常時強制**される。v3 以前で発覚した「worker agent が品質ゲート省略」問題の構造的解消 (詳細は CHANGELOG.md 参照)。
 
 ---
 
@@ -51,7 +51,7 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>|--te
 
 **単純な件数ではなく「独立グループ数」で判定**する (Turbo 流 DAG 先行)。`depends_on` 付きの連鎖タスクは 1 グループとして数える。
 
-> **実装状況 (Phase 1 申送 M-17)**: 現在の harness-work v4 実装は「**件数ベース判定** (task count = 1 / 2-3 / 4+)」で Solo / Parallel / Breezing を選ぶ簡易版。以下に示す **依存グラフ** (`depends_on` DAG) / **`wt:*` worktree ラベル** 判定は **spec only** で、実体化は **Phase 2 スコープ** (Model B 実戦投入後)。暫定運用では:
+> **実装状況 (harness-work v4 現行)**: 現在の harness-work v4 実装は「**件数ベース判定** (task count = 1 / 2-3 / 4+)」で Solo / Parallel / Breezing を選ぶ簡易版。以下に示す **依存グラフ** (`depends_on` DAG) / **`wt:*` worktree ラベル** 判定は **spec only** で、実体化は **Phase 2 スコープ** (Model B 実戦投入後)。暫定運用では:
 > - 独立性 / 依存性は coordinator (人間 or Claude) が Plans.md を読んで判断
 > - `wt:avoid` ラベルは `/harness-work --sequential` で明示強制
 > - `wt:recommended` ラベルが付いたタスクは default で worktree 経路に載る
@@ -196,7 +196,7 @@ print(d.get('reviews', {}).get('profile', '') if isinstance(d, dict) else '')
   fi
   if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
     # pseudo-coderabbit-loop と同じロジック、同じ quoted heredoc で bash エスケープ依存排除。
-    # 末尾の `(?:\s+#.*)?` は valid YAML の inline comment を許容する (A-6 r4 / r9 Major-5)。
+    # 末尾の `(?:\s+#.*)?` は valid YAML の inline comment を許容する。
     PROFILE=$(python3 <<'PYEOF' 2>/dev/null || true
 import re
 try:
@@ -313,7 +313,7 @@ PROFILE="${ARG_PROFILE:-${CFG_PROFILE:-$PROFILE}}"
 export PROFILE
 echo "Resolved profile (arg > config > yaml > chill): $PROFILE"
 
-# --no-commit flag 抽出 (Phase 1 申送 M-12: parallel 経路への伝播規約)。
+# --no-commit flag 抽出 (parallel 経路への伝播規約)。
 # 位置は任意 (末尾 token の --profile= と並ばない、--no-commit 単独で末尾に来ることもある)
 # なので全 token scan で拾う。Plans.md 駆動で自動 commit を抑制したいケース (CodeRabbit 反復時 /
 # 手動レビュー前の段階的確認) で使う。
@@ -519,7 +519,7 @@ for task in selected_tasks:
 
 API 不使用のコストゼロパイプライン確認 (既存ロジック維持):
 - 依存関係 import 確認
-- protected-data/ CSV 存在・スキーマ確認
+- プロジェクト固有のデータディレクトリ (`harness.config.json` の `protectedDirectories` / `.claude/rules/*.md` で宣言) の存在・スキーマ確認 (**project-local skill に委譲推奨**)
 - 主要クラスの import 確認
 - 出力 artifact スキーマ検証 (存在時)
 
@@ -556,7 +556,7 @@ Auto Mode Detection 結果:
 3. **省略されていたら `/harness-work --resume <task>` で再実行**
 4. Plans.md 担当表から行削除 → 完了セクションに追記
 5. worktree cleanup (`/parallel-worktree` が実施済)
-6. `.docs/next-session-prompt.md` 等、セッション引継ファイル更新
+6. プロジェクト固有のセッション引継ファイル (`harness.config.json` の `work.handoffFiles` 等で指定、存在すれば) を更新
 
 ---
 
@@ -643,7 +643,7 @@ API call なし、コストゼロ。
     "prefix": "<project-name>-wt-",
     "defaultBaseBranch": "main",
     "forceDisableReasons": [
-      "例: Y.js 統合期 (hot file 集中で衝突多発)",
+      "例: high-conflict collaboration phase (hot files concentrated)",
       "例: baseline migration 期間",
       "例: 全ファイル rename/削除タスク実行中"
     ]
@@ -765,6 +765,6 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 ## スキル更新履歴
 
 - **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、申送セクション、フォールバック戦略追加。
-- **v4 (2026-04-19)**: 内部委譲化。`/tdd-implement` v2 / `/parallel-worktree` v1 への委譲レイヤーに刷新。品質ゲート常時強制。Round 4 で発覚した「worker 丸投げで品質ゲート省略」問題を構造解消。
+- **v4 (2026-04-19)**: 内部委譲化。`/tdd-implement` v2 / `/parallel-worktree` v1 への委譲レイヤーに刷新。品質ゲート常時強制。v3 以前で発覚した「worker 丸投げで品質ゲート省略」問題を構造解消 (詳細は CHANGELOG.md)。
 - **v3**: Auto Mode Detection (Solo/Parallel/Breezing) 導入、`--codex` オプション追加、サブフロー (fix-bug/add-feature/test-pipeline) 統合。
 - **v2, v1**: レガシー (`work` / `breezing` / `fix-bug` / `add-feature` / `test-pipeline` が別スキルだった時代)。
