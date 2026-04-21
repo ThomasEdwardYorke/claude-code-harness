@@ -1,7 +1,7 @@
 ---
 name: harness-work
 description: "Plans.md 駆動の実装ディスパッチャ (v4)。タスク数で Auto Mode Detection し内部的に `/tdd-implement` v2 (Solo) or `/parallel-worktree` v1 (Parallel/Breezing) に委譲、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートを常時強制する。バグ修正・機能追加のサブフローを統合。Use when user mentions: implement, execute, fix bug, add feature, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
-description-ja: "Harness v4 統合実行ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) し、内部的に /tdd-implement v2 or /parallel-worktree v1 に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel。プランニング・レビュー・リリース・セットアップには使わない。"
+description-ja: "Harness v4 統合実行ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) し、内部的に /tdd-implement v2 or /parallel-worktree v1 に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel。プランニング・レビュー・リリース・セットアップには使わない。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task", "Skill"]
 argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>] [--parallel N] [--breezing] [--sequential] [--no-commit] [--dry-run]"
 ---

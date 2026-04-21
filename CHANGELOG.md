@@ -52,4 +52,5 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
+[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.1.0

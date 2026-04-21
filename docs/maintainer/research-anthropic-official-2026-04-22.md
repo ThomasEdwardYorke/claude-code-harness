@@ -3,7 +3,7 @@
 **監査対象**: Claude Code Harness Plugin (`~/.claude/plugins/marketplaces/claude-code-harness/`)
 **監査ブランチ**: `feature/model-b-evolution`
 **監査日**: 2026-04-22
-**監査者**: Codex Worker A (Automated)
+**調査者**: Codex Worker A (Automated background search)
 
 ## 0. 監査方法と前提
 

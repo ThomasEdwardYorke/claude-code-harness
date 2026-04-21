@@ -1270,7 +1270,11 @@ describe("Phase κ: subagent frontmatter の isolation 設定", () => {
     '%s agent: isolation 設定があれば値は "worktree" のみ (公式仕様: plugins-reference)',
     (name) => {
       // 公式仕様外の値 ("none" / "disabled" / "never" 等) は invalid。
-      // 誰かが意図せず設定した際の safety net。
+      // これは deferred guard: 第 1 test (isolation 未設定) が pass している間は
+      // `match` が null となり assert は no-op (実行されない)。将来 isolation が
+      // 追加された時点で (Phase κ-2 実装時など)、第 1 test が red に転じると同時に
+      // 本 guard が値 validation として effective になる設計。
+      // Codex 最終 review (i-1) 対応: 「常時有効な safety net」という誤読を避ける表現に。
       const fm = extractFrontmatter(readAgent(name));
       const match = /^isolation\s*:\s*["']?([\w-]+)["']?\s*$/m.exec(fm);
       if (match) {
