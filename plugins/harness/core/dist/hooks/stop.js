@@ -37,8 +37,9 @@ export async function handleStop(input) {
             }
         }
     }
-    catch {
-        // config parse failure — silent
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[harness stop] config parse: ${msg}\n`);
     }
     if (sections.length === 0) {
         return { decision: "approve" };

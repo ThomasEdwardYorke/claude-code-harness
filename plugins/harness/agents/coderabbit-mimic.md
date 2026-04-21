@@ -3,6 +3,7 @@ name: coderabbit-mimic
 description: Codex CLI を使って CodeRabbit 風 PR レビューを再現する疑似レビュアー。rate limit に縛られずローカルで review ループを回すため、`/pseudo-coderabbit-loop` から呼び出される。Use when conducting pre-review before pushing to GitHub, or during rate-limited periods.
 tools: [Bash, Read, Grep, Glob]
 model: sonnet
+effort: medium
 memory: project
 color: purple
 maxTurns: 20
