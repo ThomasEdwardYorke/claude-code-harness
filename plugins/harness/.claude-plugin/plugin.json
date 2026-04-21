@@ -1,7 +1,7 @@
 {
   "name": "harness",
   "version": "0.1.0",
-  "description": "Portable TypeScript guardrail and agent harness for Claude Code. Provides 13 guardrail rules, 3 general-purpose agents (worker / reviewer / scaffolder), 5 verb skills (plan / work / review / release / setup), and a pure-JS JSON state store with zero native dependencies.",
+  "description": "Portable TypeScript guardrail and agent harness for Claude Code. Provides 13 guardrail rules, 6 specialised agents (worker / reviewer / scaffolder / security-auditor / codex-sync / coderabbit-mimic), 12 verb commands (plan / work / review / release / setup / branch-merge / new-feature-branch / coderabbit-review / codex-team / parallel-worktree / pseudo-coderabbit-loop / tdd-implement), lifecycle hooks (pre-tool / post-tool / permission / session-start / session-end / pre-compact / subagent-stop / task-created / task-completed / stop), and a pure-JS JSON state store with zero native dependencies.",
   "author": {
     "name": "Claude Code Harness Contributors"
   },
@@ -15,5 +15,28 @@
     "hooks",
     "security",
     "agents"
-  ]
+  ],
+  "commands": [
+    "./commands/branch-merge.md",
+    "./commands/coderabbit-review.md",
+    "./commands/codex-team.md",
+    "./commands/harness-plan.md",
+    "./commands/harness-release.md",
+    "./commands/harness-review.md",
+    "./commands/harness-setup.md",
+    "./commands/harness-work.md",
+    "./commands/new-feature-branch.md",
+    "./commands/parallel-worktree.md",
+    "./commands/pseudo-coderabbit-loop.md",
+    "./commands/tdd-implement.md"
+  ],
+  "agents": [
+    "./agents/coderabbit-mimic.md",
+    "./agents/codex-sync.md",
+    "./agents/reviewer.md",
+    "./agents/scaffolder.md",
+    "./agents/security-auditor.md",
+    "./agents/worker.md"
+  ],
+  "hooks": "./hooks/hooks.json"
 }

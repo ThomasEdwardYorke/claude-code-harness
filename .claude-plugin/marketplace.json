@@ -8,11 +8,14 @@
     "version": "0.1.0"
   },
   "strict": true,
+  "allowCrossMarketplaceDependenciesOn": [
+    "openai-codex"
+  ],
   "plugins": [
     {
       "name": "harness",
       "source": "./plugins/harness",
-      "description": "Guardrails R01-R13, 3 general agents, 5 verb skills, zero native dependencies",
+      "description": "Guardrails R01-R13, 6 agents (worker / reviewer / scaffolder / security-auditor / codex-sync / coderabbit-mimic), 12 verb commands, lifecycle hooks, zero native dependencies. `codex-sync` / `coderabbit-mimic` agents invoke the companion `openai-codex` plugin when present — install it for full functionality.",
       "license": "MIT",
       "version": "0.1.0"
     }

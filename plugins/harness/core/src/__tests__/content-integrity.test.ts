@@ -934,3 +934,66 @@ describe("severity 分類の整合", () => {
     expect(hits).toEqual(requiredLevels);
   });
 });
+
+describe("plugin.json component 宣言 (Anthropic 公式仕様: 明示宣言でデフォルトパス変更耐性)", () => {
+  const pluginJson = JSON.parse(
+    readFileSync(
+      resolve(PLUGIN_ROOT, ".claude-plugin/plugin.json"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+
+  it("commands 配列で全 command md を explicit に宣言している", () => {
+    const commands = pluginJson["commands"] as string[];
+    expect(Array.isArray(commands)).toBe(true);
+    // 実在する commands/*.md が全て宣言されていること。
+    const declaredBaseNames = commands
+      .map((p) => p.replace(/^\.\/commands\//, "").replace(/\.md$/, ""))
+      .sort();
+    expect(declaredBaseNames).toEqual(COMMAND_NAMES.slice().sort());
+  });
+
+  it("agents 配列で全 agent md を explicit に宣言している", () => {
+    const agents = pluginJson["agents"] as string[];
+    expect(Array.isArray(agents)).toBe(true);
+    const declaredBaseNames = agents
+      .map((p) => p.replace(/^\.\/agents\//, "").replace(/\.md$/, ""))
+      .sort();
+    expect(declaredBaseNames).toEqual(AGENT_NAMES.slice().sort());
+  });
+
+  it("hooks フィールドで hooks.json を指している", () => {
+    expect(pluginJson["hooks"]).toBe("./hooks/hooks.json");
+  });
+
+  it("必須の name が存在する", () => {
+    expect(typeof pluginJson["name"]).toBe("string");
+    expect(pluginJson["name"]).toBe("harness");
+  });
+});
+
+describe("marketplace.json のクロスマーケットプレイス依存宣言 (openai-codex)", () => {
+  const marketplaceJson = JSON.parse(
+    readFileSync(
+      resolve(PLUGIN_ROOT, "../../.claude-plugin/marketplace.json"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+
+  it("codex-sync / coderabbit-mimic agent が invoke する openai-codex を allow 依存に宣言", () => {
+    const allow = marketplaceJson["allowCrossMarketplaceDependenciesOn"];
+    expect(Array.isArray(allow)).toBe(true);
+    expect(allow).toContain("openai-codex");
+  });
+
+  it("metadata.version が plugin.version と一致する", () => {
+    const metadata = marketplaceJson["metadata"] as Record<string, unknown>;
+    const plugins = marketplaceJson["plugins"] as Array<Record<string, unknown>>;
+    const harnessPlugin = plugins.find((p) => p["name"] === "harness");
+    expect(metadata["version"]).toBe(harnessPlugin?.["version"]);
+  });
+
+  it("strict: true を明示 (plugin.json 権威)", () => {
+    expect(marketplaceJson["strict"]).toBe(true);
+  });
+});
