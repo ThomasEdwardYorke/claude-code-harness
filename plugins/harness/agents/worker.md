@@ -111,16 +111,36 @@ npm run typecheck
 
 ### Step 9: コミット
 
+コミットメッセージは HEREDOC で渡す。`Co-Authored-By` 行の `<モデルサフィックス>` プレースホルダーは worker 自身が実行中モデルの**サフィックス部分**（"Claude" を含まない）に置換してから commit する。モデル名は起動時の system prompt（"You are powered by the model named ..."）に記載のものを採用。
+
 ```
 <prefix>: <要約 (50 文字以内)>
 
 - 変更 1
 - 変更 2
 
-Co-Authored-By: Claude <model> <noreply@anthropic.com>
+Co-Authored-By: Claude <モデルサフィックス> <noreply@anthropic.com>
 ```
 
 prefix: `feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `security`
+
+**サフィックス例**:
+
+| 実行中モデル | `<モデルサフィックス>` に入れる文字列 |
+|---|---|
+| `claude-opus-4-7` (1M context) | `Opus 4.7 (1M context)` |
+| `claude-sonnet-4-6` | `Sonnet 4.6` |
+| `claude-haiku-4-5-20251001` | `Haiku 4.5` |
+
+**置換後の実例** (Opus 4.7):
+
+```
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+```
+
+**禁止**:
+- リテラル文字列 `<モデルサフィックス>` / `<実行中モデル名>` / `<model>` をそのまま commit しない
+- テンプレートの `Claude ` prefix を含めて置換しない（`Claude Claude Opus ...` の重複は即 NG）
 
 ### Step 10: Push + 完了報告
 

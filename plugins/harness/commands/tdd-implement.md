@@ -2,7 +2,7 @@
 name: tdd-implement
 description: "TDD + Codex チーム協業 + 疑似 CodeRabbit × 本物 CodeRabbit の完全レビューループによる最高品質の実装ワークフロー。実装指示を受けた時に使用する。「実装して」「修正して」「機能追加して」「バグ修正して」「リファクタリングして」などの実装タスク全般に適用。品質を妥協せず、チェックリスト管理・TDD・Codex レビューループ・CodeRabbit レビューループで完璧な実装を目指す。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
-argument-hint: "<task description>"
+argument-hint: "<task description> [--profile=chill|assertive|strict]"
 ---
 
 # TDD Implementation with Codex Team + CodeRabbit Loop
@@ -160,13 +160,47 @@ Loop:
 
 ### 実行方法
 
+まず `$ARGUMENTS` から `--profile=` を抽出 (argv 単位 case 完全一致、未指定時は `chill`)。
+上流 (`harness-work`) が materialize して渡した値、または直接コマンドライン指定のいずれかを受ける。
+
+```bash
+# 注: 本ブロックは bash 前提 (array 0-based indexing + `unset 'arr[idx]'` semantics)。
+# zsh で直接実行する場合は `emulate -L sh` または `setopt ksharrays` を事前設定して
+# 配列の 0-based 解釈に揃える必要がある (さもないと末尾 token 切り離しが silent に
+# 失敗し、profile override が落ちる)。
+#
+# CLI --profile= 抽出 (末尾 token のみ option として扱う)。
+# 全 token を scan すると task description 本文の `--profile=assertive` を誤認するため、
+# ARGS_TOKENS[-1] に option があるかだけ判定し、option なら末尾から切り離して task description に回す。
+read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
+PROFILE="chill"
+LAST_IDX=$((${#ARGS_TOKENS[@]} - 1))
+if [ "$LAST_IDX" -ge 0 ]; then
+  LAST_TOK="${ARGS_TOKENS[$LAST_IDX]}"
+  case "$LAST_TOK" in
+    --profile=chill|--profile=assertive|--profile=strict)
+      PROFILE="${LAST_TOK#--profile=}"
+      unset 'ARGS_TOKENS[LAST_IDX]'
+      ;;
+  esac
+fi
+# 残った ARGS_TOKENS を task description として使う
+TASK_DESCRIPTION="${ARGS_TOKENS[*]}"
+```
+
+解決した `$PROFILE` を Phase 5.5 の呼出に直列化 (Skill handoff 規約と同じ、literal `${PROFILE}` のまま渡さない):
+
 ```text
-/pseudo-coderabbit-loop --local --profile=chill
+# テンプレート表記
+/pseudo-coderabbit-loop --local --profile=$PROFILE
+
+# 実際の呼出例 (PROFILE=assertive の場合)
+/pseudo-coderabbit-loop --local --profile=assertive
 ```
 
 または worktree 指定:
 ```text
-/pseudo-coderabbit-loop --local --profile=chill --worktree=/path/to/worktree
+/pseudo-coderabbit-loop --local --profile=$PROFILE --worktree=/path/to/worktree
 ```
 
 このコマンドは内部で:
@@ -219,10 +253,14 @@ gh pr create --repo <owner>/<repo> --base <base> --head <head> \
 
 ### 6.3 Rate limit ヒット時の分岐（重要）
 
-CodeRabbit が rate limit に当たったら:
+CodeRabbit が rate limit に当たったら、**Phase 5.5 で解決済みの `$PROFILE` を rate-limit 経路にも materialize** して伝播させる (literal `$PROFILE` のまま書くと受け手側で解釈されず、上流 override が失われる):
 
 ```text
-/pseudo-coderabbit-loop <pr-number>
+# テンプレート表記
+/pseudo-coderabbit-loop <pr-number> --profile=$PROFILE
+
+# 実際の呼出例 (PROFILE=assertive の場合)
+/pseudo-coderabbit-loop 42 --profile=assertive
 ```
 
 に切替。Codex で疑似レビューを継続しつつ、cooldown (15 分) 経過後に本物 CodeRabbit を再起動。**待機で停滞しない。**

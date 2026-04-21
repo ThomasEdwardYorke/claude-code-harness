@@ -173,8 +173,98 @@ test -f Plans.md && echo "Plans.md found" || echo "Plans.md missing — use /tdd
 # 3. harness.config.json 読込 (プロジェクト設定)
 test -f harness.config.json && cat harness.config.json | jq '.work // {}'
 
-# 4. .coderabbit.yaml 存在確認 (CodeRabbit profile)
-test -f .coderabbit.yaml && (yq '.reviews.profile // "chill"' .coderabbit.yaml 2>/dev/null || python3 -c "import yaml; d=yaml.safe_load(open('.coderabbit.yaml')); print(d.get('reviews',{}).get('profile','chill'))" 2>/dev/null || echo "chill")
+# 4. .coderabbit.yaml 存在確認 + profile 読取り
+#    `pseudo-coderabbit-loop` と同じ 3 段フォールバック + WARN 出力 (silent 降格禁止)
+PROFILE=""
+if [ -f .coderabbit.yaml ]; then
+  if command -v yq >/dev/null 2>&1; then
+    PROFILE=$(yq '.reviews.profile // ""' .coderabbit.yaml 2>/dev/null || true)
+  fi
+  if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
+    PROFILE=$(python3 -c "
+import yaml
+d = yaml.safe_load(open('.coderabbit.yaml'))
+print(d.get('reviews', {}).get('profile', '') if isinstance(d, dict) else '')
+" 2>/dev/null || true)
+  fi
+  if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
+    # pseudo-coderabbit-loop と同じロジック、同じ quoted heredoc で bash エスケープ依存排除。
+    # 末尾の `(?:\s+#.*)?` は valid YAML の inline comment を許容する (A-6 r4 / r9 Major-5)。
+    PROFILE=$(python3 <<'PYEOF' 2>/dev/null || true
+import re
+try:
+    text = open('.coderabbit.yaml').read()
+    m = re.search(r'^reviews\s*:\s*\n((?:[ \t]+.*\n?)+)', text, re.MULTILINE)
+    if m:
+        block = m.group(1)
+        first_indent = re.match(r'^([ \t]+)', block)
+        if first_indent:
+            indent = first_indent.group(1)
+            pattern = r'^' + re.escape(indent) + r'profile\s*:\s*["\']?(\w+)["\']?(?:\s+#.*)?\s*$'
+            p = re.search(pattern, block, re.MULTILINE)
+            if p:
+                print(p.group(1))
+except Exception:
+    pass
+PYEOF
+)
+  fi
+  if [ -z "$PROFILE" ]; then
+    echo "WARN: .coderabbit.yaml exists but profile could not be parsed (yq / PyYAML / stdlib regex all failed). Falling back to 'chill'." >&2
+    PROFILE="chill"
+  fi
+else
+  PROFILE="chill"
+fi
+echo "CodeRabbit profile from .coderabbit.yaml: $PROFILE"
+
+# YAML 由来の PROFILE は CodeRabbit 公式 allowlist (chill / assertive) のみ許可。
+# strict は harness-local extension で CLI / harness.config.json 専用、YAML 経路では採用しない
+# (https://docs.coderabbit.ai/reference/configuration 公式 schema 準拠)。
+if [ -n "$PROFILE" ] && [ "$PROFILE" != "chill" ] && [ "$PROFILE" != "assertive" ]; then
+  echo "WARN: .coderabbit.yaml profile='$PROFILE' is outside CodeRabbit official allowlist (chill / assertive); fallback to 'chill' (use --profile=strict or harness.config.json for local extension)" >&2
+  PROFILE="chill"
+fi
+
+# PROFILE 値の優先順位 (高 → 低):
+#   1. コマンド引数 `--profile=...` (`$ARGUMENTS` を argv 単位で case 文完全一致抽出)
+#   2. `harness.config.json` の `.tddEnforce.pseudoCoderabbitProfile`
+#   3. `.coderabbit.yaml` の `reviews.profile` (上記 3 段 fallback + 公式 allowlist 検証済)
+#   4. `chill` (最終 fallback、WARN 出力付き)
+# 後段 (Phase 5.5) にはここで確定した値を Skill handoff 時に **実値へ materialize** してから渡す
+# (Anthropic 公式 slash command の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` (0-based、`$0` が第1引数) のみ保証。`${PROFILE}` は
+# undocumented なので、coordinator が Skill 呼出前に literal `${PROFILE}` を `chill` 等に置換する責務)。
+#
+# argv 単位の case 文完全一致: `--profile=strict1` / `--profile=chill-something` を誤受理しない。
+ARG_PROFILE=""
+# $ARGUMENTS を配列に読み込み (bash の word splitting を明示)。
+# 空白を含む値 (例 `--foo="bar baz"`) は未サポート。
+read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
+for tok in "${ARGS_TOKENS[@]}"; do
+  case "$tok" in
+    --profile=chill|--profile=assertive|--profile=strict)
+      ARG_PROFILE="${tok#--profile=}"
+      ;;
+    --profile=*)
+      echo "WARN: invalid --profile='${tok#--profile=}' (must be chill|assertive|strict); ignored" >&2
+      ;;
+  esac
+done
+
+# harness.config.json key path は実装とドキュメントを `.tddEnforce.pseudoCoderabbitProfile` に統一。
+# JSON 破損時は WARN を出して silent fallback を避ける。
+CFG_PROFILE=""
+if [ -f harness.config.json ] && command -v jq >/dev/null 2>&1; then
+  if ! jq empty harness.config.json 2>/dev/null; then
+    echo "WARN: harness.config.json is not valid JSON; skipping config-level profile override" >&2
+  else
+    CFG_PROFILE=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // empty' harness.config.json 2>/dev/null || true)
+  fi
+fi
+
+PROFILE="${ARG_PROFILE:-${CFG_PROFILE:-$PROFILE}}"
+export PROFILE
+echo "Resolved profile (arg > config > yaml > chill): $PROFILE"
 
 # 5. Codex CLI 利用可能性
 codex --version 2>/dev/null || echo "WARNING: Codex CLI not installed — /tdd-implement v2 Phase 4-5 will skip Codex"
@@ -253,9 +343,19 @@ Plans.md 未使用プロジェクトでは scoping comment / task file のみ作
 
 #### 4.1 Solo モード (1 タスク)
 
+**重要: handoff 時は PROFILE を実値に materialize してから Skill を呼ぶ**。Anthropic 公式 slash command の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` (0-based、`$0` が第1引数) のみ保証 (https://docs.anthropic.com/en/docs/claude-code/slash-commands)。`${PROFILE}` は undocumented なので、literal のまま Skill に渡すと受け手側で literal として扱われ、委譲境界で PROFILE が失われる。
+
+coordinator (LLM) は Pre-flight で確定した `$PROFILE` の **実値** を args 文字列内に直接埋め込んでから Skill を呼び出す責任を持つ:
+
 ```
-Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files>"})
+# テンプレート表記 (PROFILE は事前に実値へ置換する)
+Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=${PROFILE}"})
+
+# 実際の呼出例 (coordinator が PROFILE=assertive を解決した場合)
+Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=assertive"})
 ```
+
+**禁止**: `--profile=${PROFILE}` の literal 文字列をそのまま Skill args に渡す (受け手側で置換されず literal として伝わる)。
 
 `/tdd-implement` v2 が以下を完全実行:
 - Phase 1 計画
@@ -263,14 +363,20 @@ Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files>"
 - Phase 3 GREEN
 - Phase 4 Codex 並列検証
 - Phase 5 Codex レビューループ
-- Phase 5.5 `/pseudo-coderabbit-loop --local --profile=<profile>`
+- Phase 5.5 `/pseudo-coderabbit-loop --local --profile=$PROFILE`
 - Phase 6 push + PR + `/coderabbit-review <pr>`
 - Phase 7 `/codex-team` セカンドオピニオン
 
 #### 4.2 Parallel / Breezing モード — worktree 利用可
 
+**handoff materialize 必須** (4.1 と同じ原則)。coordinator は `$PROFILE` を実値に置換してから Skill を呼び出す:
+
 ```
-Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --spec=<inline-spec>"})
+# テンプレート表記
+Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --profile=${PROFILE} --spec=<inline-spec>"})
+
+# 実際の呼出例 (PROFILE=strict の場合)
+Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feature/foo --profile=strict --spec=<inline-spec>"})
 ```
 
 `/parallel-worktree` v1 が:
@@ -280,7 +386,9 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<b
 
 #### 4.2b Parallel (Task tool) モード — wt:avoid 混在、worktree 使えない
 
-`Task` ツールで N タスクを並列起動。各 Task プロンプトに **TDD 強制節を必須埋込**:
+`Task` ツールで N タスクを並列起動。各 Task プロンプトには以下を必須埋込する:
+- TDD 強制節
+- **profile を materialize 済み実値で埋め込む** (Skill handoff と同じ規約)。`tdd_enforced_prompt(task)` を組み立てる段階で coordinator が `$PROFILE` を実値 (chill / assertive / strict) に置換してから Task prompt 文字列に入れる。literal `$PROFILE` のまま渡すと subagent 側で slot 展開されず profile が失われる (Anthropic 公式の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` 0-based のみ保証)。
 
 ```markdown
 本タスクは TDD + 品質ゲート必須。以下の Phase を省略なく実行:
@@ -288,9 +396,16 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<b
 - Phase 3 Green: 最小実装 + 全既存テスト維持
 - Phase 4 Codex 並列: `harness:codex-sync` agent を起動 or `codex exec` で差分突合
 - Phase 5 Codex レビュー: critical/major が 0 になるまで反復
-- Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=<profile>` で actionable=0 まで反復
+- Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=<実値>` で actionable=0 まで反復
+  (coordinator が $PROFILE を解決した実値 = chill / assertive / strict に埋め込んでから prompt に渡す)
 - Phase 6: push まで実施 (PR 作成は coordinator 実施)
 省略した場合、完了報告に **「妥協あり」** と明記すること (本来は禁止)。
+```
+
+**実例** (coordinator が PROFILE=assertive を解決した場合の Phase 5.5 行):
+
+```markdown
+- Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=assertive` で actionable=0 まで反復
 ```
 
 **注**: `harness:worker` は `disallowedTools: [Task]` のため worker 内から更に agent 起動不可。**TDD 強制は worker プロンプト本文で実現**する。
@@ -318,9 +433,12 @@ for task in coordinator_plans["phase_b"]:
 
 #### 4.3 Sequential モード (明示 / worktree 非対応)
 
+**handoff materialize 必須** (4.1 と同じ原則)。`$PROFILE` の実値を各 Skill 呼出の args に埋め込む:
+
 ```
+# PROFILE=chill の場合の実際の呼出
 for task in selected_tasks:
-    Skill({skill: "tdd-implement", args: "<task desc>"})
+    Skill({skill: "tdd-implement", args: "<task desc> --profile=chill"})
     # 各タスク完了まで待機、次へ
 ```
 

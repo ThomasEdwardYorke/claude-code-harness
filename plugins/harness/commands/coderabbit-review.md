@@ -91,12 +91,10 @@ for i in $(seq 1 20); do
     echo "REVIEW_ARRIVED"
     exit 0
   fi
-  # CodeRabbit's "pass" check means the review cleared
-  STATUS=$(gh pr checks "$PR" 2>/dev/null | grep -i "coderabbit" | awk '{print $2}')
-  if [ "$STATUS" = "pass" ]; then
-    echo "REVIEW_CLEAR"
-    exit 0
-  fi
+  # NOTE: `gh pr checks` の CodeRabbit check 名は unstable (Step 7.5 参照) のため、
+  # ここでは REVIEW_CLEAR を短絡判定しない。Clear 判定は Step 7 の 3 段判定
+  # (APPROVED / unresolved=0 / rate-limit marker 不在) に一本化する。
+  # 監視ループの責務は「新 review 到着の検出」のみ。
   sleep 30
 done
 echo "TIMEOUT"
@@ -107,9 +105,8 @@ keep working — a notification will fire when the review arrives."*
 
 Background result routing:
 
-- `REVIEW_ARRIVED` → Step 4
-- `REVIEW_CLEAR`   → Step 7
-- `TIMEOUT`        → report, suggest re-running the skill
+- `REVIEW_ARRIVED` → Step 4 (parse the review) → Step 7 (Clear 3 段判定)
+- `TIMEOUT`        → report, suggest re-running the skill (Clear 判定は Step 7 が行う)
 
 ### Step 4. Parse the review
 

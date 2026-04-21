@@ -2,7 +2,7 @@
 name: parallel-worktree
 description: "複数サブタスクを git worktree 並列で開発するオーケストレータスキル (Model A: 単一 Claude + Task subagent)。coordinator が worktree 生成 / worker dispatch / 担当表同期 / マージ順序 / コンフリクト解消を orchestrate する。各 worker は TDD + Codex Phase 4-5 を実行し、Phase 5.5-7 は coordinator が取りまとめて実行する。単一リポジトリ (worktree なし) でもサブタスク数 1 の縮退モードとして利用可。Use when implementing 2+ independent sub-tasks in parallel with maximum quality."
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
-argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N] [--dry-run] [--no-merge]"
+argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N] [--profile=chill|assertive|strict] [--dry-run] [--no-merge]"
 ---
 
 # `/parallel-worktree` — worktree 並列 TDD 開発オーケストレータ (Model A)
@@ -180,13 +180,29 @@ PR 作成はしない (coordinator 実施)。
 
 各 worktree の push 完了後、coordinator が:
 
-1. **Phase 5.5 疑似 CodeRabbit** (`/pseudo-coderabbit-loop --local --profile=<profile>`)
+1. **Phase 5.5 疑似 CodeRabbit** (`/pseudo-coderabbit-loop --local --profile=$PROFILE`)
+   - coordinator は `$ARGUMENTS` から `--profile=` を抽出して `$PROFILE` を束縛 (argv 単位 case 完全一致):
+
+     ```bash
+     read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
+     PROFILE="chill"
+     for tok in "${ARGS_TOKENS[@]}"; do
+       case "$tok" in
+         --profile=chill|--profile=assertive|--profile=strict)
+           PROFILE="${tok#--profile=}"
+           ;;
+       esac
+     done
+     ```
+   - 解決後の `$PROFILE` を materialize して `/pseudo-coderabbit-loop` に渡す (literal `<profile>` 禁止)
+   - 実例: `--profile=strict` / `--profile=assertive` / `--profile=chill`
    - actionable=0 まで反復
    - rate limit 無関係 (Codex ベース)
 2. **PR 作成** (`gh pr create --base <feature_branch> --head <feature_branch-slug>`)
 3. **Phase 6 本物 CodeRabbit** (`/coderabbit-review <pr>`)
    - Clear 3 段判定 (APPROVED / unresolved=0 / rate-limited marker 不在)
-   - rate limit ヒット時は `/pseudo-coderabbit-loop <pr>` に切替
+   - rate limit ヒット時は `/pseudo-coderabbit-loop <pr> --profile=$PROFILE` に切替 (Phase 4 で解決した `$PROFILE` を PR-mode fallback にも materialize 伝播)
+     - 実例: `/pseudo-coderabbit-loop 42 --profile=strict`
 4. **指摘対応**: 当該 worktree の agent に `SendMessage` で返す → 再修正 → 再 push
 5. **Phase 7 Codex セカンドオピニオン** (`/codex-team adversarial` or `harness:codex-sync`)
 
@@ -229,8 +245,16 @@ Plans.md 担当表から行削除、完了セクションに追記。
 
 サブタスク数 = 1 or `--max-parallel=1`:
 - Phase 1 の worktree 生成を skip
-- coordinator が直接 `/tdd-implement` v2 を起動
-- Phase 4 以降は同じ
+- coordinator が直接 `/tdd-implement` v2 を起動。**profile は解決済み実値を materialize して handoff**:
+
+  ```text
+  # テンプレート (Phase 4 で束縛した $PROFILE を使用)
+  /tdd-implement <task description> --profile=$PROFILE
+
+  # 実例 (PROFILE=strict の場合)
+  /tdd-implement "Add feature X" --profile=strict
+  ```
+- Phase 4 以降は同じ (rate-limit fallback でも `--profile=$PROFILE` を維持)
 
 ---
 

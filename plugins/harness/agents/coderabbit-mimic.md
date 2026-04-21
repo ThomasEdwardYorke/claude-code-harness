@@ -50,7 +50,7 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 ### Review types
 - `potential_issue` — 修正必要性が高い（バグ / セキュリティ / 契約違反）
 - `refactor_suggestion` — 品質向上の提案
-- `nitpick` — スタイル / 微小改善（`assertive` / `strict` のみ）
+- `nitpick` — スタイル / 微小改善。CodeRabbit 公式では **`assertive` mode で nitpick を出す** (https://docs.coderabbit.ai/reference/configuration)。`strict` は harness-local 拡張で nitpick の上限のみ強化する。`chill` では抑制。
 
 ### Severity
 - `critical` — システム失敗 / セキュリティ破綻 / データ喪失
@@ -73,9 +73,9 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 
 | profile | 有効カテゴリ | 上限 |
 |---|---|---|
-| `chill` | security / correctness / reliability / config / CI のみ。outside_diff は high-confidence のみ | 3 件 |
-| `assertive` | chill + test-gap / docs-gap / 中程度 refactor | 6 件 |
-| `strict` | assertive + nitpick まで。ただし既存 formatter 領域と duplicate は抑制 | 10 件 |
+| `chill` | security / correctness / reliability / config / CI のみ。outside_diff は high-confidence のみ。nitpick 抑制 | 3 件 |
+| `assertive` | chill + test-gap / docs-gap / 中程度 refactor + **nitpick** (CodeRabbit 公式 assertive mode と一致) | 6 件 |
+| `strict` | assertive と同カテゴリ + nitpick 上限拡張 (harness-local 拡張)。既存 formatter 領域と duplicate は抑制 | 10 件 |
 
 **上限を超える場合は severity が高いものを優先して削減**。「全部を言わないこと」が CodeRabbit の価値の一つ。
 
@@ -105,26 +105,54 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 
 ### Step 1. 準備
 
+Per-run の隔離ディレクトリを `mktemp -d` で作り、diff / analyzer 出力 / prompt / result / stderr を全てその配下に置く。共有 `/tmp/pseudo-cr-*` の直書きは並列実行・他ユーザー参照・残骸蓄積のリスクがあるため禁止。
+
 ```bash
+# 並列実行・他ユーザーからの参照を防ぐ per-run 作業ディレクトリ
+WORKDIR=$(mktemp -d "/tmp/pseudo-cr.XXXXXXXX")
+chmod 700 "$WORKDIR"                 # umask 077 相当 (他ユーザーから不可視)
+trap 'rm -rf "$WORKDIR"' EXIT        # 正常/異常どちらでも cleanup
+
 cd "$REPO_ROOT"
 git fetch origin "$BASE_BRANCH" 2>/dev/null || true
-git diff "origin/$BASE_BRANCH..HEAD" > /tmp/pseudo-cr-diff.patch
-git diff --name-only "origin/$BASE_BRANCH..HEAD" > /tmp/pseudo-cr-files.txt
+
+# base ref 解決 + fallback:
+#   1. origin/$BASE_BRANCH (fetch 成功時の通常ケース)
+#   2. local $BASE_BRANCH (fetch 失敗 / offline 環境)
+#   検証済み ref が無ければ hard error (exit 1)。
+#   HEAD~10 や HEAD への fallback は「空 diff を clean と誤判定する false-clear review」を
+#   生むため禁止 (A-6 r7 Major-7)。
+if git rev-parse --verify "origin/$BASE_BRANCH" >/dev/null 2>&1; then
+  BASE_REF="origin/$BASE_BRANCH"
+elif git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+  echo "WARN: origin/$BASE_BRANCH not found; falling back to local $BASE_BRANCH" >&2
+  BASE_REF="$BASE_BRANCH"
+else
+  echo "ERROR: no valid base ref found (origin/$BASE_BRANCH and local $BASE_BRANCH both missing). Aborting pseudo review to avoid false-clear review against empty diff." >&2
+  exit 1
+fi
+
+git diff "$BASE_REF..HEAD" > "$WORKDIR/diff.patch"
+git diff --name-only "$BASE_REF..HEAD" > "$WORKDIR/files.txt"
 ```
 
 `.coderabbit.yaml` が存在すれば読み取り、`path_instructions` / `reviews.profile` を取得。存在しなければ呼出元から受け取った値 or `chill` デフォルトを使う。
 
 ### Step 2. 静的解析（並列）
 
-検出した linter を並列実行し、JSON 出力を `/tmp/pseudo-cr-analyzers/` に蓄積。`jq` で findings に正規化。
+検出した linter を並列実行し、JSON 出力を `$WORKDIR/analyzers/` に蓄積。`jq` で findings に正規化。
 
 ```bash
-mkdir -p /tmp/pseudo-cr-analyzers
-# 例: Python プロジェクト
+mkdir -p "$WORKDIR/analyzers"
+# 空白・改行混じりのパスでも安全に渡せるよう NULL 区切り (git diff -z) + xargs -0 を使う。
+# `$(grep '.py$' files.txt)` の unquoted command substitution は unsafe なので禁止。
 if [ -f pyproject.toml ]; then
-  ruff check --output-format=json $(cat /tmp/pseudo-cr-files.txt | grep '\.py$') \
-    > /tmp/pseudo-cr-analyzers/ruff.json 2>/dev/null || true
-  # mypy, pylint, semgrep も同様（存在すれば）
+  # BASE_REF は Step 1 で解決済 (origin/$BASE_BRANCH → local → HEAD~10 → HEAD の fallback 対応)
+  git diff -z --name-only "$BASE_REF..HEAD" 2>/dev/null | \
+    awk -v RS='\0' -v ORS='\0' '/\.py$/' | \
+    xargs -0 -r ruff check --output-format=json -- \
+    > "$WORKDIR/analyzers/ruff.json" 2>/dev/null || true
+  # mypy, pylint, semgrep も同様 (存在すれば、同じ xargs -0 パターンで呼び出す)
 fi
 ```
 
@@ -133,15 +161,15 @@ fi
 Codex CLI に以下のプロンプトを送る:
 
 ```bash
-RESULT="/tmp/pseudo-cr-review-$(date +%s).json"
+RESULT="$WORKDIR/review.json"
 
-cat > /tmp/pseudo-cr-prompt.md <<'PROMPT'
+cat > "$WORKDIR/prompt.md" <<'PROMPT'
 You are a CodeRabbit-style pull request reviewer.
 
 ## Inputs
-- Full git diff: /tmp/pseudo-cr-diff.patch
-- Changed files: /tmp/pseudo-cr-files.txt
-- Static analyzer outputs: /tmp/pseudo-cr-analyzers/*.json (may be empty)
+- Full git diff: @@WORKDIR@@/diff.patch
+- Changed files: @@WORKDIR@@/files.txt
+- Static analyzer outputs: @@WORKDIR@@/analyzers/*.json (may be empty)
 - Code guidelines: <PROJECT_RULES_FILES_INLINED>
 - Path instructions (glob → instruction): <PATH_INSTRUCTIONS_INLINED>
 - Profile: <PROFILE>
@@ -193,15 +221,56 @@ You are a CodeRabbit-style pull request reviewer.
 9. Output strict JSON only. No prose outside the JSON object.
 PROMPT
 
+# quoted heredoc `<<'PROMPT'` で shell 展開を封じる (prompt 内の $VAR / $(...) が
+# Codex に渡る前に誤展開・command substitution されるリスクを回避)。
+# `@@WORKDIR@@` placeholder だけを sed で実パスに置換する方式に統一。
+# -i.bak は BSD sed / GNU sed 両互換 (backup を作ってすぐ rm)。
+sed -i.bak "s|@@WORKDIR@@|$WORKDIR|g" "$WORKDIR/prompt.md" && rm -f "$WORKDIR/prompt.md.bak"
+
 CODEX_COMPANION="$(ls -d "$HOME/.claude/plugins/cache/openai-codex/codex/"*/scripts/codex-companion.mjs 2>/dev/null | tail -n1)"
-cat /tmp/pseudo-cr-prompt.md | node "$CODEX_COMPANION" task --prompt-file /tmp/pseudo-cr-prompt.md --effort medium > "$RESULT" 2>&1
+STDERR_LOG="$WORKDIR/codex-stderr.log"
+# codex-companion.mjs の readTaskPrompt は --prompt-file が指定されていれば
+# その内容を優先し、piped stdin は silently drop する。
+# 二重入力 (cat pipe + --prompt-file) は誤解を招くため --prompt-file 単独で呼ぶ。
+#
+# codex-companion.mjs は progress reporter が stderr に `[codex] ...` を出すため、
+# `2>&1` で混ぜると $RESULT の strict JSON 前提が壊れる。stderr は別ファイルに分離し、
+# parse 失敗時のデバッグ用に保持する (Step 4 で使用)。
+node "$CODEX_COMPANION" task --prompt-file "$WORKDIR/prompt.md" --effort medium > "$RESULT" 2>"$STDERR_LOG"
 ```
 
 ### Step 4. 結果の post-process
 
-- JSON を parse して findings を severity 降順にソート
+`$RESULT` の JSON 妥当性を検証。validator は `jq` を優先、無ければ `python3 -m json.tool`、さらに無ければ `node -e` に degrade する。3 つとも不在ならば「未検証」警告を出しつつ post-process を継続する (silently 崩壊させない)。
+
+```bash
+# 3 段 fallback で JSON 検証 (command -v で明示的にバイナリ存在確認)
+JSON_OK="unchecked"
+if command -v jq >/dev/null 2>&1; then
+  jq empty "$RESULT" 2>/dev/null && JSON_OK=yes || JSON_OK=no
+elif command -v python3 >/dev/null 2>&1; then
+  python3 -m json.tool "$RESULT" >/dev/null 2>&1 && JSON_OK=yes || JSON_OK=no
+elif command -v node >/dev/null 2>&1; then
+  node -e "try{JSON.parse(require('fs').readFileSync(process.argv[1],'utf-8'));process.exit(0)}catch(e){process.exit(1)}" \
+    "$RESULT" 2>/dev/null && JSON_OK=yes || JSON_OK=no
+else
+  echo "WARN: no JSON validator available (jq / python3 / node all missing); proceeding without validation" >&2
+fi
+
+if [ "$JSON_OK" = "no" ]; then
+  echo "ERROR: Codex task returned non-JSON output." >&2
+  echo "---STDERR content (tail -n 20)---" >&2
+  tail -n 20 "$STDERR_LOG" >&2
+  echo "---end STDERR---" >&2
+  # WORKDIR は trap で自動 cleanup される
+  exit 1
+fi
+```
+
+- post-process は JSON を parse して findings を severity 降順にソート
 - Profile 上限で切り詰め
 - `path_instructions` で explicit に reject されている findings を drop
+- 正常終了時は trap で `WORKDIR` ごと cleanup (STDERR_LOG も含めて削除)
 - 呼出元に以下の形式で返す:
 
 ```json
