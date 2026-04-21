@@ -29,15 +29,41 @@ export interface CodexConfig {
 }
 
 export interface WorkModeConfig {
-  /** If true, R05 (rm -rf confirmation) is bypassed in work mode. */
+  /**
+   * If true, R05 (`rm -rf` interactive confirmation) is bypassed when
+   * harness is invoked in work mode. Intended for trusted agent workflows
+   * that need non-interactive destructive cleanup (e.g. automated test
+   * scratch directories). Leaves R10 (`protectedDirectories`) intact —
+   * those directories are still refused.
+   */
   bypassRmRf: boolean;
-  /** If true, `git push --force` warnings are downgraded in work mode. */
+  /**
+   * If true, the `git push --force` warning surfaced by R06 is downgraded
+   * in work mode (the push itself is still executed, but the prompt is
+   * skipped). Leaves main/master push protection rules elsewhere intact.
+   */
   bypassGitPush: boolean;
 }
 
 export interface TamperingConfig {
   /** Decision returned when tampering patterns are detected. */
   severity: TamperingSeverity;
+}
+
+/**
+ * Per-project override of harness quality gates consumed by `stop.ts` to
+ * emit end-of-turn reminders. Each flag corresponds to a phase in
+ * `/tdd-implement` and `/harness-work`.
+ */
+export interface QualityGatesConfig {
+  /** Phase 2-3 TDD loop (Red → Green → Refactor). */
+  enforceTddImplement: boolean;
+  /** Phase 5.5 local Codex-based pseudo CodeRabbit pre-review. */
+  enforcePseudoCoderabbit: boolean;
+  /** Phase 6 real CodeRabbit PR review loop. */
+  enforceRealCoderabbit: boolean;
+  /** Phase 7 Codex adversarial second-opinion review. */
+  enforceCodexSecondOpinion: boolean;
 }
 
 export interface WorkConfig {
@@ -58,6 +84,43 @@ export interface WorkConfig {
    * /harness-plan sync. If unset, sync skips change-log scanning.
    */
   changeLogFile?: string;
+  /**
+   * Max concurrent tasks when `/harness-work` dispatches parallel execution
+   * via `Task` tool (not via `/parallel-worktree`). Mirrors the `worktree`
+   * family cap but is independently tunable so coordinators can keep a
+   * lower in-process fan-out while still allowing wider multi-worktree
+   * runs. 1-16.
+   */
+  maxParallel: number;
+  /**
+   * Label ordering used by `/harness-plan` / `/harness-work` when picking
+   * the next task (first match wins). Empty array disables label-priority
+   * ordering entirely and falls back to file order.
+   */
+  labelPriority: string[];
+  /**
+   * Labels that bypass the "minor" quick-path and force full quality
+   * gates regardless of work-item size (e.g. `[security]`, `[data]`).
+   */
+  criticalLabels: string[];
+  /**
+   * Optional shell command that `/harness-work` runs as the canonical
+   * test step. When unset, hooks fall back to per-stack auto-detection
+   * (`detectAvailableChecks()` in `subagent-stop.ts`).
+   */
+  testCommand?: string;
+  /**
+   * Per-project override of harness quality gates. When a flag is false,
+   * the corresponding phase is still allowed but its reminder is
+   * suppressed in the Stop hook.
+   */
+  qualityGates: QualityGatesConfig;
+  /**
+   * When true, `/harness-work` aborts the batch on the first failing task
+   * instead of running remaining tasks in isolation. Mirrors
+   * `vitest --bail 1`-style semantics.
+   */
+  failFast: boolean;
 }
 
 export interface SecurityConfig {
@@ -69,6 +132,62 @@ export interface SecurityConfig {
   projectChecklistPath?: string;
   /** Enabled security check categories. */
   enabledChecks: string[];
+}
+
+/**
+ * Worktree orchestration mode. `true` / `false` force on/off; `"auto"`
+ * delegates to `/harness-work` auto-detection (task-count based).
+ */
+export type WorktreeEnabledMode = boolean | "auto";
+
+export interface WorktreeConfig {
+  /** Whether /parallel-worktree and /harness-work may use git worktrees. */
+  enabled: WorktreeEnabledMode;
+  /** Max concurrent worktree sessions (1-16). */
+  maxParallel: number;
+  /** Parent directory (relative to `projectRoot`) where sibling worktrees are created. */
+  parentDir: string;
+  /** Optional prefix for generated worktree directory names (e.g. `myproj-wt-`). */
+  prefix?: string;
+  /** Optional base branch for new worktree branches (overrides `git symbolic-ref refs/remotes/origin/HEAD`). */
+  defaultBaseBranch?: string;
+}
+
+/**
+ * Pseudo-CodeRabbit review profile. `chill` / `assertive` match the
+ * upstream CodeRabbit profiles verbatim; `strict` is a harness-local
+ * extension that raises the nitpick surface.
+ */
+export type PseudoCoderabbitProfile = "chill" | "assertive" | "strict";
+
+export interface TddEnforceConfig {
+  /** If true, `/tdd-implement` refuses to proceed without a failing Red test. */
+  alwaysRequireRedTest: boolean;
+  /** If true, `[docs]`-labelled tasks may skip the Red-test requirement. */
+  allowSkipOnDocsTasks: boolean;
+  /** Pseudo CodeRabbit review profile. */
+  pseudoCoderabbitProfile: PseudoCoderabbitProfile;
+  /** Max Codex review loop iterations per Phase 5 round. */
+  maxCodexReviewRetries: number;
+}
+
+export interface CodeRabbitConfig {
+  /** GitHub login of the CodeRabbit bot (for comment authorship checks). */
+  botLogin: string;
+  /**
+   * Minutes to look back when deciding whether a `rate-limited` / `Reviews
+   * paused` marker is still active. Defaults to 15 per CodeRabbit Pro
+   * cooldown semantics.
+   */
+  ratelimitCheckWindowMinutes: number;
+  /** If true, PR review state = "APPROVED" is treated as an immediate clear signal. */
+  approvedStateAsClear: boolean;
+  /** Max pseudo-CodeRabbit loop iterations before escalating to real CodeRabbit. */
+  maxPseudoLoopIterations: number;
+  /** CodeRabbit Pro "5 reviews / 1 hour" bucket size (used for local rate prediction). */
+  proBucketSize: number;
+  /** Window (in minutes) for the CodeRabbit Pro review bucket. */
+  proBucketWindowMinutes: number;
 }
 
 export interface HarnessConfig {
@@ -96,6 +215,9 @@ export interface HarnessConfig {
   tampering: TamperingConfig;
   work: WorkConfig;
   security: SecurityConfig;
+  worktree: WorktreeConfig;
+  tddEnforce: TddEnforceConfig;
+  codeRabbit: CodeRabbitConfig;
 }
 
 // ============================================================
@@ -123,6 +245,16 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     // Default markers support ja / en projects. Override via harness.config.json.
     assignmentSectionMarkers: ["担当表", "Assignment", "In Progress"],
     handoffFiles: [],
+    maxParallel: 4,
+    labelPriority: [],
+    criticalLabels: [],
+    qualityGates: {
+      enforceTddImplement: true,
+      enforcePseudoCoderabbit: true,
+      enforceRealCoderabbit: true,
+      enforceCodexSecondOpinion: true,
+    },
+    failFast: true,
   },
   security: {
     enabledChecks: [
@@ -132,22 +264,65 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       "dependencies",
     ],
   },
+  worktree: {
+    enabled: "auto",
+    maxParallel: 4,
+    parentDir: "..",
+  },
+  tddEnforce: {
+    alwaysRequireRedTest: true,
+    allowSkipOnDocsTasks: true,
+    pseudoCoderabbitProfile: "chill",
+    maxCodexReviewRetries: 3,
+  },
+  codeRabbit: {
+    botLogin: "coderabbitai",
+    ratelimitCheckWindowMinutes: 15,
+    approvedStateAsClear: true,
+    maxPseudoLoopIterations: 5,
+    proBucketSize: 5,
+    proBucketWindowMinutes: 60,
+  },
 };
 
 // ============================================================
 // Loader
 // ============================================================
 
-/** Deep-merge user config over defaults (shallow for scalar fields). */
+/**
+ * Deep-merge user config over defaults.
+ *
+ * Nested objects are merged one level deep (so that unspecified child keys
+ * inherit defaults). `work.qualityGates` is merged an extra level deep
+ * because flipping one gate should not require re-declaring the others.
+ * Arrays are not merged — a user-provided array replaces the default
+ * wholesale, matching the intuition that config authors own the list.
+ */
 function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
+  const partialWork: Partial<WorkConfig> = partial.work ?? {};
+  const mergedWork: WorkConfig = {
+    ...DEFAULT_CONFIG.work,
+    ...partialWork,
+    qualityGates: {
+      ...DEFAULT_CONFIG.work.qualityGates,
+      ...(partialWork.qualityGates ?? {}),
+    },
+  };
+
   return {
     ...DEFAULT_CONFIG,
     ...partial,
     codex: { ...DEFAULT_CONFIG.codex, ...(partial.codex ?? {}) },
     workMode: { ...DEFAULT_CONFIG.workMode, ...(partial.workMode ?? {}) },
     tampering: { ...DEFAULT_CONFIG.tampering, ...(partial.tampering ?? {}) },
-    work: { ...DEFAULT_CONFIG.work, ...(partial.work ?? {}) },
+    work: mergedWork,
     security: { ...DEFAULT_CONFIG.security, ...(partial.security ?? {}) },
+    worktree: { ...DEFAULT_CONFIG.worktree, ...(partial.worktree ?? {}) },
+    tddEnforce: {
+      ...DEFAULT_CONFIG.tddEnforce,
+      ...(partial.tddEnforce ?? {}),
+    },
+    codeRabbit: { ...DEFAULT_CONFIG.codeRabbit, ...(partial.codeRabbit ?? {}) },
   };
 }
 
