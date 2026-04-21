@@ -206,7 +206,7 @@
           "type": "array",
           "items": { "type": "string" },
           "default": ["src", "app"],
-          "description": "Directory names checked for Python source when picking lint/typecheck targets. A directory is included only if it exists at `projectRoot`. Default omits `backend/` to avoid forcing a layout assumption; projects with a `backend/` tree add it explicitly."
+          "description": "Directory names checked for Python source when picking lint/typecheck targets. A directory is included only if it exists at `projectRoot`. Default omits `backend/` to avoid forcing a layout assumption; projects with a `backend/` tree add it explicitly. Edge cases: an **empty array** `[]` or any non-string / empty-string entry is treated as a malformed override and falls back to the default (this is safe — it never produces an unexpected empty lint target). To intentionally skip Python linting, list a real-but-empty directory (e.g. `[\".python-lint-disabled\"]`) so that `detectAvailableChecks()` resolves it to zero existing targets and skips ruff / mypy."
         }
       }
     },

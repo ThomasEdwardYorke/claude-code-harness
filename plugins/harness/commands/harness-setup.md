@@ -272,6 +272,27 @@ Consumed by `/harness-work`, `/tdd-implement`, `/parallel-worktree`, and
   `dependencies`; `project-specific` becomes effective only when a
   checklist path is set).
 
+  **⚠ Array-wholesale override:** providing this field replaces the
+  entire default list. To add `project-specific` to the baseline, list
+  every baseline entry you still want:
+
+  ```json
+  "security": {
+    "enabledChecks": [
+      "api-key-leak",
+      "injection",
+      "file-permissions",
+      "dependencies",
+      "project-specific"
+    ]
+  }
+  ```
+
+  The merge semantics are documented and tested (see
+  `config.test.ts` §security.enabledChecks partial override). Writing
+  `"enabledChecks": ["project-specific"]` silently disables the four
+  baselines.
+
 ### Codex companion (`codex-sync` agent)
 
 - `codex.enabled` — whether to surface the `codex-sync` agent.

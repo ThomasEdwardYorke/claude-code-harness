@@ -151,5 +151,20 @@ describe("migrate()", () => {
         resolve("/tmp/proj", ".claude", "state", "harness.json"),
       );
     });
+
+    it("accepts a platform-native absolute path and keeps its components verbatim", () => {
+      // Exercise an absolute path that is already well-formed for the
+      // current platform (POSIX: `/tmp/proj`, Windows: the current
+      // working drive's `/tmp/proj`). Use `process.cwd()` root as a
+      // portable anchor so the test is meaningful on both sides of the
+      // OS boundary.
+      const nativeRoot = process.cwd(); // e.g. `/Users/…` or `C:\\Users\\…`
+      const expected = resolve(nativeRoot, ".claude", "state", "harness.json");
+      const actual = defaultStatePath(nativeRoot);
+      expect(actual).toBe(expected);
+      // The result is absolute on whatever platform the test runs on.
+      expect(actual.length).toBeGreaterThan(nativeRoot.length);
+      expect(actual.endsWith("harness.json")).toBe(true);
+    });
   });
 });

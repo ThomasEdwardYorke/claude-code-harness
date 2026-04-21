@@ -195,7 +195,16 @@ export async function route(
   }
 }
 
-function errorToResult(err: unknown): HookResult {
+/**
+ * Safe fallback used by `main()` when the dispatcher or any handler throws.
+ *
+ * Exported so that tests can verify the end-to-end contract — a handler
+ * that throws must still produce a valid `HookResult` rather than leaking
+ * the exception (which would otherwise crash Claude Code's hook runner).
+ * Every hook path eventually flows through `main()` via `scripts/hook-dispatcher.mjs`,
+ * which relies on this fallback to keep the user session alive.
+ */
+export function errorToResult(err: unknown): HookResult {
   const message = err instanceof Error ? err.message : String(err);
   return {
     decision: "approve",

@@ -349,8 +349,23 @@ export const DEFAULT_CONFIG: HarnessConfig = {
  * Nested objects are merged one level deep (so that unspecified child keys
  * inherit defaults). `work.qualityGates` is merged an extra level deep
  * because flipping one gate should not require re-declaring the others.
- * Arrays are not merged — a user-provided array replaces the default
+ * Arrays are **not** merged — a user-provided array replaces the default
  * wholesale, matching the intuition that config authors own the list.
+ *
+ * **Security-relevant consequence of the array-wholesale rule**:
+ * Overriding `security.enabledChecks` (or any array field) drops the
+ * default entries. A config like `{"security": {"enabledChecks": ["api-key-leak"]}}`
+ * silently disables the `injection`, `file-permissions`, and `dependencies`
+ * baseline checks. Projects customising the list should include every
+ * baseline entry they want to keep, not just their additions. The schema's
+ * `default` field documents the baseline set.
+ *
+ * Runtime enum validation for `release.strategy` and
+ * `tddEnforce.pseudoCoderabbitProfile` falls back to the DEFAULT_CONFIG
+ * value (plus a `stderr` warning) when a non-enum string is supplied —
+ * this keeps consumer code (`/harness-release`, `/pseudo-coderabbit-loop`)
+ * from having to defensively handle an unexpected fifth case in their
+ * switch statements.
  */
 function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
   const partialWork: Partial<WorkConfig> = partial.work ?? {};
@@ -372,29 +387,92 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     work: mergedWork,
     security: { ...DEFAULT_CONFIG.security, ...(partial.security ?? {}) },
     worktree: { ...DEFAULT_CONFIG.worktree, ...(partial.worktree ?? {}) },
-    tddEnforce: {
+    tddEnforce: validateTddEnforce({
       ...DEFAULT_CONFIG.tddEnforce,
       ...(partial.tddEnforce ?? {}),
-    },
+    }),
     codeRabbit: { ...DEFAULT_CONFIG.codeRabbit, ...(partial.codeRabbit ?? {}) },
     tooling: { ...DEFAULT_CONFIG.tooling, ...(partial.tooling ?? {}) },
-    release: { ...DEFAULT_CONFIG.release, ...(partial.release ?? {}) },
+    release: validateRelease({
+      ...DEFAULT_CONFIG.release,
+      ...(partial.release ?? {}),
+    }),
   };
+}
+
+/**
+ * Guard against `pseudoCoderabbitProfile` being set to a string outside
+ * the allowed union (e.g. a typo like `"strict1"` or an older profile
+ * name). Falls back to the default and writes a single warning line to
+ * stderr so consumers (pseudo-coderabbit-loop) never need a fifth
+ * `default:` branch in their switch.
+ */
+const VALID_CODERABBIT_PROFILES: readonly PseudoCoderabbitProfile[] = [
+  "chill",
+  "assertive",
+  "strict",
+];
+function validateTddEnforce(cfg: TddEnforceConfig): TddEnforceConfig {
+  if (!VALID_CODERABBIT_PROFILES.includes(cfg.pseudoCoderabbitProfile)) {
+    process.stderr.write(
+      `[harness config] tddEnforce.pseudoCoderabbitProfile=${JSON.stringify(
+        cfg.pseudoCoderabbitProfile,
+      )} is not one of ${JSON.stringify(
+        VALID_CODERABBIT_PROFILES,
+      )}; falling back to "${DEFAULT_CONFIG.tddEnforce.pseudoCoderabbitProfile}".\n`,
+    );
+    return {
+      ...cfg,
+      pseudoCoderabbitProfile:
+        DEFAULT_CONFIG.tddEnforce.pseudoCoderabbitProfile,
+    };
+  }
+  return cfg;
+}
+
+const VALID_RELEASE_STRATEGIES: readonly ReleaseStrategy[] = [
+  "two-branch",
+  "three-branch",
+];
+function validateRelease(cfg: ReleaseConfig): ReleaseConfig {
+  if (!VALID_RELEASE_STRATEGIES.includes(cfg.strategy)) {
+    process.stderr.write(
+      `[harness config] release.strategy=${JSON.stringify(
+        cfg.strategy,
+      )} is not one of ${JSON.stringify(
+        VALID_RELEASE_STRATEGIES,
+      )}; falling back to "${DEFAULT_CONFIG.release.strategy}".\n`,
+    );
+    return { ...cfg, strategy: DEFAULT_CONFIG.release.strategy };
+  }
+  return cfg;
 }
 
 /**
  * Load harness config from `<projectRoot>/harness.config.json`.
  * Returns defaults if the file does not exist.
- * Throws if the file exists but is not valid JSON — callers should be
- * prepared to fall back to defaults via a try/catch if they prefer
+ * Throws if the file exists but is not valid JSON **or** if the parsed
+ * value is not a JSON object (e.g. `42`, `[]`, `null`) — callers should
+ * be prepared to fall back to defaults via a try/catch if they prefer
  * fail-open behaviour.
  */
 export function loadConfig(projectRoot: string): HarnessConfig {
   const path = resolve(projectRoot, "harness.config.json");
   if (!existsSync(path)) return DEFAULT_CONFIG;
   const raw = readFileSync(path, "utf-8");
-  const parsed = JSON.parse(raw) as Partial<HarnessConfig>;
-  return mergeConfig(parsed);
+  const parsed: unknown = JSON.parse(raw);
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    Array.isArray(parsed)
+  ) {
+    throw new Error(
+      `harness.config.json must be a JSON object (got ${
+        parsed === null ? "null" : Array.isArray(parsed) ? "array" : typeof parsed
+      })`,
+    );
+  }
+  return mergeConfig(parsed as Partial<HarnessConfig>);
 }
 
 /**

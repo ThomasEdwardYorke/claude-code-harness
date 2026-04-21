@@ -67,8 +67,10 @@ function runCiCheck(
  * を使うプロジェクトは明示 override する)。
  *
  * 設計メモ:
- * - Codex `M-1A` fail-open 方針 (pre-compact.ts / task-lifecycle.ts と同じ):
- *   config の shape が壊れていても throw せず default にフォールバック。
+ * - fail-open 方針 (pre-compact.ts / task-lifecycle.ts と同じ): config の shape が
+ *   壊れていても throw せず default にフォールバック。ただし `stop.ts` の先例に
+ *   従い、default に落ちた **理由** を `stderr` に emit して silent failure を
+ *   防ぐ (コマンド本体は止めない)。
  * - `backend/src/app` いずれかを検出できた場合のみ ruff / mypy を登録、
  *   pytest は `tests/` 独立判定で別枝。
  */
@@ -78,6 +80,10 @@ function resolvePythonCandidateDirs(projectRoot: string): string[] {
     const config = loadConfigSafe(projectRoot);
     const raw = (config.tooling as { pythonCandidateDirs?: unknown } | undefined)
       ?.pythonCandidateDirs;
+    if (raw === undefined) {
+      // 未指定は静かに default で OK (よくある case)。
+      return fallback;
+    }
     if (
       Array.isArray(raw) &&
       raw.length > 0 &&
@@ -85,8 +91,18 @@ function resolvePythonCandidateDirs(projectRoot: string): string[] {
     ) {
       return raw as string[];
     }
+    // Shape-invalid (non-array / empty array / non-string / empty-string entries)。
+    // 警告し、安全側の default に落ちる。
+    process.stderr.write(
+      "[harness subagent-stop] tooling.pythonCandidateDirs shape invalid; using defaults " +
+        `["src", "app"] (got ${JSON.stringify(raw)})\n`,
+    );
     return fallback;
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `[harness subagent-stop] tooling.pythonCandidateDirs resolution failed; using defaults: ${msg}\n`,
+    );
     return fallback;
   }
 }

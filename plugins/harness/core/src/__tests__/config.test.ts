@@ -230,6 +230,96 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.work.labelPriority).toEqual(["security", "data"]);
       expect(cfg.work.criticalLabels).toEqual(["security"]);
     });
+
+    it("security.enabledChecks partial override is wholesale — baseline checks drop out", () => {
+      // Safety-critical documented caveat: if a user adds one check, they
+      // lose the four baseline checks unless they re-list them. The test
+      // ensures this behavior is covered so that if a future change flips
+      // to deep-merge, the test catches the silent semantics change.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          security: {
+            enabledChecks: ["api-key-leak", "project-specific"],
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.security.enabledChecks).toEqual([
+        "api-key-leak",
+        "project-specific",
+      ]);
+      // Baseline checks NOT kept (documented wholesale-replace semantics).
+      expect(cfg.security.enabledChecks).not.toContain("injection");
+      expect(cfg.security.enabledChecks).not.toContain("file-permissions");
+      expect(cfg.security.enabledChecks).not.toContain("dependencies");
+    });
+  });
+
+  describe("runtime enum validation (pseudoCoderabbitProfile / release.strategy)", () => {
+    let stderrWrites: string[];
+    let originalWrite: typeof process.stderr.write;
+
+    beforeEach(() => {
+      stderrWrites = [];
+      originalWrite = process.stderr.write.bind(process.stderr);
+      // Capture stderr for warning assertions. vitest doesn't patch stderr
+      // by default, so we swap the write implementation directly.
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+    });
+
+    afterEach(() => {
+      (process.stderr.write as unknown as typeof originalWrite) = originalWrite;
+    });
+
+    it("loadConfig falls back to default pseudoCoderabbitProfile and warns on a non-enum value", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          tddEnforce: { pseudoCoderabbitProfile: "strict1" }, // typo
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.tddEnforce.pseudoCoderabbitProfile).toBe("chill"); // default
+      const warnings = stderrWrites.join("");
+      expect(warnings).toContain("tddEnforce.pseudoCoderabbitProfile");
+      expect(warnings).toContain("strict1");
+      expect(warnings).toContain("chill");
+    });
+
+    it("loadConfig falls back to default release.strategy and warns on a non-enum value", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          release: { strategy: "single-branch" }, // not in union
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.release.strategy).toBe("three-branch"); // default
+      const warnings = stderrWrites.join("");
+      expect(warnings).toContain("release.strategy");
+      expect(warnings).toContain("single-branch");
+      expect(warnings).toContain("three-branch");
+    });
+
+    it("valid enum values pass through without warning", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          tddEnforce: { pseudoCoderabbitProfile: "assertive" },
+          release: { strategy: "two-branch" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.tddEnforce.pseudoCoderabbitProfile).toBe("assertive");
+      expect(cfg.release.strategy).toBe("two-branch");
+      expect(stderrWrites.join("")).toBe("");
+    });
   });
 
   describe("Phase δ sections (tooling / release)", () => {

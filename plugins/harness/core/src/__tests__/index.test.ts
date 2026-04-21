@@ -16,7 +16,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { route } from "../index.js";
+import { route, errorToResult } from "../index.js";
 
 function mkTmp(prefix: string): string {
   const dir = join(
@@ -215,12 +215,18 @@ describe("route() dispatcher — hook integration", () => {
       expect(result.reason).not.toContain("本物 CodeRabbit 必須");
     });
 
-    it("returns no reason when qualityGates config is present but all flags are false", async () => {
+    it("returns no reason when every qualityGate is explicitly disabled", async () => {
+      // All four gates explicitly false — loadConfigSafe merges user values
+      // over defaults, so setting the full set here is required to produce
+      // an empty reminder list (unlike the earlier impl that read raw JSON
+      // and counted missing keys as false).
       const config = {
         work: {
           qualityGates: {
             enforceTddImplement: false,
             enforcePseudoCoderabbit: false,
+            enforceRealCoderabbit: false,
+            enforceCodexSecondOpinion: false,
           },
         },
       };
@@ -236,6 +242,36 @@ describe("route() dispatcher — hook integration", () => {
 
       expect(result.decision).toBe("approve");
       expect(result.reason).toBeUndefined();
+    });
+
+    it("partial qualityGates override keeps default-enabled gates in the reminder (mergeConfig semantics)", async () => {
+      // Flip enforceTddImplement to false; other three default to true.
+      // Previously stop.ts read raw JSON and treated unset gates as false,
+      // which silently disabled the three real defaults. The hook now
+      // routes through loadConfigSafe() so default-true gates stay enabled
+      // under partial user overrides.
+      const config = {
+        work: {
+          qualityGates: {
+            enforceTddImplement: false,
+          },
+        },
+      };
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify(config),
+      );
+
+      const result = await route("stop", {
+        hook_event_name: "Stop",
+        cwd: tmpRoot,
+      });
+
+      expect(result.reason).toBeDefined();
+      expect(result.reason).not.toContain("TDD 必須");
+      expect(result.reason).toContain("疑似 CodeRabbit 必須");
+      expect(result.reason).toContain("本物 CodeRabbit 必須");
+      expect(result.reason).toContain("Codex セカンドオピニオン必須");
     });
   });
 
@@ -265,5 +301,54 @@ describe("route() dispatcher — hook integration", () => {
       expect(result.decision).toBe("approve");
       expect(result.reason).toContain("Unknown hook type");
     });
+  });
+});
+
+describe("errorToResult() — fail-safe contract", () => {
+  // Guards the fail-open path that main() uses when route() or any
+  // handler throws. A regression here would let an exception crash the
+  // hook runner, which would in turn stall Claude Code sessions.
+
+  it("returns decision=approve for any Error thrown by a handler", () => {
+    const result = errorToResult(new Error("boom"));
+    expect(result.decision).toBe("approve");
+    expect(result.reason).toContain("Core engine error (safe fallback)");
+    expect(result.reason).toContain("boom");
+  });
+
+  it("stringifies non-Error throws (string / number / object) safely", () => {
+    expect(errorToResult("string-throw").reason).toContain("string-throw");
+    expect(errorToResult(42).reason).toContain("42");
+    expect(errorToResult({ complex: "object" }).reason).toContain("[object Object]");
+  });
+
+  it("includes the class name of Error subclasses via their message", () => {
+    class MyCustomError extends Error {
+      constructor() {
+        super("my custom message");
+        this.name = "MyCustomError";
+      }
+    }
+    const result = errorToResult(new MyCustomError());
+    expect(result.reason).toContain("my custom message");
+  });
+
+  it("never returns a decision other than 'approve' (fail-open guarantee)", () => {
+    // Simulate a variety of throwable shapes to confirm the invariant.
+    const cases: unknown[] = [
+      new Error(""),
+      "",
+      0,
+      false,
+      null,
+      undefined,
+      Symbol("x"),
+    ];
+    for (const err of cases) {
+      const result = errorToResult(err);
+      expect(result.decision).toBe("approve");
+      expect(typeof result.reason).toBe("string");
+      expect(result.reason!.length).toBeGreaterThan(0);
+    }
   });
 });
