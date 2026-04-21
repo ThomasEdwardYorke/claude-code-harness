@@ -51,6 +51,13 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>|--te
 
 **単純な件数ではなく「独立グループ数」で判定**する (Turbo 流 DAG 先行)。`depends_on` 付きの連鎖タスクは 1 グループとして数える。
 
+> **実装状況 (Phase 1 申送 M-17)**: 現在の harness-work v4 実装は「**件数ベース判定** (task count = 1 / 2-3 / 4+)」で Solo / Parallel / Breezing を選ぶ簡易版。以下に示す **依存グラフ** (`depends_on` DAG) / **`wt:*` worktree ラベル** 判定は **spec only** で、実体化は **Phase 2 スコープ** (Model B 実戦投入後)。暫定運用では:
+> - 独立性 / 依存性は coordinator (人間 or Claude) が Plans.md を読んで判断
+> - `wt:avoid` ラベルは `/harness-work --sequential` で明示強制
+> - `wt:recommended` ラベルが付いたタスクは default で worktree 経路に載る
+>
+> 完全な DAG 判定は Claude Agent SDK or dedicated Python/TS parser で実装予定 (次セッション以降)。
+
 ### 判定フロー
 
 ```python
@@ -235,36 +242,102 @@ fi
 # (Anthropic 公式 slash command の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` (0-based、`$0` が第1引数) のみ保証。`${PROFILE}` は
 # undocumented なので、coordinator が Skill 呼出前に literal `${PROFILE}` を `chill` 等に置換する責務)。
 #
-# argv 単位の case 文完全一致: `--profile=strict1` / `--profile=chill-something` を誤受理しない。
+# Shell 互換 (bash 必須): `read -r -a` / 配列 0-based / `unset 'arr[idx]'` は bash 拡張で、
+# zsh / dash / POSIX sh では silent に degrade する。BASH_VERSION を明示確認して fail-fast。
+# Claude Code の Bash tool は通常 /bin/bash で実行されるため本 guard は保険。
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "ERROR: /harness-work argv parser requires bash (BASH_VERSION unset)." >&2
+  echo "       手動実行時は 'bash -c \"/harness-work ...\"' で包んでください。" >&2
+  exit 1
+fi
+# zsh で呼ばれた場合の最後の保険 (exec 失敗しても BASH_VERSION check で既に停止済)。
+[ -n "${ZSH_VERSION:-}" ] && emulate -L bash
+
+# argv 単位の case 文完全一致 + 末尾 token 限定: `--profile=strict1` / `--profile=chill-something` を誤受理せず、
+# かつ task description 本文の `--profile=assertive` 的な引用文言を option と誤認しない。
 ARG_PROFILE=""
 # $ARGUMENTS を配列に読み込み (bash の word splitting を明示)。
 # 空白を含む値 (例 `--foo="bar baz"`) は未サポート。
 read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
-for tok in "${ARGS_TOKENS[@]}"; do
-  case "$tok" in
+LAST_IDX=$((${#ARGS_TOKENS[@]} - 1))
+if [ "$LAST_IDX" -ge 0 ]; then
+  LAST_TOK="${ARGS_TOKENS[$LAST_IDX]}"
+  case "$LAST_TOK" in
     --profile=chill|--profile=assertive|--profile=strict)
-      ARG_PROFILE="${tok#--profile=}"
+      ARG_PROFILE="${LAST_TOK#--profile=}"
       ;;
     --profile=*)
-      echo "WARN: invalid --profile='${tok#--profile=}' (must be chill|assertive|strict); ignored" >&2
+      echo "WARN: invalid --profile='${LAST_TOK#--profile=}' (must be chill|assertive|strict); ignored" >&2
       ;;
   esac
+fi
+
+# 末尾以外の --profile= は WARN 出す (CodeRabbit PR #1 回帰防止):
+# 旧実装は全 token scan だったため、`/harness-work --profile=assertive T-12` のような並びが
+# 許容されていた。末尾限定に変えたことで silent ignore するのを防ぐため、中間位置の
+# --profile= を検出時に明示 WARN する。
+for i in "${!ARGS_TOKENS[@]}"; do
+  if [ "$i" != "$LAST_IDX" ]; then
+    case "${ARGS_TOKENS[$i]}" in
+      --profile=*)
+        echo "WARN: --profile='${ARGS_TOKENS[$i]#--profile=}' at position $i is ignored; only the LAST token is parsed as --profile= option." >&2
+        ;;
+    esac
+  fi
 done
 
 # harness.config.json key path は実装とドキュメントを `.tddEnforce.pseudoCoderabbitProfile` に統一。
 # JSON 破損時は WARN を出して silent fallback を避ける。
+# 取得値は allowlist 検証してから採用する (typo や非公式値が downstream に流れないよう)。
 CFG_PROFILE=""
 if [ -f harness.config.json ] && command -v jq >/dev/null 2>&1; then
   if ! jq empty harness.config.json 2>/dev/null; then
     echo "WARN: harness.config.json is not valid JSON; skipping config-level profile override" >&2
   else
-    CFG_PROFILE=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // empty' harness.config.json 2>/dev/null || true)
+    CFG_PROFILE_RAW=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // empty' harness.config.json 2>/dev/null || true)
+    case "$CFG_PROFILE_RAW" in
+      chill|assertive|strict)
+        CFG_PROFILE="$CFG_PROFILE_RAW"
+        ;;
+      "")
+        : # empty はそのまま (no override)
+        ;;
+      *)
+        echo "WARN: harness.config.json .tddEnforce.pseudoCoderabbitProfile='$CFG_PROFILE_RAW' is not in allowlist (chill|assertive|strict); ignored" >&2
+        ;;
+    esac
   fi
 fi
 
 PROFILE="${ARG_PROFILE:-${CFG_PROFILE:-$PROFILE}}"
 export PROFILE
 echo "Resolved profile (arg > config > yaml > chill): $PROFILE"
+
+# --no-commit flag 抽出 (Phase 1 申送 M-12: parallel 経路への伝播規約)。
+# 位置は任意 (末尾 token の --profile= と並ばない、--no-commit 単独で末尾に来ることもある)
+# なので全 token scan で拾う。Plans.md 駆動で自動 commit を抑制したいケース (CodeRabbit 反復時 /
+# 手動レビュー前の段階的確認) で使う。
+NO_COMMIT=""
+for tok in "${ARGS_TOKENS[@]}"; do
+  case "$tok" in
+    --no-commit) NO_COMMIT="--no-commit" ;;
+  esac
+done
+export NO_COMMIT
+echo "NO_COMMIT: ${NO_COMMIT:-<not set>}"
+
+# Handoff 規約 (Skill / Task tool いずれでも同じ):
+# coordinator が解決した $PROFILE / $NO_COMMIT を **materialize して** downstream に渡す。
+# 例 (Solo → /tdd-implement):
+#   `/tdd-implement ${TASK_ID} --profile=${PROFILE} ${NO_COMMIT}`
+#   → materialize 後:
+#   `/tdd-implement T-12 --profile=assertive --no-commit`  (NO_COMMIT 有)
+#   `/tdd-implement T-12 --profile=assertive`              (NO_COMMIT 無)
+# 例 (Parallel/Breezing → /parallel-worktree):
+#   `/parallel-worktree <tasks> --profile=${PROFILE} ${NO_COMMIT}`
+#   → materialize 後:
+#   `/parallel-worktree T-12,T-13 --profile=strict --no-commit`
+# どちらも NO_COMMIT が空なら末尾 flag を付けない (空 token で handoff しない)。
 
 # 5. Codex CLI 利用可能性
 codex --version 2>/dev/null || echo "WARNING: Codex CLI not installed — /tdd-implement v2 Phase 4-5 will skip Codex"

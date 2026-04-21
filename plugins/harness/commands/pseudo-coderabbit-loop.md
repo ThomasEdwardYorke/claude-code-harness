@@ -73,6 +73,17 @@ argument-hint: "[pr-number|--local] [--profile=chill|assertive|strict] [--worktr
 # `for tok in $ARGUMENTS` だと bash の word splitting が IFS 依存で fragile になるため、
 # `read -r -a TOKENS` で配列化してから `for tok in "${TOKENS[@]}"` で quote 保持展開する。
 # 制限: `--worktree="my dir"` のように空白を含む値は shell の事前分割で壊れるため未サポート。
+#
+# Shell 互換 (bash 必須): `read -r -a` / case / 配列は bash 拡張。zsh / dash / POSIX sh では
+# silent degrade するため BASH_VERSION を明示確認して fail-fast。Claude Code の Bash tool は
+# 通常 /bin/bash で実行されるため本 guard は保険。
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "ERROR: /pseudo-coderabbit-loop argv parser requires bash (BASH_VERSION unset)." >&2
+  echo "       手動実行時は 'bash -c \"/pseudo-coderabbit-loop ...\"' で包んでください。" >&2
+  exit 1
+fi
+# zsh で呼ばれた場合の最後の保険 (既に上の check で停止済のはず)。
+[ -n "${ZSH_VERSION:-}" ] && emulate -L bash
 read -r -a TOKENS <<< "$ARGUMENTS"
 CLI_PROFILE=""
 CLI_WORKTREE=""
@@ -92,9 +103,12 @@ for tok in "${TOKENS[@]}"; do
     --local)
       CLI_LOCAL="yes"
       ;;
-    [0-9]*)
-      # positional: PR 番号 (数字始まり)
-      CLI_PR="$tok"
+    *)
+      # positional PR 番号は「全桁が数字」のみ受理 (`42abc` などが gh api /pulls/${PR} に
+      # 渡ると 404 になるため、厳密化)。bash `[[ =~ ]]` で完全数字マッチ。
+      if [[ "$tok" =~ ^[0-9]+$ ]]; then
+        CLI_PR="$tok"
+      fi
       ;;
   esac
 done

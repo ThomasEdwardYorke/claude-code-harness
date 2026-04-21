@@ -228,6 +228,15 @@ PROMPT
 sed -i.bak "s|@@WORKDIR@@|$WORKDIR|g" "$WORKDIR/prompt.md" && rm -f "$WORKDIR/prompt.md.bak"
 
 CODEX_COMPANION="$(ls -d "$HOME/.claude/plugins/cache/openai-codex/codex/"*/scripts/codex-companion.mjs 2>/dev/null | tail -n1)"
+# Fail-fast: cache 未展開 / codex plugin 未 install の場合、ここで止めて切り分けやすくする。
+# `node ""` は `sh: node: command '' not found` のような分かりにくい error で落ちるため。
+if [ -z "$CODEX_COMPANION" ] || [ ! -f "$CODEX_COMPANION" ]; then
+  echo "ERROR: codex-companion.mjs not found." >&2
+  echo "       codex plugin が未 install / 未展開です。" >&2
+  echo "       `/codex:setup` を実行するか、codex plugin を再 install してください。" >&2
+  # WORKDIR は trap で自動 cleanup される
+  exit 1
+fi
 STDERR_LOG="$WORKDIR/codex-stderr.log"
 # codex-companion.mjs の readTaskPrompt は --prompt-file が指定されていれば
 # その内容を優先し、piped stdin は silently drop する。

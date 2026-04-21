@@ -77,6 +77,13 @@ export async function handlePreCompact(input) {
     const projectRoot = input.cwd ?? process.cwd();
     const sections = [];
     sections.push("=== Harness PreCompact: 圧縮前保存コンテキスト ===");
+    // 呼び出し側が custom_instructions で渡した圧縮方針 / 保持指示は、PreCompact の趣旨上
+    // 最優先で additionalContext に残す (CodeRabbit PR #1 Major: pre-compact.ts:131)。
+    const customInstructions = input.custom_instructions?.trim();
+    if (customInstructions) {
+        sections.push("[custom_instructions]");
+        sections.push(customInstructions);
+    }
     const branch = readCurrentBranch(projectRoot);
     if (branch) {
         sections.push(`[ブランチ] ${branch}`);

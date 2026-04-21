@@ -249,7 +249,7 @@ script_generate — 保守チェック レポート
 ### Step 1: Plugin コアファイルの確認
 
 **harness plugin の核ファイル存在確認**:
-```
+```text
 plugins/harness/
 ├── .claude-plugin/plugin.json    # manifest
 ├── hooks/hooks.json              # hook 登録

@@ -165,15 +165,32 @@ Loop:
 
 ```bash
 # 注: 本ブロックは bash 前提 (array 0-based indexing + `unset 'arr[idx]'` semantics)。
-# zsh で直接実行する場合は `emulate -L sh` または `setopt ksharrays` を事前設定して
-# 配列の 0-based 解釈に揃える必要がある (さもないと末尾 token 切り離しが silent に
-# 失敗し、profile override が落ちる)。
+# zsh で実行される場合は冒頭の `emulate -L bash` guard が bash semantics に切替える。
 #
 # CLI --profile= 抽出 (末尾 token のみ option として扱う)。
 # 全 token を scan すると task description 本文の `--profile=assertive` を誤認するため、
 # ARGS_TOKENS[-1] に option があるかだけ判定し、option なら末尾から切り離して task description に回す。
+#
+# PROFILE 継承方針 (CodeRabbit PR #1 Major: tdd-implement.md:189 対応):
+#   1. 既に環境 / 呼び出し元 (harness-work) が PROFILE を設定していればそれを尊重
+#   2. CLI `--profile=...` が末尾 token にあれば最優先で上書き
+#   3. どちらも無ければ最終 fallback `chill`
+# これにより、/harness-work が解決した profile が /tdd-implement で無条件に "chill" にリセット
+# されてレビュー強度が静かに下がる問題を防ぐ。
+# Shell 互換: read -r -a / 配列 0-based / unset 'arr[idx]' は bash 拡張。
+# zsh / dash / POSIX sh では silent degrade する可能性があるため、BASH_VERSION を明示確認して fail-fast。
+# Claude Code の Bash tool は通常 /bin/bash で実行されるので本 guard は保険。
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "ERROR: /tdd-implement argv parser requires bash (BASH_VERSION unset)." >&2
+  echo "       手動実行時は 'bash -c \"/tdd-implement ...\"' で包んでください。" >&2
+  exit 1
+fi
 read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
-PROFILE="chill"
+# upstream が PROFILE を設定済ならそれを使う。未設定ならまず chill に初期化してから
+# 末尾 token で上書き可能にする。
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE="chill"
+fi
 LAST_IDX=$((${#ARGS_TOKENS[@]} - 1))
 if [ "$LAST_IDX" -ge 0 ]; then
   LAST_TOK="${ARGS_TOKENS[$LAST_IDX]}"
@@ -184,7 +201,18 @@ if [ "$LAST_IDX" -ge 0 ]; then
       ;;
   esac
 fi
-# 残った ARGS_TOKENS を task description として使う
+
+# --no-commit flag 抽出 (argv 全走査、unset で TASK_DESCRIPTION に紛れないようにする)。
+# 順序重要: unset を TASK_DESCRIPTION 構築 **より前** に行う。
+NO_COMMIT=""
+for i in "${!ARGS_TOKENS[@]}"; do
+  if [ "${ARGS_TOKENS[$i]}" = "--no-commit" ]; then
+    NO_COMMIT="--no-commit"
+    unset 'ARGS_TOKENS[i]'
+  fi
+done
+
+# 残った ARGS_TOKENS を task description として使う (--profile= / --no-commit 除外済)
 TASK_DESCRIPTION="${ARGS_TOKENS[*]}"
 ```
 
@@ -221,11 +249,41 @@ TASK_DESCRIPTION="${ARGS_TOKENS[*]}"
 
 - `actionable_count == 0`
 - profile 別の nitpick 上限以内
-- 全 tests pass、ruff / mypy clean
+- そのプロジェクトの test / lint / typecheck が clean (言語別):
+  - Python: `pytest` / `ruff check` / `mypy`
+  - TypeScript / JavaScript: `npm test` / `npm run lint` (もしくは `eslint`) / `npm run typecheck` (もしくは `npx tsc --noEmit`)
+  - Rust: `cargo test` / `cargo clippy` (or `cargo check`)
+  - Go: `go test ./...` / `golangci-lint run` / `go vet ./...`
+  - その他言語は repo の慣用 command に合わせる
 
 ### push する
 
 Phase 5.5 クリア後に `git push`。これで Phase 6 の本物 CodeRabbit が走る。
+
+### `--no-commit` による commit/push skip (Phase 1 申送 M-12)
+
+argv 中に `--no-commit` が含まれる場合、Phase 8 の自動 commit + push を **skip** する。`harness-work` / `parallel-worktree` から forward されたフラグをそのまま受け取り、手動でレビューしたい / CodeRabbit 反復で fast iteration したいケースで使う。
+
+抽出は既に上記 Pre-flight で済み (`NO_COMMIT` 変数 + ARGS_TOKENS から unset 済)。Phase 8 commit step の冒頭で分岐:
+
+```bash
+# Phase 8 commit step
+if [ -n "$NO_COMMIT" ]; then
+  echo "NO_COMMIT: skip commit + push (手動運用、Phase 9 完了報告のみ実施)"
+else
+  git add -A
+  # ... 通常 commit + push
+fi
+```
+
+### Plans.md 更新責務 (Phase 1 申送 M-16 / 既存原則の明示)
+
+**本スキル `/tdd-implement` は leaf worktree 内で呼ばれる設計**。Plans.md の担当表 / 完了セクションの更新は **coordinator 専任** (harness-work / harness-plan が実施)。leaf 内で Plans.md を touch すると worktree 間で衝突するため禁止。
+
+- ✅ OK: code 実装 / test 実装 / commit
+- ❌ NG: Plans.md の担当表書換 / 完了セクション追記
+
+**例外**: `/tdd-implement` が単発 (Plans.md 外、`--profile` など引数のみ) で呼ばれたケースは Plans.md 自体が対象外なので無関係。
 
 ---
 

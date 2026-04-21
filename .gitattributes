@@ -1,0 +1,19 @@
+# Windows の core.autocrlf=true による CRLF 変換を抑止し、
+# 改行前提の regex (例: content-integrity.test.ts の frontmatter 抽出) が
+# 全 CI プラットフォームで同一に動くことを保証する。
+#
+# 参考:
+# - https://docs.github.com/en/get-started/git-basics/configuring-git-to-handle-line-endings
+# - PR #1 Windows CI 失敗 (66 frontmatter tests) の再発防止
+
+* text=auto eol=lf
+
+# Binary ファイルは変換しない (安全側)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

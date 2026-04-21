@@ -28,6 +28,9 @@ export async function handleStop(input) {
                 if (gates["enforcePseudoCoderabbit"]) {
                     reminders.push("疑似 CodeRabbit 必須");
                 }
+                if (gates["enforceRealCoderabbit"]) {
+                    reminders.push("本物 CodeRabbit 必須");
+                }
                 if (gates["enforceCodexSecondOpinion"]) {
                     reminders.push("Codex セカンドオピニオン必須");
                 }

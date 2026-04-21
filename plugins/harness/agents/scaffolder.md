@@ -17,7 +17,7 @@ Responsible for project analysis, documentation updates, harness consistency che
 
 ## How to Invoke
 
-This agent is called from `/harness-review` (integrity / maintenance), `/harness-plan` (sync), and `/harness-setup` commands.
+This agent is referenced/validated by `/harness-review` (integrity / maintenance), `/harness-plan` (sync), and `/harness-setup` command contexts. Actual dispatch wiring is specific to each command's implementation and may verify presence/signature rather than call this agent directly.
 
 ## Input
 
@@ -52,15 +52,18 @@ Understand the current state of the project and report it.
 
 ### scaffold mode
 
-Generate harness configuration for a new or existing project.
+Generate harness configuration for a new or existing project. Targets the current `plugins/harness/` layout (not the legacy `.claude/agents/` / `.claude/commands/` layout).
 
 1. Run `analyze` to understand current state.
-2. Identify missing files:
-   - `Plans.md` — task management (empty template)
-   - `.claude/settings.json` — Claude Code configuration
-   - `.claude/agents/` — agent files
-   - `.claude/commands/` — command files
+2. Identify missing files under the `plugins/harness/` plugin layout:
+   - `Plans.md` — task management (empty template, at project root)
+   - `harness.config.json` — harness-specific config (project root)
+   - `plugins/harness/.claude-plugin/plugin.json` — plugin manifest
+   - `plugins/harness/agents/` — agent markdown files
+   - `plugins/harness/commands/` — command markdown files
+   - `plugins/harness/hooks/hooks.json` — hook registrations (only when project registers its own hooks)
 3. Generate the missing files.
+4. **Do NOT** re-create the legacy `.claude/agents/` or `.claude/commands/` paths. Those layouts belong to pre-v4 harness and are intentionally out of scope here.
 
 ### update-state mode
 

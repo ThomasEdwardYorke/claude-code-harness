@@ -27,10 +27,24 @@ function runCiCheck(tool, command, projectRoot) {
         return { tool, passed: false, output: message };
     }
 }
-function detectAvailableChecks(projectRoot) {
+/**
+ * pyproject.toml の存在だけで `backend/` レイアウトを前提にすると、`src/` レイアウトや
+ * frontend-only repo で毎回 FAIL する。実レイアウトを検出して適切な lint target を決める。
+ * CodeRabbit PR #1 Major: subagent-stop.ts:75 + Codex 敵対的レビュー Minor 追加対応:
+ * `.` fallback は node_modules / .venv を大量拾いして false positive を生むため、
+ * 主要 Python layout (backend/ / src/ / app/) を検出できた場合のみ ruff / mypy を有効化。
+ */
+const PYTHON_CANDIDATE_DIRS = ["backend", "src", "app"];
+export function detectAvailableChecks(projectRoot) {
     const checks = [];
     if (existsSync(resolve(projectRoot, "pyproject.toml"))) {
-        checks.push({ tool: "ruff", command: "ruff check backend/ --no-fix 2>&1" }, { tool: "mypy", command: "mypy backend/ --no-error-summary 2>&1" });
+        const pyTargets = PYTHON_CANDIDATE_DIRS.filter((d) => existsSync(resolve(projectRoot, d))).map((d) => `${d}/`);
+        if (pyTargets.length > 0) {
+            const target = pyTargets.join(" ");
+            checks.push({ tool: "ruff", command: `ruff check ${target} --no-fix 2>&1` }, { tool: "mypy", command: `mypy ${target} --no-error-summary 2>&1` });
+        }
+        // backend/src/app が無い Python repo は ruff/mypy を skip (false positive 回避)。
+        // pytest は tests/ の独立判定で別枝。
         if (existsSync(resolve(projectRoot, "tests"))) {
             checks.push({
                 tool: "pytest",

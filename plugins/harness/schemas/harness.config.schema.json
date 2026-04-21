@@ -70,6 +70,83 @@
           "default": "approve"
         }
       }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /harness-work, /tdd-implement, /parallel-worktree, and core hooks (stop / subagent-stop).",
+      "properties": {
+        "plansFile": { "type": "string", "default": "Plans.md" },
+        "maxParallel": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
+        "labelPriority": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "criticalLabels": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "testCommand": { "type": "string" },
+        "qualityGates": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-project override of harness quality gates. Consumed by stop.ts to emit reminders.",
+          "properties": {
+            "enforceTddImplement": { "type": "boolean", "default": true },
+            "enforcePseudoCoderabbit": { "type": "boolean", "default": true },
+            "enforceRealCoderabbit": { "type": "boolean", "default": true },
+            "enforceCodexSecondOpinion": { "type": "boolean", "default": true }
+          }
+        },
+        "failFast": { "type": "boolean", "default": true }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /parallel-worktree and parallel-sessions.sh.",
+      "properties": {
+        "enabled": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string", "enum": ["auto"] }
+          ],
+          "default": "auto"
+        },
+        "maxParallel": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
+        "parentDir": { "type": "string", "default": ".." },
+        "prefix": { "type": "string" },
+        "defaultBaseBranch": { "type": "string" }
+      }
+    },
+    "tddEnforce": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /tdd-implement and /pseudo-coderabbit-loop.",
+      "properties": {
+        "alwaysRequireRedTest": { "type": "boolean", "default": true },
+        "allowSkipOnDocsTasks": { "type": "boolean", "default": true },
+        "pseudoCoderabbitProfile": {
+          "type": "string",
+          "enum": ["chill", "assertive", "strict"],
+          "default": "chill",
+          "description": "CodeRabbit 公式 profile は chill/assertive のみ。strict は harness-local 拡張。"
+        },
+        "maxCodexReviewRetries": { "type": "integer", "minimum": 0, "default": 3 }
+      }
+    },
+    "codeRabbit": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /coderabbit-review and /pseudo-coderabbit-loop.",
+      "properties": {
+        "botLogin": { "type": "string", "default": "coderabbitai" },
+        "ratelimitCheckWindowMinutes": { "type": "integer", "minimum": 1, "default": 15 },
+        "approvedStateAsClear": { "type": "boolean", "default": true },
+        "maxPseudoLoopIterations": { "type": "integer", "minimum": 1, "default": 5 },
+        "proBucketSize": { "type": "integer", "minimum": 1, "default": 5 },
+        "proBucketWindowMinutes": { "type": "integer", "minimum": 1, "default": 60 }
+      }
     }
   }
 }

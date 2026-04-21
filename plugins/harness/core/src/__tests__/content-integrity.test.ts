@@ -30,7 +30,8 @@ function listMdFiles(subdir: string): string[] {
 }
 
 function extractFrontmatter(content: string): string {
-  const match = /^---\n([\s\S]*?)\n---/.exec(content);
+  // Windows の core.autocrlf=true で .md が CRLF 化された場合にも対応 (PR #1 Windows CI 再発防止)。
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
   if (!match) {
     throw new Error(
       "frontmatter (between --- fences) not found at the top of the Markdown file",
@@ -41,6 +42,26 @@ function extractFrontmatter(content: string): string {
 
 const AGENT_NAMES = listMdFiles("agents");
 const COMMAND_NAMES = listMdFiles("commands");
+
+describe("extractFrontmatter の改行互換性 (PR #1 Windows CI 再発防止)", () => {
+  it("LF 改行の frontmatter を抽出できる", () => {
+    const lf = "---\nname: test\n---\nbody";
+    expect(extractFrontmatter(lf)).toBe("name: test");
+  });
+
+  it("CRLF 改行の frontmatter も抽出できる (Windows core.autocrlf 互換)", () => {
+    const crlf = "---\r\nname: test\r\ntype: agent\r\n---\r\nbody";
+    const fm = extractFrontmatter(crlf);
+    expect(fm).toContain("name: test");
+    expect(fm).toContain("type: agent");
+  });
+
+  it("frontmatter が無いと throw する", () => {
+    expect(() => extractFrontmatter("# just body")).toThrow(
+      /frontmatter.*not found/,
+    );
+  });
+});
 
 describe("coderabbit-mimic agent の Codex CLI 呼出 (C-1)", () => {
   const content = readAgent("coderabbit-mimic");
@@ -378,12 +399,14 @@ describe("harness-work command の profile 読取り fallback (A-6 r3 Major-2 / 
     );
   });
 
-  it("CLI --profile= 抽出が argv 単位の case 文で境界厳密 (A-6 r5 Minor-1 / r6 再厳密化)", () => {
+  it("CLI --profile= 抽出が case 文で完全一致判定 (A-6 r5 Minor-1 / r6 再厳密化 / PR #1 末尾 token 限定対応)", () => {
     // r5 の `grep -oE -- '--profile=(chill|assertive|strict)'` は substring match のため
     // `--profile=strict1` を `--profile=strict` に誤抽出する (r6 Minor-1 指摘)。
-    // argv を for-loop + case 文で 1 個ずつ完全一致比較するほうが確実。
+    // argv 配列化 + case 文で完全一致比較。
+    // CodeRabbit PR #1 Major: argv 全走査ではなく末尾 token 限定に変更 (task description 本文の
+    // `--profile=...` 引用文言を option と誤認しない)。どちらの実装でも完全一致 case 文は必須。
     expect(content).toMatch(
-      /for\s+tok\s+in[\s\S]{0,400}?case\s+"?\$tok"?\s+in[\s\S]{0,400}?--profile=chill\|--profile=assertive\|--profile=strict/,
+      /case\s+"?\$(?:tok|LAST_TOK)"?\s+in[\s\S]{0,400}?--profile=chill\|--profile=assertive\|--profile=strict/,
     );
   });
 
@@ -552,6 +575,330 @@ describe("hook handler — Claude Code 公式 payload 使用", () => {
       expect(src).not.toMatch(/systemMessage\s*:\s*context/);
     },
   );
+});
+
+describe("--no-commit フラグの parallel 経路伝播 (Phase 1 申送 M-12)", () => {
+  // /harness-work の `--no-commit` option が /parallel-worktree / /tdd-implement まで
+  // handoff chain で伝播する規約 (materialize) が明記されていること。
+  it("harness-work.md が --no-commit を argv から抽出する記述を持つ", () => {
+    const content = readCommand("harness-work");
+    expect(content).toMatch(/--no-commit[\s\S]{0,300}?(?:NO_COMMIT|抽出|parse|for\s+tok\s+in)/);
+  });
+
+  it("harness-work.md の handoff 例で $NO_COMMIT / --no-commit を materialize する", () => {
+    const content = readCommand("harness-work");
+    expect(content).toMatch(
+      /(?:tdd-implement|parallel-worktree)[\s\S]{0,400}?(?:\$\{?NO_COMMIT\}?|--no-commit)/,
+    );
+  });
+
+  it("parallel-worktree.md が各 worktree への /tdd-implement handoff で --no-commit を forward する", () => {
+    const content = readCommand("parallel-worktree");
+    expect(content).toMatch(/(?:NO_COMMIT|--no-commit)[\s\S]{0,300}?(?:forward|伝播|materialize|tdd-implement)/i);
+  });
+
+  it("tdd-implement.md が --no-commit 受け取り + commit step skip 規約を持つ", () => {
+    const content = readCommand("tdd-implement");
+    expect(content).toMatch(/--no-commit[\s\S]{0,300}?(?:skip|抑制|スキップ|commit\s+step)/i);
+  });
+});
+
+describe("Plans.md 更新責務の明示 (Phase 1 申送 M-16)", () => {
+  // coordinator (harness-work / harness-plan) 専任、leaf worktree (tdd-implement 内) は touch しない
+  // という規約が各 skill に明記されていること。
+  it("harness-work.md が Plans.md 更新の coordinator 専任原則を明記する", () => {
+    const content = readCommand("harness-work");
+    expect(content).toMatch(/Plans\.md[\s\S]{0,200}?(?:coordinator\s*専任|coordinator\s*only|leaf[\s\S]{0,40}?(?:触らない|touch\s*(?:しない|not)))/i);
+  });
+
+  it("tdd-implement.md が leaf 内での Plans.md touch 禁止を明記する", () => {
+    const content = readCommand("tdd-implement");
+    expect(content).toMatch(/Plans\.md[\s\S]{0,200}?(?:coordinator|leaf[\s\S]{0,40}?(?:触らない|touch))/i);
+  });
+});
+
+describe("Auto Mode Detection v4.1 の依存グラフ判定実体化 (Phase 1 申送 M-17)", () => {
+  // harness-work v4 の Auto Mode Detection は「件数ベース」の判定のみ。
+  // 依存グラフ / worktree ラベル判定は Phase 2 スコープであることを明示する。
+  it("harness-work.md の Auto Mode Detection セクションが 件数ベース判定 + 依存グラフ未実装を明記する", () => {
+    const content = readCommand("harness-work");
+    // 件数ベースの判定説明 (1/2-3/4+)
+    expect(content).toMatch(
+      /(?:1\s*件|2[-〜～]3\s*件|4\s*件\s*以上|Solo|Parallel|Breezing)[\s\S]{0,800}?(?:件数|task\s*count)/i,
+    );
+    // 依存グラフ / worktree ラベル判定は Phase 2 スコープとして残件明記
+    expect(content).toMatch(
+      /(?:依存グラフ|dependency\s*graph|wt:|worktree\s*ラベル)[\s\S]{0,400}?(?:Phase\s*2|TODO|次セッション|未実装|spec[\s\S]{0,20}?only)/i,
+    );
+  });
+});
+
+describe("shell 互換: bash fail-fast guard (Codex 敵対的レビュー Major: zsh read -r -a silent fail)", () => {
+  // 背景: `read -r -a` / 配列 0-based / `unset 'arr[idx]'` は bash 拡張。zsh 5.9 は
+  // `emulate -L bash` でも `read -r -a` を解釈できず `bad option: -a` で failする (Codex 実測)。
+  // 根本対策: BASH_VERSION を明示確認 + fail-fast で silent degrade を撲滅。
+  // Claude Code の Bash tool は通常 /bin/bash を使うため実害は限定的だが保険として明示。
+  const commands = [
+    "harness-work",
+    "tdd-implement",
+    "parallel-worktree",
+    "pseudo-coderabbit-loop",
+  ];
+
+  it.each(commands)(
+    "%s command が BASH_VERSION 未設定時に exit 1 する fail-fast guard を持つ",
+    (name) => {
+      const content = readCommand(name);
+      expect(content).toMatch(/-z\s+"\$\{?BASH_VERSION:?-?\}?"[\s\S]{0,300}?exit\s+1/);
+    },
+  );
+});
+
+describe("coderabbit-mimic agent の CODEX_COMPANION fail-fast (CodeRabbit Major: coderabbit-mimic.md:239)", () => {
+  const content = readAgent("coderabbit-mimic");
+
+  it("node \"$CODEX_COMPANION\" task 直前で空/不在チェックが入る", () => {
+    // `ls ... | tail -n1` が空でもそのまま node を呼ぶと分かりにくい Node 側 error で落ちる。
+    // セットアップ不足を明示的に判別できるよう事前に guard する。
+    expect(content).toMatch(/-z\s+"\$CODEX_COMPANION"|!\s+-f\s+"\$CODEX_COMPANION"|command\s+-v[\s\S]{0,50}?CODEX_COMPANION/);
+    // exit で止まる (silent continue しない)
+    expect(content).toMatch(/CODEX_COMPANION[\s\S]{0,400}?exit\s+1/);
+  });
+});
+
+describe("parallel-worktree.md の CODEX_COMPANION fail-fast (CodeRabbit Major: parallel-worktree.md:134)", () => {
+  const content = readCommand("parallel-worktree");
+
+  it("node \"$CODEX_COMPANION\" task 直前で空/不在チェックが入る", () => {
+    expect(content).toMatch(/-z\s+"\$CODEX_COMPANION"|!\s+-f\s+"\$CODEX_COMPANION"|command\s+-v[\s\S]{0,50}?CODEX_COMPANION/);
+    expect(content).toMatch(/CODEX_COMPANION[\s\S]{0,500}?exit\s+1/);
+  });
+});
+
+describe("harness-work の CFG_PROFILE allowlist 検証 (CodeRabbit Major: harness-work.md:267)", () => {
+  const content = readCommand("harness-work");
+
+  it("jq 取得値を chill/assertive/strict の allowlist で検証している", () => {
+    // CFG_PROFILE_RAW or 似た中間変数を case 文で allowlist 検証、未知値は WARN + 空に落とす。
+    expect(content).toMatch(
+      /CFG_PROFILE[\s\S]{0,400}?case\s+"?\$(?:CFG_PROFILE|\w+)"?\s+in[\s\S]{0,300}?chill\|assertive\|strict/,
+    );
+    // 未知値は WARN を出す
+    expect(content).toMatch(/CFG_PROFILE[\s\S]{0,600}?WARN[\s\S]{0,200}?(?:allowlist|ignored|無視|空)/i);
+  });
+});
+
+describe("harness-work の CLI --profile= 抽出が末尾 token 限定 (CodeRabbit Major: harness-work.md:252)", () => {
+  const content = readCommand("harness-work");
+
+  it("末尾 token 参照 (ARGS_TOKENS[LAST_IDX] or 同等) で profile を抽出する", () => {
+    // 全 TOKENS scan だと task description 本文の `--profile=assertive` 記述を誤認する。
+    // LAST_IDX / ARGS_TOKENS[-1] / 末尾 token 限定の実装であること。
+    expect(content).toMatch(
+      /(?:LAST_IDX\s*=|ARGS_TOKENS\[-1\]|末尾\s*token|last\s*token|末尾のみ)/i,
+    );
+  });
+
+  it("末尾以外の --profile= 検出時に WARN を出す (Codex 敵対的レビュー Major: silent ignore 回帰防止)", () => {
+    // 旧: 全 token scan で `--profile=assertive T-12` のような並びも拾えた。
+    // 新: 末尾限定で silent ignore されると品質ゲート強度が静かに下がる。中間位置の WARN を要求。
+    expect(content).toMatch(
+      /for\s+i\s+in\s+"\$\{!ARGS_TOKENS\[@\]\}"[\s\S]{0,400}?--profile=\*[\s\S]{0,200}?WARN/,
+    );
+  });
+});
+
+describe("pseudo-coderabbit-loop の PR 番号を全数字でのみ受理する (CodeRabbit Major: pseudo-coderabbit-loop.md:98)", () => {
+  const content = readCommand("pseudo-coderabbit-loop");
+
+  it("CLI_PR 代入前に完全数字判定 (^[0-9]+$ or 同等) を行う", () => {
+    // `[0-9]*` は `42abc` も match するため厳密化必須。
+    // bash regex `[[ "$tok" =~ ^[0-9]+$ ]]` or 完全数字パターン限定。
+    expect(content).toMatch(
+      /(?:\[\[\s*"?\$tok"?\s*=~\s*\^\[0-9\]\+\$\s*\]\]|\$\{tok\/\/\[0-9\]\/\}|extglob[\s\S]{0,100}?\+\(\[0-9\]\))/,
+    );
+  });
+});
+
+describe("tdd-implement の PROFILE 継承 (CodeRabbit Major: tdd-implement.md:189)", () => {
+  const content = readCommand("tdd-implement");
+
+  it("PROFILE が既にセットされている場合は上書きしない (if [ -z ${PROFILE:-} ] ガード)", () => {
+    // 旧: 無条件 PROFILE="chill" で upstream profile を破壊する。
+    // 新: [ -z "${PROFILE:-}" ] ガード経由で fallback のみ適用。
+    expect(content).toMatch(
+      /\[\s+-z\s+"\$\{?PROFILE:?-?\}?"\s+\][\s\S]{0,200}?PROFILE="?chill/,
+    );
+  });
+});
+
+describe("tdd-implement の Phase 5.5 完了条件が言語非依存 (CodeRabbit Major: tdd-implement.md:225)", () => {
+  const content = readCommand("tdd-implement");
+
+  it("完了条件が ruff / mypy 固定ではなく test / lint / typecheck の総称で記述される", () => {
+    // 旧: `全 tests pass、ruff / mypy clean` は Python 専用。
+    // 新: 言語非依存 (そのプロジェクトの test/lint/typecheck) の文言を含む。
+    expect(content).toMatch(/プロジェクトの\s*test[\s\S]{0,50}?lint[\s\S]{0,50}?(?:typecheck|type\s*check)/i);
+  });
+});
+
+describe("scaffolder.md の文言 / layout (CodeRabbit PR #1)", () => {
+  const content = readAgent("scaffolder");
+
+  it("dispatch 文言が『参照/検証される』系に弱められている (CodeRabbit Minor: scaffolder.md:20)", () => {
+    // 旧: `This agent is called from /harness-review ...` (強すぎる)
+    // 新: `referenced/validated by` 等の弱い表現
+    expect(content).not.toMatch(/^This agent is called from/m);
+    expect(content).toMatch(/referenced\/validated|参照\/検証|referenced|validated/i);
+  });
+
+  it("scaffold mode で legacy `.claude/agents/` / `.claude/commands/` を生成対象にしない (CodeRabbit Major Outside: scaffolder.md:57-63)", () => {
+    // 新 layout (plugins/harness/agents/) を scaffold 対象にする
+    expect(content).toMatch(/plugins\/harness\/agents\//);
+    expect(content).toMatch(/plugins\/harness\/commands\//);
+    // legacy path を「生成する」ように書かれていないこと (禁止指示は OK)
+    // scaffold mode セクションで `.claude/agents/` を missing files として list していないこと
+    const scaffoldSection = /### scaffold mode[\s\S]*?(?=\n###\s)/.exec(content)?.[0] ?? "";
+    expect(scaffoldSection).not.toMatch(/^\s*-\s*`\.claude\/agents\//m);
+    expect(scaffoldSection).not.toMatch(/^\s*-\s*`\.claude\/commands\//m);
+  });
+});
+
+describe("worker.md の commit prefix / build 検証整合 (CodeRabbit PR #1)", () => {
+  const content = readAgent("worker");
+
+  it("prefix 一覧から `security` を独立 prefix として掲載しない (CodeRabbit Minor: worker.md:125)", () => {
+    // Conventional Commits 準拠 + repo 規約と整合。
+    // `security` を列挙リストに含めると repo の commit message 規約から外れる。
+    const prefixLine = /prefix:\s*(?:`[^`]+`\s*\/?\s*)+/.exec(content)?.[0] ?? "";
+    // security を独立 prefix として掲載していない
+    expect(prefixLine).not.toMatch(/\/\s*`security`/);
+    // 推奨 prefix 列挙に perf / build / ci / style / revert を含む
+    expect(content).toMatch(/`perf`/);
+    expect(content).toMatch(/`build`/);
+    expect(content).toMatch(/`ci`/);
+  });
+
+  it("build 検証コマンドが stop-hook (subagent-stop.ts) と整合する (CodeRabbit Major: worker.md:102)", () => {
+    // worker.md は「backend/ ある場合は backend/、無ければ .」と説明していること。
+    // subagent-stop.ts の detectAvailableChecks 実装と同じロジックを提示する。
+    expect(content).toMatch(
+      /backend\/[\s\S]{0,300}?(?:無ければ|そうでない|ない場合|not\s+exist|otherwise|else|fallback)/i,
+    );
+  });
+});
+
+describe("harness-review.md の code fence language tag (CodeRabbit Nitpick: harness-review.md:252)", () => {
+  const content = readCommand("harness-review");
+
+  it("ディレクトリツリー fenced code block が language tag を持つ", () => {
+    // markdownlint MD040: language-less code fence を避ける
+    expect(content).toMatch(/```text[\s\S]{0,300}?plugins\/harness\//);
+  });
+});
+
+describe("pre-compact.ts の custom_instructions 転載 (CodeRabbit Major: pre-compact.ts:131)", () => {
+  const src = readFileSync(
+    resolve(PLUGIN_ROOT, "core/src/hooks/pre-compact.ts"),
+    "utf-8",
+  );
+
+  it("input.custom_instructions を sections に push している", () => {
+    expect(src).toMatch(/input\.custom_instructions[\s\S]{0,200}?(?:sections\.push|additionalContext)/);
+  });
+
+  it("空文字列 / 空白のみは section に出さない (trim 判定)", () => {
+    expect(src).toMatch(/custom_instructions[\s\S]{0,80}?\.trim\(\)|\.trim\(\)[\s\S]{0,80}?custom_instructions/);
+  });
+});
+
+describe("subagent-stop.ts の backend/ 検出 (CodeRabbit Major: subagent-stop.ts:75 + Codex 敵対的レビュー Minor)", () => {
+  const src = readFileSync(
+    resolve(PLUGIN_ROOT, "core/src/hooks/subagent-stop.ts"),
+    "utf-8",
+  );
+
+  it("PYTHON_CANDIDATE_DIRS で backend / src / app を候補にする", () => {
+    // Codex 指摘: `.` fallback は node_modules / .venv を大量拾いして false positive 発生。
+    // 主要 Python layout (backend/ / src/ / app/) を候補としてチェック。
+    expect(src).toMatch(
+      /PYTHON_CANDIDATE_DIRS\s*=\s*\[[\s\S]{0,80}?["']backend["'][\s\S]{0,40}?["']src["'][\s\S]{0,40}?["']app["']/,
+    );
+  });
+
+  it("候補 dir が 1 つも無い場合は ruff/mypy を skip する", () => {
+    // filter 経由で pyTargets が作られ、長さ 0 なら ruff/mypy を push しない実装であること。
+    expect(src).toMatch(/pyTargets\.length\s*>\s*0/);
+  });
+
+  it("detectAvailableChecks を export している (test 可能性)", () => {
+    expect(src).toMatch(/export\s+function\s+detectAvailableChecks/);
+  });
+});
+
+describe("stop.ts の enforceRealCoderabbit 対応 (CodeRabbit Major: stop.ts:56)", () => {
+  const src = readFileSync(
+    resolve(PLUGIN_ROOT, "core/src/hooks/stop.ts"),
+    "utf-8",
+  );
+
+  it("enforceRealCoderabbit フラグの reminder を出す", () => {
+    expect(src).toMatch(/enforceRealCoderabbit[\s\S]{0,150}?reminders\.push/);
+  });
+});
+
+describe("harness.config.schema.json の work / qualityGates 対応 (CodeRabbit Major: stop.ts:56 schema 整合)", () => {
+  const schemaSrc = readFileSync(
+    resolve(PLUGIN_ROOT, "schemas/harness.config.schema.json"),
+    "utf-8",
+  );
+  const schema = JSON.parse(schemaSrc) as {
+    additionalProperties: boolean;
+    properties: Record<string, { properties?: Record<string, unknown> }>;
+  };
+
+  it("work / worktree / tddEnforce / codeRabbit が properties に定義されている", () => {
+    const props = schema.properties;
+    expect(props).toHaveProperty("work");
+    expect(props).toHaveProperty("worktree");
+    expect(props).toHaveProperty("tddEnforce");
+    expect(props).toHaveProperty("codeRabbit");
+  });
+
+  it("work.qualityGates に 4 つの enforce* フラグが定義されている", () => {
+    const gates = (
+      schema.properties.work?.properties as Record<string, { properties?: Record<string, unknown> }>
+    )?.qualityGates?.properties;
+    expect(gates).toBeDefined();
+    expect(gates).toHaveProperty("enforceTddImplement");
+    expect(gates).toHaveProperty("enforcePseudoCoderabbit");
+    expect(gates).toHaveProperty("enforceRealCoderabbit");
+    expect(gates).toHaveProperty("enforceCodexSecondOpinion");
+  });
+
+  it("tddEnforce.pseudoCoderabbitProfile は chill/assertive/strict のみ許可", () => {
+    const prof = (
+      schema.properties.tddEnforce?.properties as Record<string, { enum?: string[] }>
+    )?.pseudoCoderabbitProfile;
+    expect(prof?.enum).toEqual(["chill", "assertive", "strict"]);
+  });
+
+  it("additionalProperties: false を維持 (dead field 侵入防止)", () => {
+    expect(schema.additionalProperties).toBe(false);
+  });
+});
+
+describe(".gitattributes で改行コードが LF 固定 (PR #1 Windows CI 再発防止)", () => {
+  const gaPath = resolve(PLUGIN_ROOT, "..", "..", ".gitattributes");
+  const content = readFileSync(gaPath, "utf-8");
+
+  it("text 系ファイルを eol=lf で固定する", () => {
+    expect(content).toMatch(/\*\s+text=auto\s+eol=lf|text\s+eol=lf/);
+  });
+
+  it("binary ファイル列挙がある (png/jpg 等)", () => {
+    expect(content).toMatch(/\*\.png\s+binary/);
+  });
 });
 
 describe("severity 分類の整合 (M-2: security-auditor と coderabbit-mimic)", () => {

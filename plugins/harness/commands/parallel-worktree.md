@@ -116,6 +116,38 @@ cd <worktree_dir>
 branch: <feature_branch-slug>
 **main repo には触らない。**
 
+## オプションの伝播 (Phase 1 申送 M-12: --no-commit forward)
+
+coordinator は `$ARGUMENTS` から以下を抽出し、各 worktree への `/tdd-implement` 呼出に materialize してから渡す:
+
+- `--profile=chill|assertive|strict`: Phase 5.5 / 6 の疑似 / 本物 CodeRabbit に伝播
+- `--no-commit`: Phase 8 commit step を抑制 (tdd-implement 側で skip)
+
+```bash
+# $ARGUMENTS を配列化 (zsh でも 0-based に揃える)
+[ -n "${ZSH_VERSION:-}" ] && emulate -L bash
+read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
+
+PROFILE="chill"
+NO_COMMIT=""
+for tok in "${ARGS_TOKENS[@]}"; do
+  case "$tok" in
+    --profile=chill|--profile=assertive|--profile=strict)
+      PROFILE="${tok#--profile=}"
+      ;;
+    --no-commit)
+      NO_COMMIT="--no-commit"
+      ;;
+  esac
+done
+
+# 各 worktree へ forward:
+#   /tdd-implement ${SUBTASK} --profile=${PROFILE} ${NO_COMMIT}
+# materialize 後 (例):
+#   /tdd-implement T-12 --profile=assertive --no-commit
+#   /tdd-implement T-13 --profile=assertive
+```
+
 ## 実行フロー (Model A: worker 責務範囲)
 
 ### Phase 2: RED
@@ -130,6 +162,12 @@ branch: <feature_branch-slug>
 Bash で Codex CLI を直接呼んでレビュー依頼:
 ```bash
 CODEX_COMPANION="$(ls -d "$HOME/.claude/plugins/cache/openai-codex/codex/"*/scripts/codex-companion.mjs 2>/dev/null | tail -n1)"
+# Fail-fast: codex plugin 未 install / cache 未展開で node を無引数呼びすると分かりにくい
+# error で落ちるため、ここで検出して明示的に停止する。
+if [ -z "$CODEX_COMPANION" ] || [ ! -f "$CODEX_COMPANION" ]; then
+  echo "ERROR: codex-companion.mjs not found. Run /codex:setup or reinstall codex plugin." >&2
+  exit 1
+fi
 node "$CODEX_COMPANION" task "実装レビュー: <task概要>" --effort medium
 ```
 
@@ -184,6 +222,13 @@ PR 作成はしない (coordinator 実施)。
    - coordinator は `$ARGUMENTS` から `--profile=` を抽出して `$PROFILE` を束縛 (argv 単位 case 完全一致):
 
      ```bash
+     # Shell 互換: bash 必須 (read -r -a / 配列 0-based / unset 'arr[idx]' は bash 拡張)。
+     # BASH_VERSION 未設定なら fail-fast (zsh / sh では silent degrade するため)。
+     if [ -z "${BASH_VERSION:-}" ]; then
+       echo "ERROR: /parallel-worktree argv parser requires bash." >&2
+       exit 1
+     fi
+     [ -n "${ZSH_VERSION:-}" ] && emulate -L bash
      read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
      PROFILE="chill"
      for tok in "${ARGS_TOKENS[@]}"; do

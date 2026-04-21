@@ -26,5 +26,9 @@ export interface SubagentStopResult {
     ciResults?: CiCheckResult[];
     additionalContext?: string;
 }
+export declare function detectAvailableChecks(projectRoot: string): Array<{
+    tool: string;
+    command: string;
+}>;
 export declare function handleSubagentStop(input: SubagentStopInput): Promise<SubagentStopResult>;
 //# sourceMappingURL=subagent-stop.d.ts.map

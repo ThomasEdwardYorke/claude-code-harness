@@ -92,13 +92,15 @@ Codex にレビュー依頼 → 指摘対応 → 再レビュー → critical/ma
 
 ### Step 7: ビルド検証
 
-プロジェクトに応じた型チェック・lint を実行:
+プロジェクトに応じた型チェック・lint を実行。`SubagentStop` hook (`core/src/hooks/subagent-stop.ts`) が worker 完了後に同等コマンドを自動で走らせるので、ここで手元検証する内容と hook の検証対象を揃える:
 
 ```bash
-# Python の場合
-ruff check . && mypy .
-# TypeScript の場合
-npm run typecheck
+# Python (pyproject.toml あり):
+#   backend/ レイアウトがある場合: ruff check backend/ && mypy backend/
+#   そうでない場合:                ruff check . && mypy .
+# TypeScript (package.json あり):
+#   npm run typecheck   # package.json に script があるとき
+#   npx tsc --noEmit    # そうでないとき
 ```
 
 ### Step 8: エラー回復
@@ -122,7 +124,7 @@ npm run typecheck
 Co-Authored-By: Claude <モデルサフィックス> <noreply@anthropic.com>
 ```
 
-prefix: `feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `security`
+prefix: `feat` / `fix` / `refactor` / `perf` / `test` / `docs` / `build` / `ci` / `chore` / `style` / `revert` (Conventional Commits 準拠、repo の commit lint と整合させる。`security` は独立 prefix として使わず、`fix` / `refactor` + scope で表現する)
 
 **サフィックス例**:
 
