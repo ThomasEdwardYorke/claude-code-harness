@@ -1275,8 +1275,10 @@ describe("Phase κ: subagent frontmatter の isolation 設定", () => {
       // 追加された時点で (Phase κ-2 実装時など)、第 1 test が red に転じると同時に
       // 本 guard が値 validation として effective になる設計。
       // Codex 最終 review (i-1) 対応: 「常時有効な safety net」という誤読を避ける表現に。
+      // Codex 最終 review (t-1) 対応: YAML inline comment `isolation: worktree # note`
+      // 形式にも対応するよう末尾 `(?:\s+#.*)?` を追加 (値 scalar のみ capture)。
       const fm = extractFrontmatter(readAgent(name));
-      const match = /^isolation\s*:\s*["']?([\w-]+)["']?\s*$/m.exec(fm);
+      const match = /^isolation\s*:\s*["']?([\w-]+)["']?(?:\s+#.*)?\s*$/m.exec(fm);
       if (match) {
         expect(match[1]).toBe("worktree");
       }

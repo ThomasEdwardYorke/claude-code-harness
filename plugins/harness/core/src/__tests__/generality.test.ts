@@ -146,10 +146,11 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     // `--test-pipeline-foo` にも false positive でヒットした。`(?![\w-])` で
     // 後続が word char / hyphen で **ない** 場合のみ match (suffix 境界のみ厳格化)。
     //
-    // Codex [Round 2 m-2] 対応: prefix 側には制約がないため `----test-pipeline` や
-    // `foo--test-pipeline` にも match する (実 repo では該当例なしのため false positive は発生せず)。
-    // case-sensitive (`--Test-Pipeline` は hit しない)。将来 case-insensitive 化 or prefix
-    // 境界強化が必要なら追加検討。
+    // Codex 最終 review (m-2) 対応: prefix 側には制約がないため `----test-pipeline` や
+    // `foo--test-pipeline` にも match する。本ファイル自身がこれらの例示を含むが、
+    // ファイル冒頭の `generality-exemption: ...,B-2f,...` (HARNESS-generality-self) で
+    // 自己 hit が無害化されている。case-sensitive (`--Test-Pipeline` は hit しない)。
+    // 将来 case-insensitive 化 or prefix 境界強化が必要なら追加検討。
     id: "B-2f",
     category: "legacy-api",
     pattern: /--test-pipeline(?![\w-])/g,

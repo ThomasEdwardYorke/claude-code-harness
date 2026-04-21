@@ -2,7 +2,7 @@
 name: tdd-implement
 description: "TDD + Codex チーム協業 + 疑似 CodeRabbit × 本物 CodeRabbit の完全レビューループによる最高品質の実装ワークフロー。実装指示を受けた時に使用する。「実装して」「修正して」「機能追加して」「バグ修正して」「リファクタリングして」などの実装タスク全般に適用。品質を妥協せず、チェックリスト管理・TDD・Codex レビューループ・CodeRabbit レビューループで完璧な実装を目指す。"
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
-argument-hint: "<task description> [--profile=chill|assertive|strict]"
+argument-hint: "<task description> [--profile=chill|assertive|strict] [--no-commit]"
 ---
 
 # TDD Implementation with Codex Team + CodeRabbit Loop
@@ -59,9 +59,9 @@ Phase 9  ドキュメント更新
 - エントリポイント同一性確認
 - **Phase 4 Codex 並列検証**
 - **Phase 5 Codex レビューループ**
-- **Phase 5.5 疑似 CodeRabbit レビュール���プ（`/pseudo-coderabbit-loop --local`）**
+- **Phase 5.5 疑似 CodeRabbit レビューループ（`/pseudo-coderabbit-loop --local`）**
 - **Phase 6 本物 CodeRabbit レビューループ（`/coderabbit-review <pr>`）**
-- **Phase 7 Codex セカンド��ピニオン**
+- **Phase 7 Codex セカンドオピニオン**
 - Phase 8 Merge + 最終確認
 - Phase 9 ドキュメント更新
 
