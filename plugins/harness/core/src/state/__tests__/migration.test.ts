@@ -141,9 +141,12 @@ describe("migrate()", () => {
   });
 
   describe("defaultStatePath", () => {
-    it("points at .claude/state/harness.json", () => {
+    it("points at .claude/state/harness.json (OS native path separator)", () => {
+      // defaultStatePath は `path.join` を使い OS native separator を返すため、
+      // Windows では `D:\tmp\proj\.claude\state\harness.json` になる。
+      // test 側も `path.join` で期待値を組み立てて OS 非依存に。
       expect(defaultStatePath("/tmp/proj")).toBe(
-        "/tmp/proj/.claude/state/harness.json",
+        join("/tmp/proj", ".claude", "state", "harness.json"),
       );
     });
   });
