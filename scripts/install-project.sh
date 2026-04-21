@@ -24,18 +24,34 @@
 set -euo pipefail
 
 WITH_CODEX=0
+# `$0` follows the symlink the user invoked; `BASH_SOURCE[0]` resolves to the
+# actual file so help generation still works when the script is installed
+# under `~/.local/bin/` or similar.
+SELF="${BASH_SOURCE[0]}"
+# Note on flag ordering: `--help` short-circuits as soon as it is parsed and
+# exits 0, so `--with-codex --help` and `--help --with-codex` both print help
+# without running any install step. This is intentional: users who ask for
+# help always get help, regardless of any preceding WITH_CODEX mutation.
 for arg in "$@"; do
   case "$arg" in
     --with-codex)
       WITH_CODEX=1
       ;;
     --help|-h)
-      sed -n '2,24p' "$0" | sed 's|^# \?||'
+      # Print every comment line from line 2 up to (but not including) the
+      # first non-comment line. This is decoupled from the absolute line
+      # number of `set -euo pipefail`, so adding more header comments does
+      # not silently include shell directives in the help output.
+      awk '
+        NR == 1 { next }                # skip shebang
+        /^#/    { sub(/^# ?/, ""); print; next }
+        { exit }                        # first non-comment line ends help
+      ' "${SELF}"
       exit 0
       ;;
     *)
       echo "error: unknown flag: $arg" >&2
-      echo "run '$0 --help' for usage" >&2
+      echo "run '${SELF} --help' for usage" >&2
       exit 2
       ;;
   esac

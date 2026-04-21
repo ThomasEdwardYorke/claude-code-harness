@@ -65,7 +65,11 @@ If `CODEX_COMPANION` is empty, the glob found no installed Codex plugin. In that
 ```text
 ERROR: Codex plugin not found
 Expected path: ${HOME}/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs
-Fix: run `harness doctor` to install the Codex plugin, or set codex.pluginRoot in harness.config.json
+Fix: run 'claude plugin install codex@openai-codex --scope project'
+     (or re-run install-project.sh with --with-codex) to install the companion.
+     Alternatively, set codex.pluginRoot in harness.config.json if the plugin
+     is installed at a non-default location.
+     Verify the install with 'harness doctor'.
 ```
 
 ## Prohibited Actions

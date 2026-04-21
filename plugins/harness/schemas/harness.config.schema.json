@@ -106,7 +106,10 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "testCommand": { "type": "string" },
+        "testCommand": {
+          "type": "string",
+          "description": "Canonical test command run by the Stop hook reminder and picked up by /harness-work as the test step when set. When unset, the Stop hook falls back to per-stack autodetection in detectAvailableChecks() (pyproject.toml → ruff/mypy/pytest, package.json → tsc). Example: 'pytest -q' for a Python project, 'npm test' for a Node project."
+        },
         "qualityGates": {
           "type": "object",
           "additionalProperties": false,

@@ -241,6 +241,28 @@ Consumed by `/harness-work`, `/tdd-implement`, `/parallel-worktree`, and
   (defaults `5` and `60`) — Pro "5 reviews / 1 hour" bucket for local
   rate prediction.
 
+### Tooling (`subagent-stop.ts` stack detection)
+
+- `tooling.pythonCandidateDirs` (default `["src", "app"]`) — directory
+  names checked by `detectAvailableChecks()` when picking Python lint /
+  typecheck targets. Only existing directories are included. The
+  default is stack-neutral; projects with a `backend/` layout add it
+  explicitly (`["backend"]` or `["backend", "src"]`). An empty array or
+  non-string entries fall back to the default.
+
+### Release (`/harness-release`, `/branch-merge`, `/new-feature-branch`)
+
+- `release.strategy` — `"three-branch"` (default, feature/* → dev →
+  main) or `"two-branch"` (trunk-style, feature/* → main directly).
+- `release.integrationBranch` (default `"dev"`) — intermediate branch
+  in `three-branch`; ignored when `strategy = "two-branch"`.
+- `release.productionBranch` (default `"main"`) — final branch where
+  tags and releases land.
+- `release.testCommand` — command executed before each merge step. If
+  unset, `/harness-release` falls back to `work.testCommand`, and then
+  to per-stack autodetection. Precedence: `release.testCommand` >
+  `work.testCommand` > autodetection.
+
 ### Security (`security-auditor` agent)
 
 - `security.projectChecklistPath` — optional relative path to a
@@ -253,8 +275,12 @@ Consumed by `/harness-work`, `/tdd-implement`, `/parallel-worktree`, and
 ### Codex companion (`codex-sync` agent)
 
 - `codex.enabled` — whether to surface the `codex-sync` agent.
-- `codex.pluginRoot` — explicit path to the Codex plugin install (auto
-  detected by `harness doctor` when unset).
+- `codex.pluginRoot` — explicit path to the Codex plugin install. When
+  unset, `codex-sync` auto-resolves the path at runtime via a glob
+  under `~/.claude/plugins/cache/openai-codex/codex/`. `harness doctor`
+  only reports whether Codex is present — it does not write this field
+  into `harness.config.json`; set it manually if your Codex install
+  lives at a non-default location.
 
 Write the file and run `/harness-setup check` afterwards.
 
@@ -266,13 +292,14 @@ Write the file and run `/harness-setup check` afterwards.
 
 ## Agents available after setup
 
-| Agent | Role |
-|-------|------|
-| `worker`     | Implements changes, runs self-review, verifies, commits |
-| `reviewer`   | Read-only, multi-angle code / plan / scope review |
-| `scaffolder` | Keeps docs, `CLAUDE.md`, and `harness.config.json` in sync |
-| `security-auditor` | Audits for credential leakage, injection, permissions |
-| `codex-sync` | Synchronous wrapper around the Codex CLI companion |
+| Agent | Role | Requires Codex companion |
+|-------|------|--------------------------|
+| `worker`     | Implements changes, runs self-review, verifies, commits | — |
+| `reviewer`   | Read-only, multi-angle code / plan / scope review | — |
+| `scaffolder` | Keeps docs, `CLAUDE.md`, and `harness.config.json` in sync | — |
+| `security-auditor` | Audits for credential leakage, injection, permissions | — |
+| `codex-sync` | Synchronous wrapper around the Codex CLI companion | yes (errors fast if absent) |
+| `coderabbit-mimic` | Local pseudo-CodeRabbit PR review loop using Codex as reviewer | yes (errors fast if absent) |
 
 ## Related skills
 

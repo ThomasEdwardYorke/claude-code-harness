@@ -44,14 +44,18 @@ This creates a `harness.config.json` tailored to your project.
 ### Optional companion: `openai-codex`
 
 The Harness ships stack- and LLM-neutral. Two of its agents —
-`codex-sync` and `coderabbit-mimic` — _additionally_ know how to shell
-out to the OpenAI [Codex](https://github.com/openai/codex-plugin-cc)
-companion plugin to run synchronous code review / pseudo-CodeRabbit
-flows. **Installing Codex is optional**:
+`codex-sync` and `coderabbit-mimic` — shell out to the OpenAI
+[Codex](https://github.com/openai/codex-plugin-cc) companion plugin to
+run synchronous code review / pseudo-CodeRabbit flows. Without Codex
+installed, invoking either of those two agents **errors immediately
+with a clear, grep-able message** (they don't degrade gracefully —
+they refuse to proceed). Every other agent, command, guardrail, and
+hook works identically with or without Codex. **Installing Codex is
+therefore optional**:
 
-| Plugin installed | What works | What is degraded |
-|------------------|------------|------------------|
-| `harness` only (default) | All 13 guardrails, 12 verb commands, 4 agents (worker / reviewer / scaffolder / security-auditor), all lifecycle hooks | `codex-sync` and `coderabbit-mimic` fail fast with a clear "CODEX_COMPANION not set" error when invoked. Other agents and commands are unaffected. |
+| Plugin installed | What works | What errors on invocation |
+|------------------|------------|---------------------------|
+| `harness` only (default) | All 13 guardrails, 12 verb commands, 4 agents (worker / reviewer / scaffolder / security-auditor), all lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
 | `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
 
 `install-project.sh --with-codex` flips the opt-in; otherwise run

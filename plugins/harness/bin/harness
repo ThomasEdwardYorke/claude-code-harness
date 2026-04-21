@@ -169,7 +169,10 @@ async function cmdDoctor() {
   if (existsSync(codexDir)) {
     out.push(`codex plugin:        detected at ${codexDir}`);
   } else {
-    out.push(`codex plugin:        not installed (optional — install with 'bash install-project.sh --with-codex' to enable codex-sync / coderabbit-mimic)`);
+    // Hint uses a fully-qualified `claude plugin install` command so the user
+    // can copy-paste from any directory; `install-project.sh` would be a
+    // relative path that doesn't exist in the user's project root.
+    out.push(`codex plugin:        not installed (optional — install with 'claude plugin install codex@openai-codex --scope project' to enable codex-sync / coderabbit-mimic)`);
   }
 
   // Project-local overrides / overlays.
@@ -194,8 +197,20 @@ async function cmdDoctor() {
         out.push(`plans file:          ${plansPath}${existsSync(plansPath) ? "" : " (missing)"}`);
       }
       const handoffFiles = Array.isArray(cfg?.work?.handoffFiles) ? cfg.work.handoffFiles : [];
-      for (const rel of handoffFiles) {
-        if (typeof rel !== "string") continue;
+      for (let i = 0; i < handoffFiles.length; i++) {
+        const rel = handoffFiles[i];
+        if (typeof rel !== "string") {
+          // Warn so misconfigurations (null / number / object entries) stay
+          // visible instead of being silently dropped from the report.
+          out.push(
+            `handoff file:        WARN entry [${i}] is not a string (got ${typeof rel}): ${JSON.stringify(rel)}`,
+          );
+          continue;
+        }
+        if (rel.length === 0) {
+          out.push(`handoff file:        WARN entry [${i}] is an empty string`);
+          continue;
+        }
         const p = resolve(projectDir, rel);
         out.push(`handoff file:        ${p}${existsSync(p) ? "" : " (missing — optional)"}`);
       }
