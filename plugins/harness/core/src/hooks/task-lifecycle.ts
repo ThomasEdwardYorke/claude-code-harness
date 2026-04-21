@@ -30,12 +30,21 @@ export interface TaskLifecycleResult {
 }
 
 function plansReminder(projectRoot: string, verb: string): string {
-  const config = loadConfigSafe(projectRoot);
-  const plansFile = config.work.plansFile;
-  const hasPlans = existsSync(resolve(projectRoot, plansFile));
-  return hasPlans
-    ? ` — ${plansFile} の assignment section (${verb}) への反映を検討してください`
-    : "";
+  // Codex [M-1A] fail-open: shape-invalid config でも throw しないよう defensive narrow。
+  // loadConfigSafe は JSON parse エラーを抑えるが、型検証は行わないため明示 narrow が必要。
+  try {
+    const config = loadConfigSafe(projectRoot);
+    const rawPlans = (config.work as { plansFile?: unknown } | undefined)?.plansFile;
+    const plansFile = typeof rawPlans === "string" && rawPlans.length > 0
+      ? rawPlans
+      : "Plans.md";
+    const hasPlans = existsSync(resolve(projectRoot, plansFile));
+    return hasPlans
+      ? ` — ${plansFile} の assignment section (${verb}) への反映を検討してください`
+      : "";
+  } catch {
+    return "";
+  }
 }
 
 export async function handleTaskCreated(

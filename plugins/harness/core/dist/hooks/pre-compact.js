@@ -15,8 +15,16 @@ const MAX_PLANS_SIZE = 512 * 1024;
 function readAssignmentTable(projectRoot) {
     try {
         const config = loadConfigSafe(projectRoot);
-        const plansFile = config.work.plansFile;
-        const markers = config.work.assignmentSectionMarkers;
+        // Codex [M-1A] fail-open: shape-invalid config でも hook が落ちないよう defensive narrow。
+        const rawPlans = config.work?.plansFile;
+        const plansFile = typeof rawPlans === "string" && rawPlans.length > 0
+            ? rawPlans
+            : "Plans.md";
+        const rawMarkers = config.work
+            ?.assignmentSectionMarkers;
+        const markers = Array.isArray(rawMarkers) && rawMarkers.every((m) => typeof m === "string")
+            ? rawMarkers
+            : ["担当表", "Assignment", "In Progress"];
         const plansPath = resolve(projectRoot, plansFile);
         if (!existsSync(plansPath))
             return null;

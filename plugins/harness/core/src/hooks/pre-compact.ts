@@ -31,8 +31,16 @@ export interface PreCompactResult {
 function readAssignmentTable(projectRoot: string): string | null {
   try {
     const config = loadConfigSafe(projectRoot);
-    const plansFile = config.work.plansFile;
-    const markers = config.work.assignmentSectionMarkers;
+    // Codex [M-1A] fail-open: shape-invalid config でも hook が落ちないよう defensive narrow。
+    const rawPlans = (config.work as { plansFile?: unknown } | undefined)?.plansFile;
+    const plansFile = typeof rawPlans === "string" && rawPlans.length > 0
+      ? rawPlans
+      : "Plans.md";
+    const rawMarkers = (config.work as { assignmentSectionMarkers?: unknown } | undefined)
+      ?.assignmentSectionMarkers;
+    const markers = Array.isArray(rawMarkers) && rawMarkers.every((m) => typeof m === "string")
+      ? (rawMarkers as string[])
+      : ["担当表", "Assignment", "In Progress"];
 
     const plansPath = resolve(projectRoot, plansFile);
     if (!existsSync(plansPath)) return null;

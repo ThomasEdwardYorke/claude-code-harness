@@ -44,7 +44,7 @@ Model B は各 worktree で独立 `claude` プロセスを起動し、同一 har
 
 ```json
 {
-  "feature_branch": "feature/parent-integration",
+  "feature_branch": "main",
   "base_dir": "/path/to/project",
   "worktree_parent_dir": "/path/to/project-parent",
   "worktree_prefix": "myproject-wt-",

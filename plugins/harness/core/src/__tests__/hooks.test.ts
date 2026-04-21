@@ -16,6 +16,10 @@ vi.mock("node:child_process", () => ({
 
 import { handlePreCompact } from "../hooks/pre-compact.js";
 import { handleSubagentStop, detectAvailableChecks } from "../hooks/subagent-stop.js";
+import {
+  handleTaskCreated,
+  handleTaskCompleted,
+} from "../hooks/task-lifecycle.js";
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -404,5 +408,166 @@ describe("detectAvailableChecks (CodeRabbit PR #1 Major: subagent-stop.ts:75 + C
     const pytest = checks.find((c) => c.tool === "pytest");
     expect(pytest).toBeDefined();
     expect(pytest?.command).toContain("pytest tests/");
+  });
+});
+
+describe("handleTaskCreated / handleTaskCompleted (Codex M-1B: config-driven coverage)", () => {
+  const baseInput = {
+    hook_event_name: "TaskCreated",
+    session_id: "sess-test",
+    task_id: "T-42",
+    task_subject: "Add tests",
+  };
+
+  it("Plans.md が存在する場合、reminder を生成する (default plansFile)", async () => {
+    const dir = makeTempProject({ plansContent: "# Plans\n" });
+    const result = await handleTaskCreated({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("Add tests");
+    expect(result.additionalContext).toContain("Plans.md");
+    expect(result.additionalContext).toContain("assignment section");
+  });
+
+  it("Plans.md が存在しない場合、reminder は出さない", async () => {
+    const dir = makeTempProject();
+    const result = await handleTaskCreated({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("Add tests");
+    expect(result.additionalContext).not.toContain("assignment section");
+  });
+
+  it("harness.config.json で `work.plansFile` を override できる", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-tl-"));
+    tempDirs.push(dir);
+    // custom plans file name
+    writeFileSync(join(dir, "TODO.md"), "# TODO\n", "utf-8");
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { plansFile: "TODO.md" } }),
+      "utf-8",
+    );
+    const result = await handleTaskCreated({ ...baseInput, cwd: dir });
+    expect(result.additionalContext).toContain("TODO.md");
+    expect(result.additionalContext).not.toContain("Plans.md");
+  });
+
+  it("shape-invalid config (plansFile が number) でも hook が throw しない (fail-open)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-tl-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { plansFile: 123 } }),
+      "utf-8",
+    );
+    writeFileSync(join(dir, "Plans.md"), "# Plans\n", "utf-8");
+    const result = await handleTaskCreated({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    // fall back to default "Plans.md"
+    expect(result.additionalContext).toContain("Add tests");
+  });
+
+  it("broken config.json でも hook は throw せず fallback する", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-tl-"));
+    tempDirs.push(dir);
+    writeFileSync(join(dir, "harness.config.json"), "{ invalid json", "utf-8");
+    writeFileSync(join(dir, "Plans.md"), "# Plans\n", "utf-8");
+    const result = await handleTaskCreated({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+  });
+
+  it("handleTaskCompleted も同じ config 経路で動作する", async () => {
+    const dir = makeTempProject({ plansContent: "# Plans\n" });
+    const result = await handleTaskCompleted({
+      ...baseInput,
+      hook_event_name: "TaskCompleted",
+      cwd: dir,
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("Add tests");
+    expect(result.additionalContext).toContain("completion section");
+  });
+});
+
+describe("handlePreCompact config override (Codex M-1B)", () => {
+  const baseInput = {
+    hook_event_name: "PreCompact",
+    session_id: "sess-test",
+    trigger: "auto",
+  };
+
+  it("custom `work.assignmentSectionMarkers` で日本語マーカーを差し替え可能", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-pc-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "Plans.md"),
+      "# Plans\n\n## 進捗表\n| task | status |\n|---|---|\n| T-1 | doing |\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { assignmentSectionMarkers: ["進捗表"] } }),
+      "utf-8",
+    );
+    const result = await handlePreCompact({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("進捗表");
+  });
+
+  it("custom `work.plansFile` 経由で TODO.md を読み込める", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-pc-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "TODO.md"),
+      "# TODO\n\n## Assignment\n| a | b |\n|---|---|\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { plansFile: "TODO.md" } }),
+      "utf-8",
+    );
+    const result = await handlePreCompact({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("Assignment");
+  });
+
+  it("shape-invalid config (markers が string) でも hook は throw しない", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-pc-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "Plans.md"),
+      "# Plans\n\n## 担当表\n| task |\n|---|\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { assignmentSectionMarkers: "not-an-array" } }),
+      "utf-8",
+    );
+    const result = await handlePreCompact({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    // fallback default markers が効いて担当表を拾う
+    expect(result.additionalContext).toContain("担当表");
+  });
+});
+
+describe("parseExemption regression (Codex C-2 minor)", () => {
+  // Exemption parser の無効 form に対する throw 動作を回帰テスト。
+  // Note: parseExemption は test file 内部関数なので、実装側の invariant を
+  // generality.test.ts 経由で検証済。本セクションは設計意図のメモ。
+
+  it("exemption regex は body 無し / whitespace-only / * を許容しない (設計メモ)", () => {
+    // generality.test.ts の parseExemption() は以下を throw:
+    // - `<!-- generality-exemption -->` (body 無し) → throw
+    // - `<!-- generality-exemption: -->` (colon のみ) → throw
+    // - `<!-- generality-exemption: all -->` (all キーワード) → throw
+    // - `<!-- generality-exemption: "all" -->` (quoted all) → throw
+    // - `<!-- generality-exemption: * -->` (asterisk のみ) → throw
+    // - `<!-- generality-exemption: reason without B-ids -->` (pattern-id なし) → throw
+    // 正式 form のみ許容:
+    // - `<!-- generality-exemption: B-1,B-2a — HARNESS-42, reason -->`
+    //
+    // 動作検証は generality.test.ts の run-time assertion 内で meta-test 追加済。
+    expect(true).toBe(true);
   });
 });

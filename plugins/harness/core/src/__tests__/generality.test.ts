@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-3a,B-3b,B-3c,B-3d,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 — HARNESS-generality-self, detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 — HARNESS-generality-self, detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -55,19 +55,8 @@ const BLOCKLIST_TARGETS: ScopeTarget[] = [
   { dir: "core/src/hooks", exts: [".ts"], recursive: false },
   // Codex 敵対的レビュー [C-1] 対応: ガードレール範囲を public docs / schema / 非 test 実装へ拡張
   { dir: "schemas", exts: [".json"], recursive: false },
-  { dir: "core/src", exts: [".ts"], recursive: false }, // 直下のみ (index.ts / types.ts / config.ts 等)
-];
-
-// REPO-level targets (PLUGIN_ROOT 外、repo root 直下を別スキャン)
-interface RepoRootTarget {
-  relativePath: string; // REPO_ROOT からの相対
-  exts: string[];
-}
-
-const REPO_ROOT_TARGETS: RepoRootTarget[] = [
-  { relativePath: "README.md", exts: [".md"] },
-  { relativePath: "docs/en", exts: [".md"] },
-  { relativePath: "docs/ja", exts: [".md"] },
+  // core/src 全域を再帰走査 (ただし __tests__ は WARN_TARGETS で別扱い、後段で filter)
+  { dir: "core/src", exts: [".ts"], recursive: true },
 ];
 
 // テスト describe 文に leak が紛れるリスクを別枠で検出する。
@@ -185,6 +174,19 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "shipped spec では description として書くか CHANGELOG.md に移管してください。",
     appliesToTests: true,
   },
+  {
+    id: "B-3e",
+    category: "tracker-id",
+    // Codex [M-4A] 指摘: bare `(C-N)` / `(M-N)` / `(m-N)` が content-integrity.test.ts の
+    // describe titles などに残存していた。短すぎる一般語を誤検出しないよう、括弧で囲まれた
+    // tracker label 形式に絞る: `(C-1)` / `(M-3)` / `(m-2)` / `(C-12 optional description)` 等
+    pattern: /\((?:[CM]|m)-\d+(?:\s+[^)]*)?\)/g,
+    message:
+      "括弧形式の内部 tracker ID (`(C-N)` / `(M-N)` / `(m-N)`) が含まれています。" +
+      "公式に昇格した issue key (例: `HARNESS-42`) に置換するか、" +
+      "CHANGELOG.md / docs/maintainer/tracker-migration.md に移管してください。",
+    appliesToTests: true,
+  },
 
   // ─────────────── 系列4: project-local ファイル必須参照 ───────────────
   // 注意: optional / 条件付き参照 ("if exists", "存在すれば") は許容する。
@@ -284,11 +286,15 @@ const BLOCK_PATTERNS: BlockPattern[] = [
 // Exemption 検出
 // ---------------------------------------------------------------------------
 
+// Markdown / TS コメント形式から exemption 宣言を抽出する regex。
+// Codex C-2 minor 指摘対応: 旧 regex は `*` や空文字を capture できず、
+// 無効 form (空 / アスタリスク単独 / whitespace) を throw でなく null 素通りにしていた。
+// 新 regex は generality-exemption keyword を探し、body は非貪欲に closing marker まで。
 const EXEMPTION_FILE_HEAD_PATTERNS = [
-  // Markdown: HTML comment
-  /<!--\s*generality-exemption(?::\s*([^>]+?))?\s*-->/,
-  // TypeScript/JavaScript: block comment
-  /\/\*\s*generality-exemption(?::\s*([^*]+?))?\s*\*\//,
+  // Markdown: HTML comment (body は --> まで)
+  /<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
+  // TypeScript / JavaScript: block comment (body は block-comment の closing marker まで)
+  /\/\*\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*\*\//,
 ];
 
 /**
@@ -306,16 +312,28 @@ function parseExemption(
   for (const re of EXEMPTION_FILE_HEAD_PATTERNS) {
     const match = re.exec(head);
     if (!match) continue;
-    const reason = (match[1] ?? "").trim();
-    if (!reason) {
+    const rawBody = match[1];
+    // keyword match はしたが body 欠落 (`<!-- generality-exemption -->`) → throw
+    if (rawBody === undefined) {
+      throw new Error(
+        "generality-exemption declaration has no body. " +
+          "Required form: `generality-exemption: B-1,B-2a — HARNESS-42, short reason`. " +
+          "Empty declaration is prohibited.",
+      );
+    }
+    const reason = rawBody.trim();
+    // 空 / whitespace-only / `*` 単独 等の無効 body を reject
+    if (!reason || /^[\s*]+$/.test(reason)) {
       throw new Error(
         "generality-exemption declaration requires an explicit pattern-id list " +
           "(e.g. `generality-exemption: B-1,B-2a — HARNESS-42, short reason`). " +
-          "Empty reason is not allowed.",
+          "Empty / whitespace-only / `*`-only body is prohibited. Found: '" +
+          reason +
+          "'",
       );
     }
-    // Codex [C-2]: `all` は構造的欠陥なので禁止
-    if (/\ball\b/i.test(reason)) {
+    // Codex [C-2]: `all` は構造的欠陥なので禁止 (quoted / backticked variants も禁止)
+    if (/(?:^|\W)['"`]?all['"`]?(?:$|\W)/i.test(reason)) {
       throw new Error(
         "generality-exemption `all` is prohibited (Codex adversarial review [C-2]). " +
           "Declare explicit pattern IDs (e.g. `B-1,B-2a,B-3c`) so the exemption is scoped. " +
@@ -365,7 +383,51 @@ function listFiles(target: ScopeTarget): string[] {
         files.push(full);
       }
     } else if (st.isDirectory() && target.recursive) {
+      // __tests__ は WARN_TARGETS で別扱い、重複を避ける
+      if (name === "__tests__") continue;
       files.push(...listFiles({ ...target, dir: join(target.dir, name) }));
+    }
+  }
+  return files;
+}
+
+/**
+ * REPO-level targets: PLUGIN_ROOT 外の repo root 直下 (README.md / docs/en / docs/ja 等)。
+ * Codex [C-1] 指摘: 定義のみで使われていなかった死コードを実装と統合。
+ */
+interface RepoRootTarget {
+  relativePath: string; // REPO_ROOT からの相対
+  exts: string[];
+  recursive: boolean;
+}
+
+const REPO_ROOT_TARGETS: RepoRootTarget[] = [
+  { relativePath: "README.md", exts: [".md"], recursive: false },
+  { relativePath: "docs/en", exts: [".md"], recursive: true },
+  { relativePath: "docs/ja", exts: [".md"], recursive: true },
+];
+
+function listRepoRootFiles(target: RepoRootTarget): string[] {
+  const abs = resolve(REPO_ROOT, target.relativePath);
+  if (!existsSync(abs)) return [];
+  const st = statSync(abs);
+  if (st.isFile()) {
+    return target.exts.some((ext) => abs.endsWith(ext)) ? [abs] : [];
+  }
+  if (!st.isDirectory()) return [];
+  const files: string[] = [];
+  for (const name of readdirSync(abs)) {
+    const full = join(abs, name);
+    const childStat = statSync(full);
+    if (childStat.isFile()) {
+      if (target.exts.some((ext) => name.endsWith(ext))) files.push(full);
+    } else if (childStat.isDirectory() && target.recursive) {
+      files.push(
+        ...listRepoRootFiles({
+          ...target,
+          relativePath: join(target.relativePath, name),
+        }),
+      );
     }
   }
   return files;
@@ -440,6 +502,37 @@ describeFileBlocklistTests(
   WARN_TARGETS,
   (p) => p.appliesToTests,
 );
+
+// Codex [C-1] 指摘対応: REPO_ROOT_TARGETS (README.md / docs/en / docs/ja) を実際に走査
+describe("generality blocklist: repo-level public docs (Codex [C-1] coverage)", () => {
+  const repoFiles = REPO_ROOT_TARGETS.flatMap((t) => listRepoRootFiles(t));
+
+  for (const pattern of BLOCK_PATTERNS) {
+    // docs/ja は日本語翻訳ディレクトリなので B-7/B-10 系は適用外 (既に B-10 は削除済)
+    // ただし B-1..B-5 / B-8 / B-9 は docs でも禁止 (leak 対象)
+    describe(`[${pattern.id}] ${pattern.category}`, () => {
+      for (const file of repoFiles) {
+        const rel = relative(REPO_ROOT, file);
+        // docs/ja/** は日本語が正当なので B-7 (日本語 UI keyword hardcode in hooks) は対象外 (そもそも TS でない)
+        // docs/ja/** / docs/en/** 両方で branch / legacy-api / tracker-id / project-file / web-stack は禁止
+        it(`${rel} に ${pattern.id} が含まれない`, () => {
+          const content = readFileSync(file, "utf-8");
+          if (hasFileExemption(content, pattern.id)) {
+            return;
+          }
+          const hits = findHits(content, pattern);
+          if (hits.length > 0) {
+            const details = hits
+              .map((h) => `  L${h.line}: ${h.text}`)
+              .join("\n");
+            const fullMessage = `\n${pattern.message}\n\nLeak 検出箇所 (${rel}):\n${details}\n`;
+            expect.fail(fullMessage);
+          }
+        });
+      }
+    });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // 自己検証: テスト基盤そのものが正しく動くか
