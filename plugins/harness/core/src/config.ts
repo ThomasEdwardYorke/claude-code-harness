@@ -190,6 +190,48 @@ export interface CodeRabbitConfig {
   proBucketWindowMinutes: number;
 }
 
+/**
+ * Stack-detection knobs. Kept separate from `work.*` because these answer
+ * "where does this project keep its source?" questions rather than "how
+ * should `/harness-work` schedule tasks?" questions.
+ */
+export interface ToolingConfig {
+  /**
+   * Directory names that `subagent-stop.ts`'s `detectAvailableChecks()`
+   * consults when choosing Python lint / typecheck targets. Only existing
+   * directories are included. Default `["src", "app"]` — stack-neutral;
+   * projects with a `backend/` layout add it explicitly via override.
+   */
+  pythonCandidateDirs: string[];
+}
+
+/**
+ * Branch-merge strategy identifier consumed by `/branch-merge` and
+ * `/harness-release`. `three-branch` is the default (feature/* → dev →
+ * main); `two-branch` skips dev entirely for trunk-style repos.
+ */
+export type ReleaseStrategy = "two-branch" | "three-branch";
+
+export interface ReleaseConfig {
+  /** Branch-merge strategy. Controls how /branch-merge walks feature → integration → production. */
+  strategy: ReleaseStrategy;
+  /**
+   * Intermediate branch name used when `strategy === "three-branch"`.
+   * Ignored otherwise. Default `"dev"`.
+   */
+  integrationBranch: string;
+  /**
+   * Final / production branch name. Default `"main"`. Tags from
+   * `/harness-release` land here.
+   */
+  productionBranch: string;
+  /**
+   * Command executed before each merge step. When unset, /harness-release
+   * falls back to `work.testCommand` and then to per-stack autodetection.
+   */
+  testCommand?: string;
+}
+
 export interface HarnessConfig {
   /** Human-readable project name (shown in messages). */
   projectName: string;
@@ -218,6 +260,8 @@ export interface HarnessConfig {
   worktree: WorktreeConfig;
   tddEnforce: TddEnforceConfig;
   codeRabbit: CodeRabbitConfig;
+  tooling: ToolingConfig;
+  release: ReleaseConfig;
 }
 
 // ============================================================
@@ -283,6 +327,16 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     proBucketSize: 5,
     proBucketWindowMinutes: 60,
   },
+  tooling: {
+    // Deliberately excludes `backend/` — plugin ships stack-neutral,
+    // projects add their own layout via override.
+    pythonCandidateDirs: ["src", "app"],
+  },
+  release: {
+    strategy: "three-branch",
+    integrationBranch: "dev",
+    productionBranch: "main",
+  },
 };
 
 // ============================================================
@@ -323,6 +377,8 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
       ...(partial.tddEnforce ?? {}),
     },
     codeRabbit: { ...DEFAULT_CONFIG.codeRabbit, ...(partial.codeRabbit ?? {}) },
+    tooling: { ...DEFAULT_CONFIG.tooling, ...(partial.tooling ?? {}) },
+    release: { ...DEFAULT_CONFIG.release, ...(partial.release ?? {}) },
   };
 }
 

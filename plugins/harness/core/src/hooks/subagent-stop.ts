@@ -10,6 +10,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
+import { loadConfigSafe } from "../config.js";
 
 export interface SubagentStopInput {
   hook_event_name: string;
@@ -59,13 +60,36 @@ function runCiCheck(
 }
 
 /**
- * pyproject.toml の存在だけで `backend/` レイアウトを前提にすると、`src/` レイアウトや
- * frontend-only repo で毎回 FAIL する。実レイアウトを検出して適切な lint target を決める。
- * CodeRabbit PR #1 Major: subagent-stop.ts:75 + Codex 敵対的レビュー Minor 追加対応:
- * `.` fallback は node_modules / .venv を大量拾いして false positive を生むため、
- * 主要 Python layout (backend/ / src/ / app/) を検出できた場合のみ ruff / mypy を有効化。
+ * pyproject.toml の存在だけで一律 `.` を lint 対象にすると node_modules / .venv
+ * を拾って false positive を量産する。実レイアウトを検出して lint target を
+ * 絞り込む。候補ディレクトリは `harness.config.json` の `tooling.pythonCandidateDirs`
+ * で上書き可能 (stack-neutral default は `["src", "app"]`、`backend/` レイアウト
+ * を使うプロジェクトは明示 override する)。
+ *
+ * 設計メモ:
+ * - Codex `M-1A` fail-open 方針 (pre-compact.ts / task-lifecycle.ts と同じ):
+ *   config の shape が壊れていても throw せず default にフォールバック。
+ * - `backend/src/app` いずれかを検出できた場合のみ ruff / mypy を登録、
+ *   pytest は `tests/` 独立判定で別枝。
  */
-const PYTHON_CANDIDATE_DIRS = ["backend", "src", "app"] as const;
+function resolvePythonCandidateDirs(projectRoot: string): string[] {
+  const fallback = ["src", "app"];
+  try {
+    const config = loadConfigSafe(projectRoot);
+    const raw = (config.tooling as { pythonCandidateDirs?: unknown } | undefined)
+      ?.pythonCandidateDirs;
+    if (
+      Array.isArray(raw) &&
+      raw.length > 0 &&
+      raw.every((d) => typeof d === "string" && d.length > 0)
+    ) {
+      return raw as string[];
+    }
+    return fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export function detectAvailableChecks(
   projectRoot: string,
@@ -73,9 +97,10 @@ export function detectAvailableChecks(
   const checks: Array<{ tool: string; command: string }> = [];
 
   if (existsSync(resolve(projectRoot, "pyproject.toml"))) {
-    const pyTargets = PYTHON_CANDIDATE_DIRS.filter((d) =>
-      existsSync(resolve(projectRoot, d)),
-    ).map((d) => `${d}/`);
+    const candidateDirs = resolvePythonCandidateDirs(projectRoot);
+    const pyTargets = candidateDirs
+      .filter((d) => existsSync(resolve(projectRoot, d)))
+      .map((d) => `${d}/`);
 
     if (pyTargets.length > 0) {
       const target = pyTargets.join(" ");

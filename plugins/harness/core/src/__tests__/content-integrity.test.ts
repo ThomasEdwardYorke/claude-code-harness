@@ -779,12 +779,12 @@ describe("worker.md の commit prefix / build 検証整合 (CodeRabbit PR #1)", 
     expect(content).toMatch(/`ci`/);
   });
 
-  it("build 検証コマンドが stop-hook (subagent-stop.ts) と整合する (CodeRabbit Major: worker.md:102)", () => {
-    // worker.md は「backend/ ある場合は backend/、無ければ .」と説明していること。
+  it("build 検証コマンドが stop-hook (subagent-stop.ts) の stack-neutral default と整合する", () => {
+    // worker.md は `tooling.pythonCandidateDirs` (default `["src", "app"]`)
+    // を介して Python lint target が決まることを示していること。
     // subagent-stop.ts の detectAvailableChecks 実装と同じロジックを提示する。
-    expect(content).toMatch(
-      /backend\/[\s\S]{0,300}?(?:無ければ|そうでない|ない場合|not\s+exist|otherwise|else|fallback)/i,
-    );
+    expect(content).toMatch(/tooling\.pythonCandidateDirs/);
+    expect(content).toMatch(/\["src",\s*"app"\]/);
   });
 });
 
@@ -812,22 +812,27 @@ describe("pre-compact.ts の custom_instructions 転載 (CodeRabbit Major: pre-c
   });
 });
 
-describe("subagent-stop.ts の backend/ 検出 (CodeRabbit Major: subagent-stop.ts:75 + Codex 敵対的レビュー Minor)", () => {
+describe("subagent-stop.ts の Python lint target 解決 (stack-neutral default + config override)", () => {
   const src = readFileSync(
     resolve(PLUGIN_ROOT, "core/src/hooks/subagent-stop.ts"),
     "utf-8",
   );
 
-  it("PYTHON_CANDIDATE_DIRS で backend / src / app を候補にする", () => {
-    // Codex 指摘: `.` fallback は node_modules / .venv を大量拾いして false positive 発生。
-    // 主要 Python layout (backend/ / src/ / app/) を候補としてチェック。
-    expect(src).toMatch(
-      /PYTHON_CANDIDATE_DIRS\s*=\s*\[[\s\S]{0,80}?["']backend["'][\s\S]{0,40}?["']src["'][\s\S]{0,40}?["']app["']/,
-    );
+  it("loadConfigSafe 経由で tooling.pythonCandidateDirs を解決する", () => {
+    // 旧: hardcode `PYTHON_CANDIDATE_DIRS = ["backend", "src", "app"]`
+    // 新: config 経由 (stack-neutral default + project-local override)
+    expect(src).toMatch(/loadConfigSafe/);
+    expect(src).toMatch(/pythonCandidateDirs/);
+  });
+
+  it("shape-invalid config では default (['src', 'app']) にフォールバック (fail-open)", () => {
+    // Codex M-1A 方針: config 壊れていても throw せず default。
+    expect(src).toMatch(/Array\.isArray\(/);
+    // fallback default が plugin 内に inline で書かれていること
+    expect(src).toMatch(/\["src",\s*"app"\]/);
   });
 
   it("候補 dir が 1 つも無い場合は ruff/mypy を skip する", () => {
-    // filter 経由で pyTargets が作られ、長さ 0 なら ruff/mypy を push しない実装であること。
     expect(src).toMatch(/pyTargets\.length\s*>\s*0/);
   });
 

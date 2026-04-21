@@ -96,8 +96,12 @@ Codex にレビュー依頼 → 指摘対応 → 再レビュー → critical/ma
 
 ```bash
 # Python (pyproject.toml あり):
-#   backend/ レイアウトがある場合: ruff check backend/ && mypy backend/
-#   そうでない場合:                ruff check . && mypy .
+#   対象ディレクトリは `harness.config.json` の `tooling.pythonCandidateDirs`
+#   で決まる (default: ["src", "app"]、stack-neutral)。実在するディレクトリ
+#   のみが lint target に入り、1 つも無ければ ruff/mypy は skip される。
+#   例: default  → ruff check src/ && mypy src/        (src/ がある場合)
+#   例: override → ruff check backend/ && mypy backend/ (tooling.pythonCandidateDirs=["backend"])
+#
 # TypeScript (package.json あり):
 #   npm run typecheck   # package.json に script があるとき
 #   npx tsc --noEmit    # そうでないとき

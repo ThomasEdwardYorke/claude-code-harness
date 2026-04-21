@@ -59,8 +59,11 @@ function makeTempProject(opts?: {
   plansContent?: string;
   hasPyproject?: boolean;
   hasBackend?: boolean;
+  hasSrc?: boolean;
+  hasApp?: boolean;
   hasTests?: boolean;
   hasPackageJson?: boolean;
+  harnessConfig?: Record<string, unknown>;
 }): string {
   const dir = mkdtempSync(join(tmpdir(), "harness-test-"));
   tempDirs.push(dir);
@@ -74,12 +77,27 @@ function makeTempProject(opts?: {
     mkdirSync(join(dir, "backend"), { recursive: true });
     writeFileSync(join(dir, "backend", "__init__.py"), "", "utf-8");
   }
+  if (opts?.hasSrc) {
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "__init__.py"), "", "utf-8");
+  }
+  if (opts?.hasApp) {
+    mkdirSync(join(dir, "app"), { recursive: true });
+    writeFileSync(join(dir, "app", "__init__.py"), "", "utf-8");
+  }
   if (opts?.hasTests) {
     mkdirSync(join(dir, "tests"), { recursive: true });
     writeFileSync(join(dir, "tests", "test_dummy.py"), "def test_ok(): pass\n", "utf-8");
   }
   if (opts?.hasPackageJson) {
     writeFileSync(join(dir, "package.json"), '{"name":"test"}', "utf-8");
+  }
+  if (opts?.harnessConfig) {
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify(opts.harnessConfig),
+      "utf-8",
+    );
   }
   return dir;
 }
@@ -232,8 +250,9 @@ describe("handleSubagentStop", () => {
 
   });
 
-  it("pyproject.toml がある場合 ruff/mypy を検出する", async () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true });
+  it("pyproject.toml + 主要 Python layout (src/ / app/) で ruff/mypy を検出する", async () => {
+    // stack-neutral default `["src", "app"]` に合わせて src/ を作成。
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     expect(result.ciTriggered).toBe(true);
     expect(result.ciResults).toBeDefined();
@@ -244,7 +263,7 @@ describe("handleSubagentStop", () => {
   });
 
   it("tests/ がある場合 pytest も検出する", async () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true, hasTests: true });
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true, hasTests: true });
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     const tools = result.ciResults?.map((r) => r.tool) ?? [];
     expect(tools).toContain("pytest");
@@ -278,7 +297,8 @@ describe("handleSubagentStop", () => {
   });
 
   it("additionalContext に CI 結果サマリを含む", async () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true });
+    // stack-neutral default `["src", "app"]` に合わせて src/ を作成。
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     expect(result.additionalContext).toContain("SubagentStop");
     expect(result.additionalContext).toContain("Worker 完了後 CI チェック結果");
@@ -297,15 +317,15 @@ describe("handleSubagentStop", () => {
 
   });
 
-  it("execSync が失敗したら passed: false, output に stdout を含む (CodeRabbit PR #1 Major: hooks.test.ts:200)", async () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true });
+  it("execSync が失敗したら passed: false, output に stdout を含む", async () => {
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockedExecSync as unknown as { mockImplementation: (fn: (...args: unknown[]) => unknown) => unknown }).mockImplementation(
       (...args: unknown[]) => {
         const cmd = String(args[0]);
         if (cmd.includes("ruff")) {
           const err = new Error("ruff failed") as Error & { stdout?: unknown };
-          err.stdout = "backend/main.py:1: F401 unused import\n";
+          err.stdout = "src/main.py:1: F401 unused import\n";
           throw err;
         }
         return "";
@@ -318,7 +338,7 @@ describe("handleSubagentStop", () => {
   });
 
   it("execSync が stdout 無しで throw (timeout 相当) の場合 passed: false + fallback message", async () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true, hasTests: true });
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true, hasTests: true });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockedExecSync as unknown as { mockImplementation: (fn: (...args: unknown[]) => unknown) => unknown }).mockImplementation(
       (...args: unknown[]) => {
@@ -337,54 +357,106 @@ describe("handleSubagentStop", () => {
   });
 
   it("全 CI チェック pass 時は additionalContext に '全 CI チェック PASS' を含む", async () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true });
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
     const result = await handleSubagentStop({ ...baseInput, cwd: dir });
     expect(result.additionalContext).toContain("全 CI チェック PASS");
   });
 });
 
-describe("detectAvailableChecks (CodeRabbit PR #1 Major: subagent-stop.ts:75 + Codex 敵対的レビュー Minor)", () => {
-  it("backend/ / src/ / app/ が無い pyproject.toml repo では ruff/mypy を skip (false positive 回避)", () => {
-    // 旧: `.` fallback で root lint → node_modules / .venv を大量拾いして false positive 発生。
-    // 新: 主要 Python layout が 1 つも無ければ ruff/mypy を skip (safer default)。
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: false });
+describe("detectAvailableChecks (stack-neutral default ['src', 'app'] + tooling.pythonCandidateDirs override)", () => {
+  it("Python layout が 1 つも無ければ ruff/mypy を skip (false positive 回避)", () => {
+    // `.` fallback を禁じているので、src/ / app/ がなければ ruff/mypy を
+    // スキップ。pyproject.toml だけでは lint は走らない。
+    const dir = makeTempProject({ hasPyproject: true });
     const checks = detectAvailableChecks(dir);
     const tools = checks.map((c) => c.tool);
     expect(tools).not.toContain("ruff");
     expect(tools).not.toContain("mypy");
   });
 
-  it("backend/ があれば backend/ で lint する (現行レイアウト)", () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: true });
+  it("default で src/ を ruff / mypy target にする", () => {
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true });
     const checks = detectAvailableChecks(dir);
     const ruff = checks.find((c) => c.tool === "ruff");
     const mypy = checks.find((c) => c.tool === "mypy");
-    expect(ruff?.command).toContain("ruff check backend/");
-    expect(mypy?.command).toContain("mypy backend/");
+    expect(ruff?.command).toContain("ruff check src/");
+    expect(mypy?.command).toContain("mypy src/");
   });
 
-  it("src/ レイアウトが検出されたら src/ も target に含める", () => {
-    const dir = makeTempProject({ hasPyproject: true });
-    mkdirSync(join(dir, "src"), { recursive: true });
-    const checks = detectAvailableChecks(dir);
-    const ruff = checks.find((c) => c.tool === "ruff");
-    expect(ruff?.command).toContain("src/");
-  });
-
-  it("app/ レイアウトが検出されたら app/ も target に含める", () => {
-    const dir = makeTempProject({ hasPyproject: true });
-    mkdirSync(join(dir, "app"), { recursive: true });
+  it("default で app/ を ruff / mypy target にする", () => {
+    const dir = makeTempProject({ hasPyproject: true, hasApp: true });
     const checks = detectAvailableChecks(dir);
     const ruff = checks.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("app/");
   });
 
-  it("backend/ と src/ が両方あれば両方を target にする", () => {
+  it("default では backend/ を ruff target に含めない (stack-neutral: backend は opt-in)", () => {
+    // default は `["src", "app"]`。backend/ レイアウトを使うプロジェクトは
+    // harness.config.json の tooling.pythonCandidateDirs で明示 override する。
     const dir = makeTempProject({ hasPyproject: true, hasBackend: true });
-    mkdirSync(join(dir, "src"), { recursive: true });
+    const checks = detectAvailableChecks(dir);
+    const tools = checks.map((c) => c.tool);
+    // backend/ だけでは src/ / app/ 不在扱い → ruff / mypy は skip。
+    expect(tools).not.toContain("ruff");
+    expect(tools).not.toContain("mypy");
+  });
+
+  it("src/ + app/ の両方があれば両方を ruff target にする", () => {
+    const dir = makeTempProject({ hasPyproject: true, hasSrc: true, hasApp: true });
+    const checks = detectAvailableChecks(dir);
+    const ruff = checks.find((c) => c.tool === "ruff");
+    expect(ruff?.command).toContain("src/");
+    expect(ruff?.command).toContain("app/");
+  });
+
+  it("harness.config.json で tooling.pythonCandidateDirs=['backend'] を override すると backend が target になる", () => {
+    const dir = makeTempProject({
+      hasPyproject: true,
+      hasBackend: true,
+      harnessConfig: { tooling: { pythonCandidateDirs: ["backend"] } },
+    });
+    const checks = detectAvailableChecks(dir);
+    const ruff = checks.find((c) => c.tool === "ruff");
+    const mypy = checks.find((c) => c.tool === "mypy");
+    expect(ruff?.command).toContain("backend/");
+    expect(mypy?.command).toContain("backend/");
+  });
+
+  it("tooling.pythonCandidateDirs=['backend', 'src'] で backend + src の両方が target になる", () => {
+    const dir = makeTempProject({
+      hasPyproject: true,
+      hasBackend: true,
+      hasSrc: true,
+      harnessConfig: { tooling: { pythonCandidateDirs: ["backend", "src"] } },
+    });
     const checks = detectAvailableChecks(dir);
     const ruff = checks.find((c) => c.tool === "ruff");
     expect(ruff?.command).toContain("backend/");
+    expect(ruff?.command).toContain("src/");
+  });
+
+  it("shape-invalid tooling config (非配列 / 非文字列) では default にフォールバック (fail-open)", () => {
+    // Codex M-1A 方針: config が壊れていても throw せず default。
+    const dir = makeTempProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: { tooling: { pythonCandidateDirs: "not-an-array" } },
+    });
+    const checks = detectAvailableChecks(dir);
+    const ruff = checks.find((c) => c.tool === "ruff");
+    // default `["src", "app"]` にフォールバック → src/ が拾われる
+    expect(ruff?.command).toContain("src/");
+  });
+
+  it("空配列の tooling.pythonCandidateDirs は default にフォールバック (安全側)", () => {
+    const dir = makeTempProject({
+      hasPyproject: true,
+      hasSrc: true,
+      harnessConfig: { tooling: { pythonCandidateDirs: [] } },
+    });
+    const checks = detectAvailableChecks(dir);
+    const ruff = checks.find((c) => c.tool === "ruff");
+    // 空配列だと target が無いので、defaults を使う方が user intent に近い。
     expect(ruff?.command).toContain("src/");
   });
 
@@ -402,8 +474,8 @@ describe("detectAvailableChecks (CodeRabbit PR #1 Major: subagent-stop.ts:75 + C
     expect(checks).toEqual([]);
   });
 
-  it("tests/ があれば pytest が追加される (backend/src/app 有無と独立)", () => {
-    const dir = makeTempProject({ hasPyproject: true, hasBackend: false, hasTests: true });
+  it("tests/ があれば pytest が追加される (src/app/backend 有無と独立)", () => {
+    const dir = makeTempProject({ hasPyproject: true, hasTests: true });
     const checks = detectAvailableChecks(dir);
     const pytest = checks.find((c) => c.tool === "pytest");
     expect(pytest).toBeDefined();

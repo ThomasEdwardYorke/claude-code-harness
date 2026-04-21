@@ -231,4 +231,60 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.work.criticalLabels).toEqual(["security"]);
     });
   });
+
+  describe("Phase δ sections (tooling / release)", () => {
+    it("tooling default is stack-neutral ['src', 'app'] — backend/ is opt-in via override", () => {
+      expect(DEFAULT_CONFIG.tooling.pythonCandidateDirs).toEqual(["src", "app"]);
+      // Sanity check: backend/ is NOT in the default (plugin ships stack-neutral).
+      expect(DEFAULT_CONFIG.tooling.pythonCandidateDirs).not.toContain("backend");
+    });
+
+    it("loadConfig tooling override replaces pythonCandidateDirs wholesale", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          tooling: { pythonCandidateDirs: ["backend", "api"] },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.tooling.pythonCandidateDirs).toEqual(["backend", "api"]);
+    });
+
+    it("release default is three-branch (feature → dev → main)", () => {
+      expect(DEFAULT_CONFIG.release.strategy).toBe("three-branch");
+      expect(DEFAULT_CONFIG.release.integrationBranch).toBe("dev");
+      expect(DEFAULT_CONFIG.release.productionBranch).toBe("main");
+      expect(DEFAULT_CONFIG.release.testCommand).toBeUndefined();
+    });
+
+    it("loadConfig release override supports two-branch trunk-style projects", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          release: {
+            strategy: "two-branch",
+            productionBranch: "trunk",
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.release.strategy).toBe("two-branch");
+      expect(cfg.release.productionBranch).toBe("trunk");
+      // Unchanged fields keep defaults.
+      expect(cfg.release.integrationBranch).toBe("dev");
+    });
+
+    it("loadConfig release.testCommand override is preserved for /harness-release", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          release: { testCommand: "pytest -q && npm run build" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.release.testCommand).toBe("pytest -q && npm run build");
+      // Strategy-level defaults still apply.
+      expect(cfg.release.strategy).toBe("three-branch");
+    });
+  });
 });

@@ -193,6 +193,46 @@
         "proBucketSize": { "type": "integer", "minimum": 1, "default": 5 },
         "proBucketWindowMinutes": { "type": "integer", "minimum": 1, "default": 60 }
       }
+    },
+    "tooling": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Stack-detection knobs consumed by core hooks (e.g. subagent-stop.ts's detectAvailableChecks). Stack-neutral defaults are deliberately generic; project-specific layouts (like `backend/`) are opted in via override.",
+      "properties": {
+        "pythonCandidateDirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["src", "app"],
+          "description": "Directory names checked for Python source when picking lint/typecheck targets. A directory is included only if it exists at `projectRoot`. Default omits `backend/` to avoid forcing a layout assumption; projects with a `backend/` tree add it explicitly."
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /harness-release, /branch-merge, and /new-feature-branch. Projects that follow a two-branch (main only) or three-branch (main + dev + feature/*) flow surface their choice here so the plugin can stay stack/branch-neutral.",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["two-branch", "three-branch"],
+          "default": "three-branch",
+          "description": "Branch-merge strategy. `three-branch` = feature/* → dev → main (default, matches /branch-merge spec). `two-branch` = feature/* → main directly (simpler trunk-style repos)."
+        },
+        "integrationBranch": {
+          "type": "string",
+          "default": "dev",
+          "description": "Intermediate branch name in the `three-branch` strategy. Ignored when `strategy` = `two-branch`."
+        },
+        "productionBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Final / production branch name. Used by /branch-merge and /harness-release for tag placement."
+        },
+        "testCommand": {
+          "type": "string",
+          "description": "Command run before each merge step. When unset, /harness-release falls back to `work.testCommand` and finally to per-stack autodetection."
+        }
+      }
     }
   }
 }
