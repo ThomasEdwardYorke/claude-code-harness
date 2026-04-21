@@ -15,6 +15,7 @@
 import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -164,7 +165,12 @@ async function cmdDoctor() {
   }
 
   // Codex companion (optional — used by codex-sync / coderabbit-mimic agents).
-  const home = process.env.HOME ?? "";
+  // `os.homedir()` handles Windows (USERPROFILE) + POSIX HOME + edge
+  // cases where HOME is unset in container / CI environments. Falling
+  // back to `process.env.HOME ?? ""` previously caused `path.join("", …)`
+  // to resolve relative to cwd, producing false "codex not installed" /
+  // false user-overlay readings on Windows.
+  const home = homedir();
   const codexDir = join(home, ".claude", "plugins", "cache", "openai-codex", "codex");
   if (existsSync(codexDir)) {
     out.push(`codex plugin:        detected at ${codexDir}`);

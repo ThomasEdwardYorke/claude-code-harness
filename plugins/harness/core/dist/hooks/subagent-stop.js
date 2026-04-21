@@ -9,6 +9,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
+import { loadConfigWithError } from "../config.js";
 const WORKER_AGENT_TYPES = new Set(["worker", "harness:worker"]);
 function runCiCheck(tool, command, projectRoot) {
     try {
@@ -28,17 +29,84 @@ function runCiCheck(tool, command, projectRoot) {
     }
 }
 /**
- * pyproject.toml の存在だけで `backend/` レイアウトを前提にすると、`src/` レイアウトや
- * frontend-only repo で毎回 FAIL する。実レイアウトを検出して適切な lint target を決める。
- * CodeRabbit PR #1 Major: subagent-stop.ts:75 + Codex 敵対的レビュー Minor 追加対応:
- * `.` fallback は node_modules / .venv を大量拾いして false positive を生むため、
- * 主要 Python layout (backend/ / src/ / app/) を検出できた場合のみ ruff / mypy を有効化。
+ * pyproject.toml の存在だけで一律 `.` を lint 対象にすると node_modules / .venv
+ * を拾って false positive を量産する。実レイアウトを検出して lint target を
+ * 絞り込む。候補ディレクトリは `harness.config.json` の `tooling.pythonCandidateDirs`
+ * で上書き可能 (stack-neutral default は `["src", "app"]`、`backend/` レイアウト
+ * を使うプロジェクトは明示 override する)。
+ *
+ * 設計メモ:
+ * - fail-open 方針 (pre-compact.ts / task-lifecycle.ts と同じ): config の shape が
+ *   壊れていても throw せず default にフォールバック。ただし `stop.ts` の先例に
+ *   従い、default に落ちた **理由** を `stderr` に emit して silent failure を
+ *   防ぐ (コマンド本体は止めない)。
+ * - `backend/src/app` いずれかを検出できた場合のみ ruff / mypy を登録、
+ *   pytest は `tests/` 独立判定で別枝。
+ *
+ * ## セキュリティ: shell injection 防止
+ *
+ * `runCiCheck()` は dir name を shell command template に埋め込み `execSync`
+ * で実行する。config / リポジトリから不信任入力 (例: `"$(touch PWNED)"`)
+ * が到達すると command substitution で任意コード実行の余地が生まれる。
+ * したがって各 entry は厳密な allowlist regex
+ * `/^[a-zA-Z0-9_.-]+$/` (英数字 + `_` / `-` / `.` のみ、path separator /
+ * 空白 / shell metachar 不可) に**必ず合致**することを要求し、不一致の
+ * entries は reject + stderr 警告 + 残余があればそれを採用、全 reject
+ * なら default にフォールバックする。
  */
-const PYTHON_CANDIDATE_DIRS = ["backend", "src", "app"];
+const SAFE_DIR_NAME_REGEX = /^[a-zA-Z0-9_.-]+$/;
+function resolvePythonCandidateDirs(projectRoot) {
+    const fallback = ["src", "app"];
+    // `loadConfigWithError` distinguishes "file absent" from "file broken"
+    // so we surface a warning on parse failures (the old `loadConfigSafe`
+    // path silently swallowed those, leaving this function with a dead
+    // error branch: shape-invalid warnings fired, parse-level failures
+    // never reached the check).
+    const outcome = loadConfigWithError(projectRoot);
+    if (outcome.error !== undefined) {
+        process.stderr.write(`[harness subagent-stop] harness.config.json parse failed: ${outcome.error}; using defaults ["src", "app"].\n`);
+        return fallback;
+    }
+    const raw = outcome.config.tooling
+        ?.pythonCandidateDirs;
+    if (raw === undefined) {
+        // 未指定は静かに default で OK (よくある case)。
+        return fallback;
+    }
+    if (Array.isArray(raw) &&
+        raw.length > 0 &&
+        raw.every((d) => typeof d === "string" && d.length > 0)) {
+        // Shell-injection ガード: allowlist regex 外の entry は reject し、
+        // shell metacharacter / path separator / whitespace を含む候補が
+        // `execSync` へ届かないことを保証。
+        const safe = [];
+        const rejected = [];
+        for (const d of raw) {
+            if (SAFE_DIR_NAME_REGEX.test(d)) {
+                safe.push(d);
+            }
+            else {
+                rejected.push(d);
+            }
+        }
+        if (rejected.length > 0) {
+            process.stderr.write(`[harness subagent-stop] tooling.pythonCandidateDirs: rejected ${JSON.stringify(rejected)} — each entry must match /^[a-zA-Z0-9_.-]+$/ (no path separators, whitespace, or shell metacharacters). Kept: ${JSON.stringify(safe)}.\n`);
+        }
+        return safe.length > 0 ? safe : fallback;
+    }
+    // Shape-invalid (non-array / empty array / non-string / empty-string entries)。
+    // 警告し、fail-open 方針で default に落ちる。
+    process.stderr.write("[harness subagent-stop] tooling.pythonCandidateDirs shape invalid; using defaults " +
+        `["src", "app"] (got ${JSON.stringify(raw)})\n`);
+    return fallback;
+}
 export function detectAvailableChecks(projectRoot) {
     const checks = [];
     if (existsSync(resolve(projectRoot, "pyproject.toml"))) {
-        const pyTargets = PYTHON_CANDIDATE_DIRS.filter((d) => existsSync(resolve(projectRoot, d))).map((d) => `${d}/`);
+        const candidateDirs = resolvePythonCandidateDirs(projectRoot);
+        const pyTargets = candidateDirs
+            .filter((d) => existsSync(resolve(projectRoot, d)))
+            .map((d) => `${d}/`);
         if (pyTargets.length > 0) {
             const target = pyTargets.join(" ");
             checks.push({ tool: "ruff", command: `ruff check ${target} --no-fix 2>&1` }, { tool: "mypy", command: `mypy ${target} --no-error-summary 2>&1` });

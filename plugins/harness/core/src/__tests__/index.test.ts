@@ -12,11 +12,16 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { route, errorToResult } from "../index.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 function mkTmp(prefix: string): string {
   const dir = join(
@@ -351,4 +356,89 @@ describe("errorToResult() — fail-safe contract", () => {
       expect(result.reason!.length).toBeGreaterThan(0);
     }
   });
+});
+
+describe("main() entrypoint fail-open (e2e child-process contract)", () => {
+  // Exercise the real main() by spawning the built entrypoint as a child
+  // process. This is the only way to cover the full readStdin -> parse
+  // -> route -> JSON.stringify pipeline that shipped hook dispatchers
+  // actually invoke; `route()` unit tests bypass all of that.
+  const distPath = resolve(__dirname, "../../dist/index.js");
+  const distExists = existsSync(distPath);
+  const buildSkipReason = distExists
+    ? null
+    : "dist/index.js not built; skip e2e test (covered by CI `npm run build` step)";
+
+  it.skipIf(!distExists)(
+    "malformed stdin returns a JSON fallback (decision=approve) instead of crashing",
+    () => {
+      const result = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: "{not valid json}",
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBeTruthy();
+      const parsed: unknown = JSON.parse(result.stdout.trim());
+      expect(parsed).toMatchObject({ decision: "approve" });
+      // Reason content is an internal detail, but it must be non-empty
+      // and surface the failure class ("Core engine error").
+      expect((parsed as { reason: string }).reason).toContain(
+        "Core engine error",
+      );
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "valid stdin for an unknown hook type returns the 'Unknown hook type' diagnostic fallback",
+    () => {
+      // The dispatcher routes non-session hook types through `parseInput()`,
+      // which requires `tool_name`. Provide a minimally valid hook input so
+      // we exercise route()'s default branch rather than the parseInput
+      // throw path.
+      const result = spawnSync(
+        process.execPath,
+        [distPath, "never-registered"],
+        {
+          input: JSON.stringify({ tool_name: "Bash", tool_input: {} }),
+          encoding: "utf-8",
+          timeout: 5_000,
+        },
+      );
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as {
+        decision: string;
+        reason: string;
+      };
+      expect(parsed.decision).toBe("approve");
+      expect(parsed.reason).toContain("Unknown hook type");
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "session-start accepts empty stdin and returns a bare approve",
+    () => {
+      const result = spawnSync(process.execPath, [distPath, "session-start"], {
+        input: "",
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as {
+        decision: string;
+      };
+      expect(parsed.decision).toBe("approve");
+    },
+  );
+
+  if (buildSkipReason !== null) {
+    // One marker test always runs so the reader of `vitest --reporter=verbose`
+    // sees why the e2e suite is empty in local / dev runs.
+    it("dist/index.js presence check", () => {
+      // When this test passes with `distExists === false`, the actual
+      // end-to-end tests above are skipped. Build once with `npm run build`
+      // (or let CI do it) to see them.
+      expect(buildSkipReason).toContain("not built");
+    });
+  }
 });

@@ -108,7 +108,7 @@
         },
         "testCommand": {
           "type": "string",
-          "description": "Canonical test command run by the Stop hook reminder and picked up by /harness-work as the test step when set. When unset, the Stop hook falls back to per-stack autodetection in detectAvailableChecks() (pyproject.toml → ruff/mypy/pytest, package.json → tsc). Example: 'pytest -q' for a Python project, 'npm test' for a Node project."
+          "description": "Canonical test command surfaced to /harness-work and /harness-release as their test step when set. Consumed by the orchestrator commands, **not by the Stop / SubagentStop hooks** (those hooks still rely on per-stack autodetection via detectAvailableChecks()). Example: 'pytest -q' for a Python project, 'npm test' for a Node project."
         },
         "qualityGates": {
           "type": "object",
@@ -206,7 +206,7 @@
           "type": "array",
           "items": { "type": "string" },
           "default": ["src", "app"],
-          "description": "Directory names checked for Python source when picking lint/typecheck targets. A directory is included only if it exists at `projectRoot`. Default omits `backend/` to avoid forcing a layout assumption; projects with a `backend/` tree add it explicitly. Edge cases: an **empty array** `[]` or any non-string / empty-string entry is treated as a malformed override and falls back to the default (this is safe — it never produces an unexpected empty lint target). To intentionally skip Python linting, list a real-but-empty directory (e.g. `[\".python-lint-disabled\"]`) so that `detectAvailableChecks()` resolves it to zero existing targets and skips ruff / mypy."
+          "description": "Directory names checked for Python source when picking lint/typecheck targets. A directory is included only if it exists at `projectRoot`. Each entry must match `/^[a-zA-Z0-9_.-]+$/` (alphanumerics plus `_` / `-` / `.` — no path separators, whitespace, or shell metacharacters); rejected entries are warned about and dropped. Default omits `backend/` to avoid forcing a layout assumption; projects with a `backend/` tree add it explicitly. Edge cases: an **empty array** `[]` or any non-string / empty-string entry is treated as a malformed override and falls back to the default (this is safe — it never produces an unexpected empty lint target). To intentionally skip Python linting entirely, list a directory name that does **not exist** in the repo (e.g. `[\".no-python-lint\"]`); the existence check filters it out and ruff / mypy are skipped. Listing an existing empty directory does **not** skip linting — the tool will still run against it and find no Python files."
         }
       }
     },

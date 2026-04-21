@@ -3,13 +3,17 @@
  *
  * Stop hook handler.
  * Fires when Claude finishes responding. Reads project config via
- * `loadConfigSafe` so that merge defaults are honoured (partial
- * `work.qualityGates` overrides inherit the other gate defaults).
+ * `loadConfigWithError` so that partial `work.qualityGates` overrides
+ * inherit the other gate defaults **and** so that a malformed config
+ * file is not silently treated the same as a pristine config — a
+ * broken file suppresses the reminders entirely (avoids the
+ * silent-swallow failure mode where `loadConfigSafe` would emit every
+ * default reminder even when the user never validly authored them).
  */
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { loadConfigSafe } from "../config.js";
+import { loadConfigWithError } from "../config.js";
 
 export interface StopInput {
   hook_event_name: string;
@@ -36,11 +40,19 @@ export async function handleStop(
     return { decision: "approve" };
   }
 
-  // Defensive narrow: `loadConfigSafe` already fails open on shape errors
-  // (returns DEFAULT_CONFIG), but the returned shape is a `HarnessConfig`
-  // — `work.qualityGates` is always present with merged defaults.
-  const config = loadConfigSafe(projectRoot);
-  const gates = config.work.qualityGates;
+  const outcome = loadConfigWithError(projectRoot);
+  if (outcome.error !== undefined) {
+    // Malformed config. Emitting the default reminder set ("TDD 必須 /
+    // 疑似 CodeRabbit 必須 / ...") would misrepresent the project's
+    // intent — the user never successfully declared them. Surface the
+    // parse failure to stderr and suppress all reminders for this turn.
+    process.stderr.write(
+      `[harness stop] harness.config.json parse failed: ${outcome.error}; suppressing quality-gate reminders until fixed.\n`,
+    );
+    return { decision: "approve" };
+  }
+
+  const gates = outcome.config.work.qualityGates;
 
   const reminders: string[] = [];
   if (gates.enforceTddImplement) {

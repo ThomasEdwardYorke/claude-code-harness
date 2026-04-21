@@ -623,23 +623,9 @@ describe("handlePreCompact config override (Codex M-1B)", () => {
   });
 });
 
-describe("parseExemption regression (Codex C-2 minor)", () => {
-  // Exemption parser の無効 form に対する throw 動作を回帰テスト。
-  // Note: parseExemption は test file 内部関数なので、実装側の invariant を
-  // generality.test.ts 経由で検証済。本セクションは設計意図のメモ。
-
-  it("exemption regex は body 無し / whitespace-only / * を許容しない (設計メモ)", () => {
-    // generality.test.ts の parseExemption() は以下を throw:
-    // - `<!-- generality-exemption -->` (body 無し) → throw
-    // - `<!-- generality-exemption: -->` (colon のみ) → throw
-    // - `<!-- generality-exemption: all -->` (all キーワード) → throw
-    // - `<!-- generality-exemption: "all" -->` (quoted all) → throw
-    // - `<!-- generality-exemption: * -->` (asterisk のみ) → throw
-    // - `<!-- generality-exemption: reason without B-ids -->` (pattern-id なし) → throw
-    // 正式 form のみ許容:
-    // - `<!-- generality-exemption: B-1,B-2a — HARNESS-42, reason -->`
-    //
-    // 動作検証は generality.test.ts の run-time assertion 内で meta-test 追加済。
-    expect(true).toBe(true);
-  });
-});
+// NOTE: previous revisions carried a tautological `expect(true).toBe(true)`
+// describe block here as a design-intent pointer to `generality.test.ts`'s
+// internal `parseExemption()` function. That tautology was removed — see
+// `generality.test.ts` for the actual runtime assertions covering the
+// exemption parser invariants (body-less / whitespace / `*` / pattern-id
+// missing rejection).

@@ -38,7 +38,7 @@ export interface PreCompactResult {
 function readAssignmentTable(projectRoot: string): string | null {
   try {
     const config = loadConfigSafe(projectRoot);
-    // Codex [M-1A] fail-open: shape-invalid config でも hook が落ちないよう defensive narrow。
+    // fail-open: shape-invalid config でも hook が落ちないよう defensive narrow。
     const rawPlans = (config.work as { plansFile?: unknown } | undefined)?.plansFile;
     const plansFile = typeof rawPlans === "string" && rawPlans.length > 0
       ? rawPlans

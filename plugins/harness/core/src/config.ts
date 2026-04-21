@@ -479,11 +479,67 @@ export function loadConfig(projectRoot: string): HarnessConfig {
  * Fail-open variant: returns defaults when the file is missing, unreadable,
  * or malformed. Used by the guardrail hook path where any error in config
  * loading must not break tool execution.
+ *
+ * This variant **silently** swallows errors. Hooks that need to
+ * distinguish "config absent" from "config broken" (so they can emit a
+ * diagnostic rather than silently applying defaults) should use
+ * `loadConfigWithError()` instead.
  */
 export function loadConfigSafe(projectRoot: string): HarnessConfig {
   try {
     return loadConfig(projectRoot);
   } catch {
     return DEFAULT_CONFIG;
+  }
+}
+
+/**
+ * Outcome of a config load attempt that surfaces the error for the
+ * caller to decide what to do. Hooks that care whether the config file
+ * parsed successfully (so they can warn / suppress unreliable behaviour)
+ * use this instead of `loadConfigSafe()`.
+ *
+ * Invariant: `config` is always a valid `HarnessConfig`. When `error`
+ * is set, `config` is `DEFAULT_CONFIG` (the same value `loadConfigSafe`
+ * would return) — callers can still proceed, but now they know that
+ * they fell back because of a parse failure, not because the user
+ * deliberately accepted defaults.
+ */
+export interface ConfigLoadOutcome {
+  /** Parsed config on success, DEFAULT_CONFIG when `error` is set. */
+  config: HarnessConfig;
+  /**
+   * Populated when `loadConfig()` threw (malformed JSON / shape error /
+   * I/O failure). Not populated when the file is simply absent — absence
+   * is a valid opt-in-to-defaults state, not an error.
+   */
+  error?: string;
+}
+
+/**
+ * Load harness config and surface any parse error to the caller.
+ *
+ * - File absent ⇒ `{ config: DEFAULT_CONFIG }` (no error).
+ * - File present and parses OK ⇒ `{ config: <merged> }` (no error).
+ * - File present but parse / shape error ⇒ `{ config: DEFAULT_CONFIG, error }`.
+ *
+ * The implementation is the same as `loadConfigSafe()` plus the error
+ * surfacing. Hooks that previously suppressed the error and quietly ran
+ * with defaults (e.g. `stop.ts` emitting every quality-gate reminder
+ * because `mergeConfig` filled in `qualityGates=true` defaults) should
+ * use this to **refuse** to act on defaults when a broken config
+ * explicitly fell through.
+ */
+export function loadConfigWithError(projectRoot: string): ConfigLoadOutcome {
+  const path = resolve(projectRoot, "harness.config.json");
+  if (!existsSync(path)) {
+    // File absent is not an error. Caller decides whether to act on defaults.
+    return { config: DEFAULT_CONFIG };
+  }
+  try {
+    return { config: loadConfig(projectRoot) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { config: DEFAULT_CONFIG, error: message };
   }
 }

@@ -11,6 +11,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import { loadConfigSafe } from "../config.js";
+// Upper bound (bytes) for the plans file we're willing to inline into the
+// PreCompact additionalContext payload. 512 KB is a conservative ceiling:
+// Claude's compact operation tolerates large context, but pulling in a
+// multi-MB plans file would consume tokens unhelpfully and slow the hook.
+// Anything above this bound is silently skipped — the hook still completes
+// and other sections (branch / open PRs / custom_instructions) still ride
+// through.
 const MAX_PLANS_SIZE = 512 * 1024;
 function readAssignmentTable(projectRoot) {
     try {

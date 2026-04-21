@@ -203,6 +203,15 @@ export async function route(
  * the exception (which would otherwise crash Claude Code's hook runner).
  * Every hook path eventually flows through `main()` via `scripts/hook-dispatcher.mjs`,
  * which relies on this fallback to keep the user session alive.
+ *
+ * @internal
+ *
+ * **Do not pattern-match on the returned `reason` string** from external
+ * code. The exact format (`"Core engine error (safe fallback): <msg>"`)
+ * is an internal implementation detail and may be reformatted across
+ * releases. Consumers should only rely on `decision === "approve"` and
+ * on `reason` being a non-empty string; the reason text is intended for
+ * human-readable debugging / stderr logging, not machine parsing.
  */
 export function errorToResult(err: unknown): HookResult {
   const message = err instanceof Error ? err.message : String(err);

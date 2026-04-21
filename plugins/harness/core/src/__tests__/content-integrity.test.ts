@@ -813,16 +813,31 @@ describe("pre-compact.ts の custom_instructions 転載 (CodeRabbit Major: pre-c
 });
 
 describe("subagent-stop.ts の Python lint target 解決 (stack-neutral default + config override)", () => {
+  // Note on regex assertions in this describe block: the expectations below
+  // verify the **presence** of substrings (function names, specific regex
+  // literals, stderr patterns) in the source file. They do NOT exercise
+  // runtime behavior — that is covered by `hooks.test.ts` through a real
+  // filesystem + mocked execSync. If a future refactor renames a helper
+  // without changing observable behavior, these assertions may need
+  // updating even though no actual regression occurred.
   const src = readFileSync(
     resolve(PLUGIN_ROOT, "core/src/hooks/subagent-stop.ts"),
     "utf-8",
   );
 
-  it("loadConfigSafe 経由で tooling.pythonCandidateDirs を解決する", () => {
+  it("loadConfigWithError 経由で tooling.pythonCandidateDirs を解決 (旧 loadConfigSafe からの移行)", () => {
     // 旧: hardcode `PYTHON_CANDIDATE_DIRS = ["backend", "src", "app"]`
-    // 新: config 経由 (stack-neutral default + project-local override)
-    expect(src).toMatch(/loadConfigSafe/);
+    // 中間: loadConfigSafe (silent swallow)
+    // 新: loadConfigWithError で parse エラーを surface できる
+    expect(src).toMatch(/loadConfigWithError/);
     expect(src).toMatch(/pythonCandidateDirs/);
+  });
+
+  it("shell-injection ガード: SAFE_DIR_NAME_REGEX で allowlist validation", () => {
+    // dir name が shell command template に埋め込まれる前に、
+    // allowlist regex `/^[a-zA-Z0-9_.-]+$/` で sanitize される。
+    expect(src).toMatch(/SAFE_DIR_NAME_REGEX/);
+    expect(src).toMatch(/\^\[a-zA-Z0-9_\.-\]\+\$/);
   });
 
   it("shape-invalid config では default (['src', 'app']) にフォールバック (fail-open)", () => {
@@ -848,18 +863,30 @@ describe("subagent-stop.ts の Python lint target 解決 (stack-neutral default 
   });
 });
 
-describe("stop.ts が loadConfigSafe を使い qualityGates default 継承を実現する", () => {
+describe("stop.ts が loadConfigWithError を使い config-parse エラーを surface する", () => {
   const src = readFileSync(
     resolve(PLUGIN_ROOT, "core/src/hooks/stop.ts"),
     "utf-8",
   );
 
-  it("loadConfigSafe を import + 呼出し (直接 JSON.parse + manual cast 禁止)", () => {
+  it("loadConfigWithError を import + 呼出し (直接 JSON.parse / manual cast 禁止)", () => {
     // 旧: readFileSync + JSON.parse + 手動 cast (partial override で
     // 未指定 gate が false 扱いになる bug)
-    // 新: loadConfigSafe 経由で mergeConfig の default を享受する
-    expect(src).toMatch(/loadConfigSafe/);
+    // 中間: loadConfigSafe — default 継承は OK だが broken config を
+    // silently default 化する問題あり
+    // 新: loadConfigWithError で error を判別し、broken config 時は
+    // quality-gate reminder を suppress (silent-swallow 回避)
+    expect(src).toMatch(/loadConfigWithError/);
     expect(src).not.toMatch(/JSON\.parse/);
+  });
+
+  it("config parse エラー時は reminder を suppress して stderr 警告を emit", () => {
+    expect(src).toMatch(/outcome\.error\s*!==\s*undefined/);
+    expect(src).toMatch(
+      /process\.stderr\.write\([^)]*harness\.config\.json parse failed/,
+    );
+    // エラー経路で reminder を suppress (return early に decision=approve のみ)
+    expect(src).toMatch(/outcome\.error[\s\S]{0,800}?return\s*\{\s*decision:\s*"approve"\s*\}/);
   });
 
   it("qualityGates の 4 reminder すべてを switch していること", () => {

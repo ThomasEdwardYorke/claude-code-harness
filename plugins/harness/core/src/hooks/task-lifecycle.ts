@@ -30,7 +30,7 @@ export interface TaskLifecycleResult {
 }
 
 function plansReminder(projectRoot: string, verb: string): string {
-  // Codex [M-1A] fail-open: shape-invalid config でも throw しないよう defensive narrow。
+  // fail-open: shape-invalid config でも throw しないよう defensive narrow。
   // loadConfigSafe は JSON parse エラーを抑えるが、型検証は行わないため明示 narrow が必要。
   try {
     const config = loadConfigSafe(projectRoot);
