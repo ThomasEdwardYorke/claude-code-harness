@@ -22,7 +22,7 @@ const MAX_PLANS_SIZE = 512 * 1024;
 function readAssignmentTable(projectRoot) {
     try {
         const config = loadConfigSafe(projectRoot);
-        // Codex [M-1A] fail-open: shape-invalid config でも hook が落ちないよう defensive narrow。
+        // fail-open: shape-invalid config でも hook が落ちないよう defensive narrow。
         const rawPlans = config.work?.plansFile;
         const plansFile = typeof rawPlans === "string" && rawPlans.length > 0
             ? rawPlans
