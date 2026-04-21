@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { migrate, defaultStatePath } from "../migration.js";
 import { HarnessStore } from "../store.js";
@@ -141,12 +141,14 @@ describe("migrate()", () => {
   });
 
   describe("defaultStatePath", () => {
-    it("points at .claude/state/harness.json (OS native path separator)", () => {
-      // defaultStatePath は `path.join` を使い OS native separator を返すため、
-      // Windows では `D:\tmp\proj\.claude\state\harness.json` になる。
-      // test 側も `path.join` で期待値を組み立てて OS 非依存に。
+    it("returns an absolute path ending in .claude/state/harness.json (OS native separator)", () => {
+      // Implementation uses `path.resolve`, which on Windows prepends the
+      // current drive letter (e.g. `D:\tmp\proj\.claude\state\harness.json`).
+      // Match impl by using `resolve()` to build the expected value — that
+      // gives POSIX `/tmp/proj/.claude/state/harness.json` and Windows
+      // `<CWD-drive>:\tmp\proj\.claude\state\harness.json` identically.
       expect(defaultStatePath("/tmp/proj")).toBe(
-        join("/tmp/proj", ".claude", "state", "harness.json"),
+        resolve("/tmp/proj", ".claude", "state", "harness.json"),
       );
     });
   });
