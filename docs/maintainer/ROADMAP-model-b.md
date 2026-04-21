@@ -1,9 +1,11 @@
 # claude-code-harness: Model B 進化ロードマップ
 
+> **Maintainer-only notes.** This file lives under `docs/maintainer/` and is **excluded from the public plugin surface**. It references the concrete test-bed project used during development. Public contributors and plugin consumers do not need to read this. See `CONTRIBUTING.md` Section 5 for the test-bed policy (test-bed project = proving ground, not specification). Reusable invariants extracted from the test-bed are documented separately in shipped specs under `plugins/harness/`.
+
 **branch**: `feature/model-b-evolution`
 **作成日**: 2026-04-20
-**発端プロジェクト**: `parts-management` (part management system)
-**関連 doc (parts-management side)**: `docs/harness-model-b-plan.md`
+**発端プロジェクト (test-bed)**: `parts-management` (maintainer-side reference only)
+**関連 doc (test-bed side)**: `docs/harness-model-b-plan.md` (external, test-bed repo)
 
 本 doc は claude-code-harness plugin を Model A (coordinator + subagent) から
 Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進化させる

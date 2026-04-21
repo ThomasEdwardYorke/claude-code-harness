@@ -59,7 +59,7 @@ git diff HEAD~1 -- <changed_files>
 | **Security** | APIキー漏洩、入力バリデーション、インジェクション対策 |
 | **Performance** | 不要な API 呼び出し、メモリリーク |
 | **Quality** | 命名、単一責任、エラーハンドリング、スタブ禁止 |
-| **Compatibility** | `create_script_from_url`/`create_script_from_sentence` の後方互換性 |
+| **Compatibility** | 既存 public API / function signatures の後方互換性 (プロジェクト固有の互換性要件は CLAUDE.md / AGENTS.md を参照) |
 
 ### Step 3: レビュー結果出力
 
@@ -83,7 +83,7 @@ git diff HEAD~1 -- <changed_files>
 
 ### Step 4: 判定
 
-- **APPROVE**: 自動コミット実行（`--no-commit` でなければ）
+- **APPROVE**: レビュー結果を報告 (コミット・push はしない。実施は `/harness-work` に委譲)
 - **REQUEST_CHANGES**: 問題箇所と修正方針を提示。`/harness-work` で修正後に再レビュー
 
 ---
@@ -157,17 +157,17 @@ git diff HEAD~1 -- <changed_files>
   - AC: テストで再発を防止できること
 ```
 
-**よくある問題パターン**:
+**よくある問題パターン** (プロジェクト固有の問題は CLAUDE.md / AGENTS.md / プロジェクト固有 skill を参照):
 
-| 問題 | 調査先 |
+| 問題カテゴリ | 一般的な調査先 |
 |-----|--------|
-| `create_script` が空のページを返す | `protected-data/{genre}.csv` の存在・ヘッダー整合性 |
-| the LLM API エラー | `.env` の `OPENAI_API_KEY`（長さのみ確認）、レートリミット、モデル名 |
-| `the output artifact` のスキーマ不正 | `save_script_json` の出力フォーマット、既存ファイルとのマージ処理 |
+| 外部 API / LLM API エラー | `.env` の関連 API キー（長さのみ確認）、レートリミット、モデル名 / エンドポイント |
+| データ整合性エラー | プロジェクト固有のデータファイル / ディレクトリの存在・スキーマ整合性 (`CLAUDE.md` で宣言) |
+| 出力フォーマット不整合 | シリアライザの出力仕様、既存ファイルとのマージ処理 |
 
 **注意事項**:
-- `protected-data/` への書き込みは行わない
-- `.env` ファイルの中身を直接表示しない（長さのみ確認）
+- プロジェクト固有の保護ディレクトリ (`protectedDirectories`) への書き込みは行わない
+- `.env` ファイルの中身を直接表示しない（長さのみ確認、guardrail R13 が遮断）
 - 修正の実装は必ず `worker` に委譲する
 
 ---
@@ -178,32 +178,50 @@ git diff HEAD~1 -- <changed_files>
 
 ### 1. 依存パッケージの確認
 
+プロジェクトの package manager に応じて実行:
+
 ```bash
-python3 -m pip list --outdated
+# Python (pip):  pip list --outdated
+# Node.js:      npm outdated
+# Rust:         cargo outdated
+# Go:           go list -u -m all
 ```
 
-チェック対象: `openai`, `python-dotenv`, `requests`, `beautifulsoup4`, `pydantic`
 - セキュリティ上重要な更新がある場合は警告
-- **実際の更新はユーザー承認後のみ実施**（`pip install --upgrade` は自動実行しない）
+- **実際の更新はユーザー承認後のみ実施**（自動 upgrade は禁止）
 
-### 2. コード品質チェック
+### 2. コード品質 + テストチェック
+
+プロジェクトの lint / typecheck / test コマンドを実行 (SubagentStop hook と同じ resolution):
+
+- `harness.config.json` の `work.testCommand` を優先
+- 未設定なら package-manager 自動検出 (pyproject.toml / package.json / Cargo.toml / go.mod)
 
 ```bash
-python3 -m py_compile the main module
-python3 -m py_compile the entry module
+# プロジェクトの慣用コマンドに従う (lint + typecheck + test):
+#   Python:   ruff check / mypy (pyproject.toml あり), pytest (tests/ あり)
+#   Node.js:  npm run lint / npm run typecheck
+#   Rust:     cargo clippy / cargo check
+#   Go:       go vet ./... / golangci-lint run
+# 実コマンドは harness.config.json の work.testCommand / project scripts を参照
 ```
 
-### 3. protected-data/ の整合性確認
+### 3. プロジェクト固有データの整合性確認 (該当する場合)
 
-- 全9ジャンルの CSV ファイル存在確認
-- ヘッダー行の整合性チェック（全 CSV で同じ列構成か）
-- 空ファイルや壊れた CSV がないか確認
+プロジェクトに固有のデータディレクトリ (`CLAUDE.md` / `AGENTS.md` / `.claude/rules/*.md` で宣言) がある場合:
 
-### 4. ログの整理
+- 必要なファイルの存在確認
+- スキーマ / ヘッダーの整合性チェック
+- 空ファイルや破損の有無
 
-- `.claude/logs/change-log.txt` のサイズ確認
-- 1000 行を超えている場合は警告
-- ログの内容を要約して表示（直近20件）
+具体手順は project-local skill (`.claude/skills/*`) に委譲。
+
+### 4. ログの整理 (該当する場合)
+
+プロジェクトが内部 log を持つ場合 (path は `harness.config.json` の `work.changeLogFile` 等で受ける):
+- ファイルサイズ確認
+- 長大な場合は警告
+- 直近エントリの要約表示
 
 ### 5. ハーネスファイルの整合性
 
@@ -215,29 +233,29 @@ python3 -m py_compile the entry module
 - 長期間「進行中」のままになっているタスクを警告
 - 未着手タスクの件数を表示
 
-### 保守レポートフォーマット
+### 保守レポートフォーマット (汎用テンプレート)
 
 ```
-script_generate — 保守チェック レポート
+<project-name> — 保守チェック レポート
 
 1. 依存パッケージ
-  ✅ 最新: openai, pydantic
-  ⚠️  更新あり: requests (2.31.0 → 2.32.0)
+  ✅ 最新: <package-list>
+  ⚠️  更新あり: <package> (<old-version> → <new-version>)
 
 2. コード品質
-  ✅ 構文エラー: なし
+  ✅ lint / typecheck: クリーン
 
-3. protected-data/ 整合性
-  ✅ 9件のCSVが存在します
+3. プロジェクト固有データ整合性 (該当する場合)
+  ✅ <project-specific check result>
 
 4. ログ
-  ✅ change-log.txt: 234行（正常範囲）
+  ✅ <log-file>: <lines>行（正常範囲）
 
 5. ハーネス整合性
   ✅ 全フック: 存在・実行権限あり
 
 6. Plans.md
-  未着手: 2件 / 進行中: 0件 / 完了: 8件
+  未着手: N件 / 進行中: N件 / 完了: N件
 ```
 
 ---
@@ -246,72 +264,56 @@ script_generate — 保守チェック レポート
 
 ハーネスの全ファイル存在確認・整合性チェック・構文検証を実施する。
 
-### Step 1: フックスクリプトの確認
+### Step 1: Plugin コアファイルの確認
 
-**ファイル存在確認**:
-```
-.claude/hooks/
-├── pretooluse-guard.sh
-├── posttooluse-test-runner.sh
-├── session-init.sh
-├── change-tracker.sh
-├── session-end.sh
-├── notification.sh
-├── hardcode-detector.sh
-├── test-enforcer.sh
-├── import-checker.sh
-└── api-key-scanner.sh
+**harness plugin の核ファイル存在確認**:
+```text
+plugins/harness/
+├── .claude-plugin/plugin.json    # manifest
+├── hooks/hooks.json              # hook 登録
+├── scripts/hook-dispatcher.mjs   # hook dispatcher
+└── core/dist/index.js            # compiled core
 ```
 
-**実行権限確認**:
-```bash
-ls -la .claude/hooks/*.sh
-# 実行権限がない場合: chmod +x .claude/hooks/*.sh
-```
+**hooks.json と settings の整合性確認**:
+- `hooks/hooks.json` に登録された hook が `scripts/` 内に存在するか
+- プロジェクト側の `.claude/settings.local.json` と矛盾がないか
 
-**シェル構文チェック**:
-```bash
-for f in .claude/hooks/*.sh; do
-  bash -n "$f" && echo "OK: $f" || echo "SYNTAX ERROR: $f"
-done
-```
+### Step 2: プロジェクト設定の整合性確認
 
-### Step 2: settings.local.json の整合性確認
-
-| イベント | matcher | フック |
-|---------|---------|--------|
-| PreToolUse | Bash | pretooluse-guard.sh |
-| PreToolUse | Bash\|Edit\|Write | test-enforcer.sh |
-| PostToolUse | Edit\|Write | posttooluse-test-runner.sh |
-| PostToolUse | Edit\|Write | change-tracker.sh |
-| PostToolUse | Edit\|Write | hardcode-detector.sh |
-| PostToolUse | Edit\|Write | import-checker.sh |
-| PostToolUse | Edit\|Write | api-key-scanner.sh |
-| SessionStart | — | session-init.sh |
-| SessionEnd | — | session-end.sh |
+- `harness.config.json` が存在するか
+- `harness.config.json` のフィールドが `harness-work.md` の spec と一致するか
+- `CLAUDE.md` が存在するか
+- `Plans.md` が存在するか (プロジェクトで使用している場合)
 
 ### Step 3: エージェント定義ファイルの確認
 
 ```
-.claude/agents/
-├── worker.md
+plugins/harness/agents/
 ├── worker.md
 ├── reviewer.md
-├── worker.md
-├── worker.md
 ├── scaffolder.md
-└── security-auditor.md
+├── security-auditor.md
+├── codex-sync.md
+└── coderabbit-mimic.md
 ```
 
 ### Step 4: コマンド定義ファイルの確認
 
 ```
-.claude/commands/
+plugins/harness/commands/
 ├── harness-plan.md
 ├── harness-work.md
 ├── harness-review.md
 ├── harness-release.md
-└── harness-setup.md
+├── harness-setup.md
+├── branch-merge.md
+├── new-feature-branch.md
+├── coderabbit-review.md
+├── codex-team.md
+├── parallel-worktree.md
+├── pseudo-coderabbit-loop.md
+└── tdd-implement.md
 ```
 
 ### Step 5: レポート出力
@@ -339,71 +341,18 @@ done
 
 ---
 
-## CodeRabbit Review Loop（`coderabbit` / 旧 /coderabbit-review）
+## CodeRabbit Review Loop（`coderabbit`）
 
-GitHub PR へのプッシュ → CodeRabbit レビュー対応を繰り返すワークフロー。
+**本フローは `/coderabbit-review` スキルに委譲する。**
 
-> CodeRabbit 未設定の場合: `gh pr checks <pr_number>` で `coderabbitai` が表示されない場合、CodeRabbit が未設定の可能性がある。設定が必要かどうかユーザーに確認する。
+`/harness-review coderabbit <pr-number>` で呼ばれた場合、内部的に `/coderabbit-review <pr-number>` を起動する。
 
-### Step 1: 変更をプッシュ
+`/coderabbit-review` は以下を提供:
+- Clear 3 段判定 (APPROVED / unresolved=0 / rate-limited marker 不在)
+- Rate limit 検出 + `/pseudo-coderabbit-loop` への自動切替
+- AI スラップ除去
 
-```bash
-git add <files>
-git commit -m "<prefix>: <message>"
-git push origin <branch>
-```
-
-### Step 2: レビューステータスを確認
-
-プッシュ後、CodeRabbit のレビューには 1〜3 分かかることがある。
-
-```bash
-gh pr checks <pr_number>
-# coderabbitai ... pending → 待機
-# coderabbitai ... pass → 完了
-```
-
-pending の場合、30〜60秒後に再確認。3回確認しても pending の場合はユーザーに報告して指示を仰ぐ。
-
-### Step 3: レビュー内容を取得
-
-```bash
-gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --jq '.[-1].body'
-gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --jq '.[-1] | {submitted_at, state}'
-```
-
-### Step 4: 指摘に対応
-
-- **Actionable comments**: 対応必須
-- **Nitpick comments**: 任意の改善提案（対応推奨）
-- **Additional comments**: 確認済み・問題なし
-
-### Step 5: 修正をコミット・プッシュして繰り返し
-
-```bash
-git add <modified-files>
-git commit -m "fix: CodeRabbitレビュー指摘対応
-
-- <対応内容1>
-- <対応内容2>"
-git push origin <branch>
-```
-
-Step 2 に戻り、指摘がなくなるまで繰り返す。
-
-### Step 6: AIスラップ除去（リファクタリング）
-
-レビュークリア後のクリーンアップとして AI 生成コードの不要物を除去する:
-- 人間なら書かない余計なコメント
-- 過剰な防御的チェックや不要な try/catch
-- ファイルのスタイルと不一致なコード
-
-### 完了条件
-
-- 最新レビューで Actionable comments: 0
-- 最新レビューで Nitpick comments: 0（または「対応不要」と明記）
-- AIスラップ除去を実行済み
-- リファクタリング後のレビューもクリア
+詳細は `commands/coderabbit-review.md` を参照。
 
 ---
 

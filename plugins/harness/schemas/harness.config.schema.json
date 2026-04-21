@@ -70,6 +70,172 @@
           "default": "approve"
         }
       }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /harness-work, /tdd-implement, /parallel-worktree, and core hooks (stop / subagent-stop / pre-compact / task-lifecycle).",
+      "properties": {
+        "plansFile": {
+          "type": "string",
+          "default": "Plans.md",
+          "description": "Relative path to the project's task / plan file. Consumed by pre-compact and task-lifecycle hooks to read assignment tables before compaction."
+        },
+        "assignmentSectionMarkers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["担当表", "Assignment", "In Progress"],
+          "description": "Section header keywords used to locate the assignment table inside the plans file. Supports ja/en projects. First-match wins."
+        },
+        "handoffFiles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Project-specific session-handoff file paths that /harness-work and /parallel-worktree update when closing a session. Existence-optional (if a listed path is missing, the hook skips it silently)."
+        },
+        "changeLogFile": {
+          "type": "string",
+          "description": "Optional relative path to a project-local change log consumed by /harness-plan sync. If unset, sync skips change-log scanning."
+        },
+        "maxParallel": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
+        "labelPriority": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "criticalLabels": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "testCommand": {
+          "type": "string",
+          "description": "Canonical test command surfaced to /harness-work and /harness-release as their test step when set. Consumed by the orchestrator commands, **not by the Stop / SubagentStop hooks** (those hooks still rely on per-stack autodetection via detectAvailableChecks()). Example: 'pytest -q' for a Python project, 'npm test' for a Node project."
+        },
+        "qualityGates": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-project override of harness quality gates. Consumed by stop.ts to emit reminders.",
+          "properties": {
+            "enforceTddImplement": { "type": "boolean", "default": true },
+            "enforcePseudoCoderabbit": { "type": "boolean", "default": true },
+            "enforceRealCoderabbit": { "type": "boolean", "default": true },
+            "enforceCodexSecondOpinion": { "type": "boolean", "default": true }
+          }
+        },
+        "failFast": { "type": "boolean", "default": true }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by security-auditor agent. Lets projects supply their own stack-specific security checklist without modifying plugin core.",
+      "properties": {
+        "projectChecklistPath": {
+          "type": "string",
+          "description": "Relative path to a project-local security checklist (e.g. `./AGENTS.md`, `./docs/security.md`, or a SKILL.md reference). security-auditor agent loads this file as addendum when present; otherwise runs the stack-neutral generic checklist only."
+        },
+        "enabledChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "api-key-leak",
+              "injection",
+              "file-permissions",
+              "dependencies",
+              "project-specific"
+            ]
+          },
+          "default": ["api-key-leak", "injection", "file-permissions", "dependencies"],
+          "description": "Enabled security check categories. `project-specific` is effective only when `projectChecklistPath` is set."
+        }
+      }
+    },
+    "worktree": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /parallel-worktree and parallel-sessions.sh.",
+      "properties": {
+        "enabled": {
+          "oneOf": [
+            { "type": "boolean" },
+            { "type": "string", "enum": ["auto"] }
+          ],
+          "default": "auto"
+        },
+        "maxParallel": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
+        "parentDir": { "type": "string", "default": ".." },
+        "prefix": { "type": "string" },
+        "defaultBaseBranch": { "type": "string" }
+      }
+    },
+    "tddEnforce": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /tdd-implement and /pseudo-coderabbit-loop.",
+      "properties": {
+        "alwaysRequireRedTest": { "type": "boolean", "default": true },
+        "allowSkipOnDocsTasks": { "type": "boolean", "default": true },
+        "pseudoCoderabbitProfile": {
+          "type": "string",
+          "enum": ["chill", "assertive", "strict"],
+          "default": "chill",
+          "description": "CodeRabbit 公式 profile は chill/assertive のみ。strict は harness-local 拡張。"
+        },
+        "maxCodexReviewRetries": { "type": "integer", "minimum": 0, "default": 3 }
+      }
+    },
+    "codeRabbit": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /coderabbit-review and /pseudo-coderabbit-loop.",
+      "properties": {
+        "botLogin": { "type": "string", "default": "coderabbitai" },
+        "ratelimitCheckWindowMinutes": { "type": "integer", "minimum": 1, "default": 15 },
+        "approvedStateAsClear": { "type": "boolean", "default": true },
+        "maxPseudoLoopIterations": { "type": "integer", "minimum": 1, "default": 5 },
+        "proBucketSize": { "type": "integer", "minimum": 1, "default": 5 },
+        "proBucketWindowMinutes": { "type": "integer", "minimum": 1, "default": 60 }
+      }
+    },
+    "tooling": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Stack-detection knobs consumed by core hooks (e.g. subagent-stop.ts's detectAvailableChecks). Stack-neutral defaults are deliberately generic; project-specific layouts (like `backend/`) are opted in via override.",
+      "properties": {
+        "pythonCandidateDirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["src", "app"],
+          "description": "Directory names checked for Python source when picking lint/typecheck targets. A directory is included only if it exists at `projectRoot`. Each entry must match `/^[a-zA-Z0-9_.-]+$/` (alphanumerics plus `_` / `-` / `.` — no path separators, whitespace, or shell metacharacters); rejected entries are warned about and dropped. Default omits `backend/` to avoid forcing a layout assumption; projects with a `backend/` tree add it explicitly. Edge cases: an **empty array** `[]` or any non-string / empty-string entry is treated as a malformed override and falls back to the default (this is safe — it never produces an unexpected empty lint target). To intentionally skip Python linting entirely, list a directory name that does **not exist** in the repo (e.g. `[\".no-python-lint\"]`); the existence check filters it out and ruff / mypy are skipped. Listing an existing empty directory does **not** skip linting — the tool will still run against it and find no Python files."
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by /harness-release, /branch-merge, and /new-feature-branch. Projects that follow a two-branch (main only) or three-branch (main + dev + feature/*) flow surface their choice here so the plugin can stay stack/branch-neutral.",
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["two-branch", "three-branch"],
+          "default": "three-branch",
+          "description": "Branch-merge strategy. `three-branch` = feature/* → dev → main (default, matches /branch-merge spec). `two-branch` = feature/* → main directly (simpler trunk-style repos)."
+        },
+        "integrationBranch": {
+          "type": "string",
+          "default": "dev",
+          "description": "Intermediate branch name in the `three-branch` strategy. Ignored when `strategy` = `two-branch`."
+        },
+        "productionBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Final / production branch name. Used by /branch-merge and /harness-release for tag placement."
+        },
+        "testCommand": {
+          "type": "string",
+          "description": "Command run before each merge step. When unset, /harness-release falls back to `work.testCommand` and finally to per-stack autodetection."
+        }
+      }
     }
   }
 }

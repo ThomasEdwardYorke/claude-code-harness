@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { migrate, defaultStatePath } from "../migration.js";
 import { HarnessStore } from "../store.js";
@@ -141,10 +141,30 @@ describe("migrate()", () => {
   });
 
   describe("defaultStatePath", () => {
-    it("points at .claude/state/harness.json", () => {
+    it("returns an absolute path ending in .claude/state/harness.json (OS native separator)", () => {
+      // Implementation uses `path.resolve`, which on Windows prepends the
+      // current drive letter (e.g. `D:\tmp\proj\.claude\state\harness.json`).
+      // Match impl by using `resolve()` to build the expected value — that
+      // gives POSIX `/tmp/proj/.claude/state/harness.json` and Windows
+      // `<CWD-drive>:\tmp\proj\.claude\state\harness.json` identically.
       expect(defaultStatePath("/tmp/proj")).toBe(
-        "/tmp/proj/.claude/state/harness.json",
+        resolve("/tmp/proj", ".claude", "state", "harness.json"),
       );
+    });
+
+    it("accepts a platform-native absolute path and keeps its components verbatim", () => {
+      // Exercise an absolute path that is already well-formed for the
+      // current platform (POSIX: `/tmp/proj`, Windows: the current
+      // working drive's `/tmp/proj`). Use `process.cwd()` root as a
+      // portable anchor so the test is meaningful on both sides of the
+      // OS boundary.
+      const nativeRoot = process.cwd(); // e.g. `/Users/…` or `C:\\Users\\…`
+      const expected = resolve(nativeRoot, ".claude", "state", "harness.json");
+      const actual = defaultStatePath(nativeRoot);
+      expect(actual).toBe(expected);
+      // The result is absolute on whatever platform the test runs on.
+      expect(actual.length).toBeGreaterThan(nativeRoot.length);
+      expect(actual.endsWith("harness.json")).toBe(true);
     });
   });
 });

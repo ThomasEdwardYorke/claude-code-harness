@@ -13,8 +13,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "dependencies": {},
   "devDependencies": {

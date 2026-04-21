@@ -54,6 +54,10 @@ function parseSessionInput(raw) {
         ? parsed
         : {};
 }
+function extractString(obj, key) {
+    const val = obj[key];
+    return typeof val === "string" ? val : undefined;
+}
 export async function route(hookType, input) {
     switch (hookType) {
         case "pre-tool": {
@@ -70,11 +74,90 @@ export async function route(hookType, input) {
             const permJson = formatPermissionOutput(permResult);
             return { decision: permResult.decision, systemMessage: permJson };
         }
+        case "pre-compact": {
+            const { handlePreCompact } = await import("./hooks/pre-compact.js");
+            const raw = input;
+            const compactResult = await handlePreCompact({
+                hook_event_name: String(raw["hook_event_name"] ?? "PreCompact"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                trigger: extractString(raw, "trigger"),
+                custom_instructions: extractString(raw, "custom_instructions"),
+            });
+            const compactHookResult = { decision: compactResult.decision };
+            if (compactResult.additionalContext !== undefined) {
+                compactHookResult.reason = compactResult.additionalContext;
+            }
+            return compactHookResult;
+        }
+        case "subagent-stop": {
+            const { handleSubagentStop } = await import("./hooks/subagent-stop.js");
+            const raw = input;
+            const stopResult = await handleSubagentStop({
+                hook_event_name: String(raw["hook_event_name"] ?? "SubagentStop"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                agent_type: extractString(raw, "agent_type"),
+                agent_id: extractString(raw, "agent_id"),
+                agent_transcript_path: extractString(raw, "agent_transcript_path"),
+                last_assistant_message: extractString(raw, "last_assistant_message"),
+            });
+            const stopHookResult = { decision: stopResult.decision };
+            if (stopResult.additionalContext !== undefined) {
+                stopHookResult.reason = stopResult.additionalContext;
+            }
+            return stopHookResult;
+        }
+        case "task-created": {
+            const { handleTaskCreated } = await import("./hooks/task-lifecycle.js");
+            const raw = input;
+            const taskResult = await handleTaskCreated({
+                hook_event_name: String(raw["hook_event_name"] ?? "TaskCreated"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                task_id: extractString(raw, "task_id"),
+                task_subject: extractString(raw, "task_subject"),
+                task_status: extractString(raw, "task_status"),
+            });
+            const taskHookResult = { decision: taskResult.decision };
+            if (taskResult.additionalContext !== undefined) {
+                taskHookResult.reason = taskResult.additionalContext;
+            }
+            return taskHookResult;
+        }
+        case "task-completed": {
+            const { handleTaskCompleted } = await import("./hooks/task-lifecycle.js");
+            const raw = input;
+            const taskResult = await handleTaskCompleted({
+                hook_event_name: String(raw["hook_event_name"] ?? "TaskCompleted"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                task_id: extractString(raw, "task_id"),
+                task_subject: extractString(raw, "task_subject"),
+                task_status: extractString(raw, "task_status"),
+            });
+            const taskHookResult = { decision: taskResult.decision };
+            if (taskResult.additionalContext !== undefined) {
+                taskHookResult.reason = taskResult.additionalContext;
+            }
+            return taskHookResult;
+        }
+        case "stop": {
+            const { handleStop } = await import("./hooks/stop.js");
+            const raw = input;
+            const stopRes = await handleStop({
+                hook_event_name: String(raw["hook_event_name"] ?? "Stop"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+            });
+            const stopHR = { decision: stopRes.decision };
+            if (stopRes.additionalContext !== undefined) {
+                stopHR.reason = stopRes.additionalContext;
+            }
+            return stopHR;
+        }
         case "session-start":
         case "session-end": {
-            // Session lifecycle hooks currently act as silent no-ops that just
-            // approve. Projects can extend this later by plugging into the
-            // engine/lifecycle module without touching the hook dispatcher.
             return { decision: "approve" };
         }
         default: {
@@ -85,7 +168,25 @@ export async function route(hookType, input) {
         }
     }
 }
-function errorToResult(err) {
+/**
+ * Safe fallback used by `main()` when the dispatcher or any handler throws.
+ *
+ * Exported so that tests can verify the end-to-end contract — a handler
+ * that throws must still produce a valid `HookResult` rather than leaking
+ * the exception (which would otherwise crash Claude Code's hook runner).
+ * Every hook path eventually flows through `main()` via `scripts/hook-dispatcher.mjs`,
+ * which relies on this fallback to keep the user session alive.
+ *
+ * @internal
+ *
+ * **Do not pattern-match on the returned `reason` string** from external
+ * code. The exact format (`"Core engine error (safe fallback): <msg>"`)
+ * is an internal implementation detail and may be reformatted across
+ * releases. Consumers should only rely on `decision === "approve"` and
+ * on `reason` being a non-empty string; the reason text is intended for
+ * human-readable debugging / stderr logging, not machine parsing.
+ */
+export function errorToResult(err) {
     const message = err instanceof Error ? err.message : String(err);
     return {
         decision: "approve",
@@ -97,10 +198,15 @@ async function main() {
     let result;
     try {
         const raw = await readStdin();
-        if (hookType === "session-start" || hookType === "session-end") {
-            // Session hooks only need to swallow arbitrary JSON and approve.
-            parseSessionInput(raw); // validate but discard
-            result = await route(hookType, { tool_name: "__session__", tool_input: {} });
+        if (hookType === "session-start" ||
+            hookType === "session-end" ||
+            hookType === "pre-compact" ||
+            hookType === "subagent-stop" ||
+            hookType === "task-created" ||
+            hookType === "task-completed" ||
+            hookType === "stop") {
+            const parsed = parseSessionInput(raw);
+            result = await route(hookType, parsed);
         }
         else if (!raw.trim()) {
             result = { decision: "approve", reason: "Empty input" };

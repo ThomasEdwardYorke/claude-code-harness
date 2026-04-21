@@ -8,7 +8,7 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>|--te
 
 # Harness Work (v4) — Plans.md 駆動ディスパッチャ
 
-**v4 改修要旨 (2026-04-19)**: 内部委譲化。`/harness-work` はタスク抽出・モード判定・担当表更新の薄いディスパッチャに徹し、実装エンジンは `/tdd-implement` v2 (単一) / `/parallel-worktree` v1 (並列) に委譲。これで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートが**常時強制**される。Round 4 で発覚した「worker agent が品質ゲート省略」問題の構造的解消。
+**v4 改修要旨 (2026-04-19)**: 内部委譲化。`/harness-work` はタスク抽出・モード判定・担当表更新の薄いディスパッチャに徹し、実装エンジンは `/tdd-implement` v2 (単一) / `/parallel-worktree` v1 (並列) に委譲。これで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートが**常時強制**される。v3 以前で発覚した「worker agent が品質ゲート省略」問題の構造的解消 (詳細は CHANGELOG.md 参照)。
 
 ---
 
@@ -50,6 +50,13 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>|--te
 ## Auto Mode Detection (v2: 依存グラフ考慮)
 
 **単純な件数ではなく「独立グループ数」で判定**する (Turbo 流 DAG 先行)。`depends_on` 付きの連鎖タスクは 1 グループとして数える。
+
+> **実装状況 (harness-work v4 現行)**: 現在の harness-work v4 実装は「**件数ベース判定** (task count = 1 / 2-3 / 4+)」で Solo / Parallel / Breezing を選ぶ簡易版。以下に示す **依存グラフ** (`depends_on` DAG) / **`wt:*` worktree ラベル** 判定は **spec only** で、実体化は **Phase 2 スコープ** (Model B 実戦投入後)。暫定運用では:
+> - 独立性 / 依存性は coordinator (人間 or Claude) が Plans.md を読んで判断
+> - `wt:avoid` ラベルは `/harness-work --sequential` で明示強制
+> - `wt:recommended` ラベルが付いたタスクは default で worktree 経路に載る
+>
+> 完全な DAG 判定は Claude Agent SDK or dedicated Python/TS parser で実装予定 (次セッション以降)。
 
 ### 判定フロー
 
@@ -173,8 +180,164 @@ test -f Plans.md && echo "Plans.md found" || echo "Plans.md missing — use /tdd
 # 3. harness.config.json 読込 (プロジェクト設定)
 test -f harness.config.json && cat harness.config.json | jq '.work // {}'
 
-# 4. .coderabbit.yaml 存在確認 (CodeRabbit profile)
-test -f .coderabbit.yaml && cat .coderabbit.yaml | yq '.reviews.profile // "chill"'
+# 4. .coderabbit.yaml 存在確認 + profile 読取り
+#    `pseudo-coderabbit-loop` と同じ 3 段フォールバック + WARN 出力 (silent 降格禁止)
+PROFILE=""
+if [ -f .coderabbit.yaml ]; then
+  if command -v yq >/dev/null 2>&1; then
+    PROFILE=$(yq '.reviews.profile // ""' .coderabbit.yaml 2>/dev/null || true)
+  fi
+  if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
+    PROFILE=$(python3 -c "
+import yaml
+d = yaml.safe_load(open('.coderabbit.yaml'))
+print(d.get('reviews', {}).get('profile', '') if isinstance(d, dict) else '')
+" 2>/dev/null || true)
+  fi
+  if [ -z "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
+    # pseudo-coderabbit-loop と同じロジック、同じ quoted heredoc で bash エスケープ依存排除。
+    # 末尾の `(?:\s+#.*)?` は valid YAML の inline comment を許容する。
+    PROFILE=$(python3 <<'PYEOF' 2>/dev/null || true
+import re
+try:
+    text = open('.coderabbit.yaml').read()
+    m = re.search(r'^reviews\s*:\s*\n((?:[ \t]+.*\n?)+)', text, re.MULTILINE)
+    if m:
+        block = m.group(1)
+        first_indent = re.match(r'^([ \t]+)', block)
+        if first_indent:
+            indent = first_indent.group(1)
+            pattern = r'^' + re.escape(indent) + r'profile\s*:\s*["\']?(\w+)["\']?(?:\s+#.*)?\s*$'
+            p = re.search(pattern, block, re.MULTILINE)
+            if p:
+                print(p.group(1))
+except Exception:
+    pass
+PYEOF
+)
+  fi
+  if [ -z "$PROFILE" ]; then
+    echo "WARN: .coderabbit.yaml exists but profile could not be parsed (yq / PyYAML / stdlib regex all failed). Falling back to 'chill'." >&2
+    PROFILE="chill"
+  fi
+else
+  PROFILE="chill"
+fi
+echo "CodeRabbit profile from .coderabbit.yaml: $PROFILE"
+
+# YAML 由来の PROFILE は CodeRabbit 公式 allowlist (chill / assertive) のみ許可。
+# strict は harness-local extension で CLI / harness.config.json 専用、YAML 経路では採用しない
+# (https://docs.coderabbit.ai/reference/configuration 公式 schema 準拠)。
+if [ -n "$PROFILE" ] && [ "$PROFILE" != "chill" ] && [ "$PROFILE" != "assertive" ]; then
+  echo "WARN: .coderabbit.yaml profile='$PROFILE' is outside CodeRabbit official allowlist (chill / assertive); fallback to 'chill' (use --profile=strict or harness.config.json for local extension)" >&2
+  PROFILE="chill"
+fi
+
+# PROFILE 値の優先順位 (高 → 低):
+#   1. コマンド引数 `--profile=...` (`$ARGUMENTS` を argv 単位で case 文完全一致抽出)
+#   2. `harness.config.json` の `.tddEnforce.pseudoCoderabbitProfile`
+#   3. `.coderabbit.yaml` の `reviews.profile` (上記 3 段 fallback + 公式 allowlist 検証済)
+#   4. `chill` (最終 fallback、WARN 出力付き)
+# 後段 (Phase 5.5) にはここで確定した値を Skill handoff 時に **実値へ materialize** してから渡す
+# (Anthropic 公式 slash command の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` (0-based、`$0` が第1引数) のみ保証。`${PROFILE}` は
+# undocumented なので、coordinator が Skill 呼出前に literal `${PROFILE}` を `chill` 等に置換する責務)。
+#
+# Shell 互換 (bash 必須): `read -r -a` / 配列 0-based / `unset 'arr[idx]'` は bash 拡張で、
+# zsh / dash / POSIX sh では silent に degrade する。BASH_VERSION を明示確認して fail-fast。
+# Claude Code の Bash tool は通常 /bin/bash で実行されるため本 guard は保険。
+if [ -z "${BASH_VERSION:-}" ]; then
+  echo "ERROR: /harness-work argv parser requires bash (BASH_VERSION unset)." >&2
+  echo "       手動実行時は 'bash -c \"/harness-work ...\"' で包んでください。" >&2
+  exit 1
+fi
+# zsh で呼ばれた場合の最後の保険 (exec 失敗しても BASH_VERSION check で既に停止済)。
+[ -n "${ZSH_VERSION:-}" ] && emulate -L bash
+
+# argv 単位の case 文完全一致 + 末尾 token 限定: `--profile=strict1` / `--profile=chill-something` を誤受理せず、
+# かつ task description 本文の `--profile=assertive` 的な引用文言を option と誤認しない。
+ARG_PROFILE=""
+# $ARGUMENTS を配列に読み込み (bash の word splitting を明示)。
+# 空白を含む値 (例 `--foo="bar baz"`) は未サポート。
+read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
+LAST_IDX=$((${#ARGS_TOKENS[@]} - 1))
+if [ "$LAST_IDX" -ge 0 ]; then
+  LAST_TOK="${ARGS_TOKENS[$LAST_IDX]}"
+  case "$LAST_TOK" in
+    --profile=chill|--profile=assertive|--profile=strict)
+      ARG_PROFILE="${LAST_TOK#--profile=}"
+      ;;
+    --profile=*)
+      echo "WARN: invalid --profile='${LAST_TOK#--profile=}' (must be chill|assertive|strict); ignored" >&2
+      ;;
+  esac
+fi
+
+# 末尾以外の --profile= は WARN 出す (CodeRabbit PR #1 回帰防止):
+# 旧実装は全 token scan だったため、`/harness-work --profile=assertive T-12` のような並びが
+# 許容されていた。末尾限定に変えたことで silent ignore するのを防ぐため、中間位置の
+# --profile= を検出時に明示 WARN する。
+for i in "${!ARGS_TOKENS[@]}"; do
+  if [ "$i" != "$LAST_IDX" ]; then
+    case "${ARGS_TOKENS[$i]}" in
+      --profile=*)
+        echo "WARN: --profile='${ARGS_TOKENS[$i]#--profile=}' at position $i is ignored; only the LAST token is parsed as --profile= option." >&2
+        ;;
+    esac
+  fi
+done
+
+# harness.config.json key path は実装とドキュメントを `.tddEnforce.pseudoCoderabbitProfile` に統一。
+# JSON 破損時は WARN を出して silent fallback を避ける。
+# 取得値は allowlist 検証してから採用する (typo や非公式値が downstream に流れないよう)。
+CFG_PROFILE=""
+if [ -f harness.config.json ] && command -v jq >/dev/null 2>&1; then
+  if ! jq empty harness.config.json 2>/dev/null; then
+    echo "WARN: harness.config.json is not valid JSON; skipping config-level profile override" >&2
+  else
+    CFG_PROFILE_RAW=$(jq -r '.tddEnforce.pseudoCoderabbitProfile // empty' harness.config.json 2>/dev/null || true)
+    case "$CFG_PROFILE_RAW" in
+      chill|assertive|strict)
+        CFG_PROFILE="$CFG_PROFILE_RAW"
+        ;;
+      "")
+        : # empty はそのまま (no override)
+        ;;
+      *)
+        echo "WARN: harness.config.json .tddEnforce.pseudoCoderabbitProfile='$CFG_PROFILE_RAW' is not in allowlist (chill|assertive|strict); ignored" >&2
+        ;;
+    esac
+  fi
+fi
+
+PROFILE="${ARG_PROFILE:-${CFG_PROFILE:-$PROFILE}}"
+export PROFILE
+echo "Resolved profile (arg > config > yaml > chill): $PROFILE"
+
+# --no-commit flag 抽出 (parallel 経路への伝播規約)。
+# 位置は任意 (末尾 token の --profile= と並ばない、--no-commit 単独で末尾に来ることもある)
+# なので全 token scan で拾う。Plans.md 駆動で自動 commit を抑制したいケース (CodeRabbit 反復時 /
+# 手動レビュー前の段階的確認) で使う。
+NO_COMMIT=""
+for tok in "${ARGS_TOKENS[@]}"; do
+  case "$tok" in
+    --no-commit) NO_COMMIT="--no-commit" ;;
+  esac
+done
+export NO_COMMIT
+echo "NO_COMMIT: ${NO_COMMIT:-<not set>}"
+
+# Handoff 規約 (Skill / Task tool いずれでも同じ):
+# coordinator が解決した $PROFILE / $NO_COMMIT を **materialize して** downstream に渡す。
+# 例 (Solo → /tdd-implement):
+#   `/tdd-implement ${TASK_ID} --profile=${PROFILE} ${NO_COMMIT}`
+#   → materialize 後:
+#   `/tdd-implement T-12 --profile=assertive --no-commit`  (NO_COMMIT 有)
+#   `/tdd-implement T-12 --profile=assertive`              (NO_COMMIT 無)
+# 例 (Parallel/Breezing → /parallel-worktree):
+#   `/parallel-worktree <tasks> --profile=${PROFILE} ${NO_COMMIT}`
+#   → materialize 後:
+#   `/parallel-worktree T-12,T-13 --profile=strict --no-commit`
+# どちらも NO_COMMIT が空なら末尾 flag を付けない (空 token で handoff しない)。
 
 # 5. Codex CLI 利用可能性
 codex --version 2>/dev/null || echo "WARNING: Codex CLI not installed — /tdd-implement v2 Phase 4-5 will skip Codex"
@@ -253,9 +416,19 @@ Plans.md 未使用プロジェクトでは scoping comment / task file のみ作
 
 #### 4.1 Solo モード (1 タスク)
 
+**重要: handoff 時は PROFILE を実値に materialize してから Skill を呼ぶ**。Anthropic 公式 slash command の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` (0-based、`$0` が第1引数) のみ保証 (https://docs.anthropic.com/en/docs/claude-code/slash-commands)。`${PROFILE}` は undocumented なので、literal のまま Skill に渡すと受け手側で literal として扱われ、委譲境界で PROFILE が失われる。
+
+coordinator (LLM) は Pre-flight で確定した `$PROFILE` の **実値** を args 文字列内に直接埋め込んでから Skill を呼び出す責任を持つ:
+
 ```
-Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files>"})
+# テンプレート表記 (PROFILE は事前に実値へ置換する)
+Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=${PROFILE}"})
+
+# 実際の呼出例 (coordinator が PROFILE=assertive を解決した場合)
+Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files> --profile=assertive"})
 ```
+
+**禁止**: `--profile=${PROFILE}` の literal 文字列をそのまま Skill args に渡す (受け手側で置換されず literal として伝わる)。
 
 `/tdd-implement` v2 が以下を完全実行:
 - Phase 1 計画
@@ -263,14 +436,20 @@ Skill({skill: "tdd-implement", args: "<task description + AC + forbidden files>"
 - Phase 3 GREEN
 - Phase 4 Codex 並列検証
 - Phase 5 Codex レビューループ
-- Phase 5.5 `/pseudo-coderabbit-loop --local --profile=<profile>`
+- Phase 5.5 `/pseudo-coderabbit-loop --local --profile=$PROFILE`
 - Phase 6 push + PR + `/coderabbit-review <pr>`
 - Phase 7 `/codex-team` セカンドオピニオン
 
 #### 4.2 Parallel / Breezing モード — worktree 利用可
 
+**handoff materialize 必須** (4.1 と同じ原則)。coordinator は `$PROFILE` を実値に置換してから Skill を呼び出す:
+
 ```
-Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --spec=<inline-spec>"})
+# テンプレート表記
+Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<branch> --profile=${PROFILE} --spec=<inline-spec>"})
+
+# 実際の呼出例 (PROFILE=strict の場合)
+Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feature/foo --profile=strict --spec=<inline-spec>"})
 ```
 
 `/parallel-worktree` v1 が:
@@ -280,7 +459,9 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<b
 
 #### 4.2b Parallel (Task tool) モード — wt:avoid 混在、worktree 使えない
 
-`Task` ツールで N タスクを並列起動。各 Task プロンプトに **TDD 強制節を必須埋込**:
+`Task` ツールで N タスクを並列起動。各 Task プロンプトには以下を必須埋込する:
+- TDD 強制節
+- **profile を materialize 済み実値で埋め込む** (Skill handoff と同じ規約)。`tdd_enforced_prompt(task)` を組み立てる段階で coordinator が `$PROFILE` を実値 (chill / assertive / strict) に置換してから Task prompt 文字列に入れる。literal `$PROFILE` のまま渡すと subagent 側で slot 展開されず profile が失われる (Anthropic 公式の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` 0-based のみ保証)。
 
 ```markdown
 本タスクは TDD + 品質ゲート必須。以下の Phase を省略なく実行:
@@ -288,9 +469,16 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=<N> --feature-branch=<b
 - Phase 3 Green: 最小実装 + 全既存テスト維持
 - Phase 4 Codex 並列: `harness:codex-sync` agent を起動 or `codex exec` で差分突合
 - Phase 5 Codex レビュー: critical/major が 0 になるまで反復
-- Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=<profile>` で actionable=0 まで反復
+- Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=<実値>` で actionable=0 まで反復
+  (coordinator が $PROFILE を解決した実値 = chill / assertive / strict に埋め込んでから prompt に渡す)
 - Phase 6: push まで実施 (PR 作成は coordinator 実施)
 省略した場合、完了報告に **「妥協あり」** と明記すること (本来は禁止)。
+```
+
+**実例** (coordinator が PROFILE=assertive を解決した場合の Phase 5.5 行):
+
+```markdown
+- Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=assertive` で actionable=0 まで反復
 ```
 
 **注**: `harness:worker` は `disallowedTools: [Task]` のため worker 内から更に agent 起動不可。**TDD 強制は worker プロンプト本文で実現**する。
@@ -318,9 +506,12 @@ for task in coordinator_plans["phase_b"]:
 
 #### 4.3 Sequential モード (明示 / worktree 非対応)
 
+**handoff materialize 必須** (4.1 と同じ原則)。`$PROFILE` の実値を各 Skill 呼出の args に埋め込む:
+
 ```
+# PROFILE=chill の場合の実際の呼出
 for task in selected_tasks:
-    Skill({skill: "tdd-implement", args: "<task desc>"})
+    Skill({skill: "tdd-implement", args: "<task desc> --profile=chill"})
     # 各タスク完了まで待機、次へ
 ```
 
@@ -328,7 +519,7 @@ for task in selected_tasks:
 
 API 不使用のコストゼロパイプライン確認 (既存ロジック維持):
 - 依存関係 import 確認
-- protected-data/ CSV 存在・スキーマ確認
+- プロジェクト固有のデータディレクトリ (`harness.config.json` の `protectedDirectories` / `.claude/rules/*.md` で宣言) の存在・スキーマ確認 (**project-local skill に委譲推奨**)
 - 主要クラスの import 確認
 - 出力 artifact スキーマ検証 (存在時)
 
@@ -365,7 +556,7 @@ Auto Mode Detection 結果:
 3. **省略されていたら `/harness-work --resume <task>` で再実行**
 4. Plans.md 担当表から行削除 → 完了セクションに追記
 5. worktree cleanup (`/parallel-worktree` が実施済)
-6. `.docs/next-session-prompt.md` 等、セッション引継ファイル更新
+6. プロジェクト固有のセッション引継ファイル (`harness.config.json` の `work.handoffFiles` 等で指定、存在すれば) を更新
 
 ---
 
@@ -452,7 +643,7 @@ API call なし、コストゼロ。
     "prefix": "<project-name>-wt-",
     "defaultBaseBranch": "main",
     "forceDisableReasons": [
-      "例: Y.js 統合期 (hot file 集中で衝突多発)",
+      "例: high-conflict collaboration phase (hot files concentrated)",
       "例: baseline migration 期間",
       "例: 全ファイル rename/削除タスク実行中"
     ]
@@ -534,7 +725,7 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 
 ---
 
-## 申送 (Codex 調査で判明した未検証事項)
+## Follow-up notes (Codex 調査で判明した未検証事項)
 
 以下は公式ドキュメントで明示されていない / 実運用で検証が必要な事項。リグレッション発生時の原因特定用に記録:
 
@@ -573,7 +764,7 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 
 ## スキル更新履歴
 
-- **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、申送セクション、フォールバック戦略追加。
-- **v4 (2026-04-19)**: 内部委譲化。`/tdd-implement` v2 / `/parallel-worktree` v1 への委譲レイヤーに刷新。品質ゲート常時強制。Round 4 で発覚した「worker 丸投げで品質ゲート省略」問題を構造解消。
+- **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、follow-up notes セクション、フォールバック戦略追加。
+- **v4 (2026-04-19)**: 内部委譲化。`/tdd-implement` v2 / `/parallel-worktree` v1 への委譲レイヤーに刷新。品質ゲート常時強制。v3 以前で発覚した「worker 丸投げで品質ゲート省略」問題を構造解消 (詳細は CHANGELOG.md)。
 - **v3**: Auto Mode Detection (Solo/Parallel/Breezing) 導入、`--codex` オプション追加、サブフロー (fix-bug/add-feature/test-pipeline) 統合。
 - **v2, v1**: レガシー (`work` / `breezing` / `fix-bug` / `add-feature` / `test-pipeline` が別スキルだった時代)。

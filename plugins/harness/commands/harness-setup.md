@@ -64,7 +64,7 @@ And that the following agent definitions exist (v3 layout):
 - `agents/security-auditor.md`
 - `agents/codex-sync.md`
 
-And that the skills exist (5 verb skills plus 4 workflow skills):
+And that the skills exist (5 verb skills plus 7 workflow skills):
 
 - Verb skills
   - `commands/harness-plan.md`
@@ -77,6 +77,13 @@ And that the skills exist (5 verb skills plus 4 workflow skills):
   - `commands/new-feature-branch.md`
   - `commands/coderabbit-review.md`
   - `commands/codex-team.md`
+  - `commands/parallel-worktree.md`
+  - `commands/pseudo-coderabbit-loop.md`
+  - `commands/tdd-implement.md`
+
+And that the following additional agent exists:
+
+- `agents/coderabbit-mimic.md`
 
 Report each file as OK / MISSING. Exit non-zero if any are missing.
 
@@ -95,7 +102,8 @@ plugins/harness/
 │   ├── reviewer.md
 │   ├── scaffolder.md
 │   ├── security-auditor.md
-│   └── codex-sync.md
+│   ├── codex-sync.md
+│   └── coderabbit-mimic.md
 ├── commands/
 │   ├── harness-plan.md
 │   ├── harness-work.md
@@ -105,7 +113,10 @@ plugins/harness/
 │   ├── branch-merge.md
 │   ├── new-feature-branch.md
 │   ├── coderabbit-review.md
-│   └── codex-team.md
+│   ├── codex-team.md
+│   ├── parallel-worktree.md
+│   ├── pseudo-coderabbit-loop.md
+│   └── tdd-implement.md
 └── core/
     ├── package.json
     ├── src/
@@ -141,7 +152,13 @@ tampering detector, and config loader are green.
 
 ## `localize` — tune for the current project
 
-Guide the user through populating `harness.config.json`:
+Guide the user through populating `harness.config.json`. The full schema
+lives at `plugins/harness/schemas/harness.config.schema.json` (every field
+carries an inline `description`, so editors with JSON-Schema support give
+hover documentation). The quick map below covers the sections most
+projects need to touch.
+
+### Core
 
 - `projectName` — used in messages
 - `language` — `en` or `ja`
@@ -149,9 +166,142 @@ Guide the user through populating `harness.config.json`:
   datasets, generated artifacts)
 - `protectedEnvVarNames` — additions to the default secret-name list
 - `protectedFileSuffixes` — in addition to `.env`
-- `codex.enabled` — whether to surface the `codex-sync` agent
-- `workMode` — per-project bypass defaults for R05 / R06
 - `tampering.severity` — `approve` (warn), `ask` (confirm), `deny` (block)
+
+### Work-mode bypass (R05 / R06)
+
+`workMode` lets work-mode (`HARNESS_WORK_MODE=1` / `harness work …`)
+skip two otherwise-interactive safety prompts. **Nothing else is
+affected** — R10 (`protectedDirectories`) still refuses listed dirs, and
+neither flag exempts `main` / `master` from push protection rules.
+
+| Field | Default | Effect when `true` |
+|-------|---------|--------------------|
+| `workMode.bypassRmRf` | `false` | R05 stops prompting on `rm -rf` (still refused for protected dirs) |
+| `workMode.bypassGitPush` | `false` | R06 downgrades the `git push --force` warning to info (the push itself is still executed) |
+
+### Work dispatcher (`/harness-work`, hooks)
+
+Consumed by `/harness-work`, `/tdd-implement`, `/parallel-worktree`, and
+`stop.ts` / `pre-compact.ts` / `task-lifecycle.ts`.
+
+- `work.plansFile` — relative path to the task / plan file (default
+  `Plans.md`). Hooks read the assignment table here before compaction.
+- `work.assignmentSectionMarkers` — headers used to locate the
+  assignment table (default `["担当表", "Assignment", "In Progress"]`).
+- `work.handoffFiles` — session-handoff files updated on close
+  (existence-optional; missing entries are skipped silently).
+- `work.changeLogFile` — optional change log scanned by
+  `/harness-plan sync`.
+- `work.maxParallel` (1-16, default 4) — fan-out cap for in-process
+  `Task`-tool parallelism.
+- `work.labelPriority` / `work.criticalLabels` — task-label ordering and
+  labels that force full quality gates.
+- `work.testCommand` — canonical test step (overrides per-stack
+  autodetection in `subagent-stop.ts`).
+- `work.qualityGates.*` — enable/disable each phase reminder emitted by
+  the Stop hook (`enforceTddImplement` / `enforcePseudoCoderabbit` /
+  `enforceRealCoderabbit` / `enforceCodexSecondOpinion`, all default
+  `true`).
+- `work.failFast` (default `true`) — abort the batch on first failure.
+
+### Worktree orchestration (`/parallel-worktree`, `parallel-sessions.sh`)
+
+- `worktree.enabled` — `true` / `false` / `"auto"` (default `"auto"`,
+  delegates to `/harness-work` auto-detection).
+- `worktree.maxParallel` (1-16, default 4) — cap on concurrent sibling
+  worktrees.
+- `worktree.parentDir` (default `".."`) — where sibling worktrees go
+  relative to `projectRoot`.
+- `worktree.prefix` / `worktree.defaultBaseBranch` — optional naming and
+  branch-base overrides.
+
+### TDD + pseudo-CodeRabbit (`/tdd-implement`, `/pseudo-coderabbit-loop`)
+
+- `tddEnforce.alwaysRequireRedTest` (default `true`) — refuse to proceed
+  without a failing Red test.
+- `tddEnforce.allowSkipOnDocsTasks` (default `true`) — `[docs]` tasks
+  may skip Red.
+- `tddEnforce.pseudoCoderabbitProfile` — `chill` / `assertive` /
+  `strict` (default `chill`). `chill` / `assertive` match the upstream
+  CodeRabbit profiles verbatim; `strict` is a harness-local extension.
+- `tddEnforce.maxCodexReviewRetries` (default `3`) — Codex review loop
+  cap per round.
+
+### CodeRabbit integration (`/coderabbit-review`, `/pseudo-coderabbit-loop`)
+
+- `codeRabbit.botLogin` (default `"coderabbitai"`) — review author login.
+- `codeRabbit.ratelimitCheckWindowMinutes` (default `15`) — cooldown
+  lookback used for Pro rate-limit detection.
+- `codeRabbit.approvedStateAsClear` (default `true`) — treat PR review
+  state `APPROVED` as an immediate clear signal.
+- `codeRabbit.maxPseudoLoopIterations` (default `5`) — iterations before
+  pseudo-loop escalates to real CodeRabbit.
+- `codeRabbit.proBucketSize` / `codeRabbit.proBucketWindowMinutes`
+  (defaults `5` and `60`) — Pro "5 reviews / 1 hour" bucket for local
+  rate prediction.
+
+### Tooling (`subagent-stop.ts` stack detection)
+
+- `tooling.pythonCandidateDirs` (default `["src", "app"]`) — directory
+  names checked by `detectAvailableChecks()` when picking Python lint /
+  typecheck targets. Only existing directories are included. The
+  default is stack-neutral; projects with a `backend/` layout add it
+  explicitly (`["backend"]` or `["backend", "src"]`). An empty array or
+  non-string entries fall back to the default.
+
+### Release (`/harness-release`, `/branch-merge`, `/new-feature-branch`)
+
+- `release.strategy` — `"three-branch"` (default, feature/* → dev →
+  main) or `"two-branch"` (trunk-style, feature/* → main directly).
+- `release.integrationBranch` (default `"dev"`) — intermediate branch
+  in `three-branch`; ignored when `strategy = "two-branch"`.
+- `release.productionBranch` (default `"main"`) — final branch where
+  tags and releases land.
+- `release.testCommand` — command executed before each merge step. If
+  unset, `/harness-release` falls back to `work.testCommand`, and then
+  to per-stack autodetection. Precedence: `release.testCommand` >
+  `work.testCommand` > autodetection.
+
+### Security (`security-auditor` agent)
+
+- `security.projectChecklistPath` — optional relative path to a
+  project-local security checklist loaded as addendum when present.
+- `security.enabledChecks` — which checks the agent runs (default
+  covers `api-key-leak`, `injection`, `file-permissions`,
+  `dependencies`; `project-specific` becomes effective only when a
+  checklist path is set).
+
+  **⚠ Array-wholesale override:** providing this field replaces the
+  entire default list. To add `project-specific` to the baseline, list
+  every baseline entry you still want:
+
+  ```json
+  "security": {
+    "enabledChecks": [
+      "api-key-leak",
+      "injection",
+      "file-permissions",
+      "dependencies",
+      "project-specific"
+    ]
+  }
+  ```
+
+  The merge semantics are documented and tested (see
+  `config.test.ts` §security.enabledChecks partial override). Writing
+  `"enabledChecks": ["project-specific"]` silently disables the four
+  baselines.
+
+### Codex companion (`codex-sync` agent)
+
+- `codex.enabled` — whether to surface the `codex-sync` agent.
+- `codex.pluginRoot` — explicit path to the Codex plugin install. When
+  unset, `codex-sync` auto-resolves the path at runtime via a glob
+  under `~/.claude/plugins/cache/openai-codex/codex/`. `harness doctor`
+  only reports whether Codex is present — it does not write this field
+  into `harness.config.json`; set it manually if your Codex install
+  lives at a non-default location.
 
 Write the file and run `/harness-setup check` afterwards.
 
@@ -163,13 +313,14 @@ Write the file and run `/harness-setup check` afterwards.
 
 ## Agents available after setup
 
-| Agent | Role |
-|-------|------|
-| `worker`     | Implements changes, runs self-review, verifies, commits |
-| `reviewer`   | Read-only, multi-angle code / plan / scope review |
-| `scaffolder` | Keeps docs, `CLAUDE.md`, and `harness.config.json` in sync |
-| `security-auditor` | Audits for credential leakage, injection, permissions |
-| `codex-sync` | Synchronous wrapper around the Codex CLI companion |
+| Agent | Role | Requires Codex companion |
+|-------|------|--------------------------|
+| `worker`     | Implements changes, runs self-review, verifies, commits | — |
+| `reviewer`   | Read-only, multi-angle code / plan / scope review | — |
+| `scaffolder` | Keeps docs, `CLAUDE.md`, and `harness.config.json` in sync | — |
+| `security-auditor` | Audits for credential leakage, injection, permissions | — |
+| `codex-sync` | Synchronous wrapper around the Codex CLI companion | yes (errors fast if absent) |
+| `coderabbit-mimic` | Local pseudo-CodeRabbit PR review loop using Codex as reviewer | yes (errors fast if absent) |
 
 ## Related skills
 

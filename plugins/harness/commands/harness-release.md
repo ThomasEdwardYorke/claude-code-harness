@@ -169,15 +169,27 @@ git push origin dev
 ### Step 2: dev でテスト実行
 
 ```bash
-source .venv/bin/activate 2>/dev/null || true
-PYTHONPATH=. pytest
+# プロジェクトの test command を実行する。優先順位:
+#   1. harness.config.json の `release.testCommand` (明示設定)
+#   2. harness.config.json の `work.testCommand`
+#   3. package.json に `"test"` script があれば `npm test`
+#   4. pyproject.toml + tests/ があれば `pytest tests/`
+#   5. 該当なしなら警告 (skip)
+#
+# Language-specific example invocations (run manually only when `release.testCommand`
+# is unset and the auto-detect heuristics miss):
+# - Python (virtualenv + pytest): activate `.venv` then run `pytest`
+# - Node.js:   `npm test`
+# - Rust:      `cargo test`
+# (Concrete `source .venv/...` / `PYTHONPATH=...` invocations intentionally omitted
+# from the universal default to keep plugin core stack-neutral.)
 ```
 
 | 結果 | 対応 |
 |-----|------|
 | 全テストパス | Step 3へ進む |
 | テスト失敗 | ユーザーに報告、修正後に再実行 |
-| 環境エラー | `pip install -r requirements.txt` 後に再実行 |
+| 環境エラー | プロジェクトの依存セットアップ手順 (`pip install -r requirements.txt` / `npm install` / `cargo fetch` 等) を実行後に再実行 |
 
 **重要**: テストが失敗した場合、**main へのマージは行わない**。
 
@@ -205,8 +217,8 @@ git push origin dev
 ```bash
 git checkout main
 git pull origin main
-source .venv/bin/activate 2>/dev/null || true
-PYTHONPATH=. pytest
+# Step 2 と同じ手順でプロジェクトの test command を実行
+# (harness.config.json の release.testCommand / work.testCommand / 自動検出)
 ```
 
 ### Step 6: feature ブランチの削除

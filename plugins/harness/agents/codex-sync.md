@@ -3,8 +3,9 @@ name: codex-sync
 description: Synchronous wrapper around the Codex companion task runtime. Unlike the upstream codex-rescue agent, this always uses foreground mode so the Bash call blocks until Codex finishes and the full result is returned. Use when you need Codex's output as an actual return value for parallel Agent dispatch, for analysis that must be integrated into a report, etc. — not for fire-and-forget background work.
 tools: [Bash, Read]
 disallowedTools: [Write, Edit, Task]
-model: sonnet
+model: haiku
 color: cyan
+maxTurns: 10
 ---
 
 # codex-sync - Synchronous Codex Wrapper
@@ -64,7 +65,11 @@ If `CODEX_COMPANION` is empty, the glob found no installed Codex plugin. In that
 ```text
 ERROR: Codex plugin not found
 Expected path: ${HOME}/.claude/plugins/cache/openai-codex/codex/<version>/scripts/codex-companion.mjs
-Fix: run `harness doctor` to install the Codex plugin, or set codex.pluginRoot in harness.config.json
+Fix: run 'claude plugin install codex@openai-codex --scope project'
+     (or re-run install-project.sh with --with-codex) to install the companion.
+     Alternatively, set codex.pluginRoot in harness.config.json if the plugin
+     is installed at a non-default location.
+     Verify the install with 'harness doctor'.
 ```
 
 ## Prohibited Actions

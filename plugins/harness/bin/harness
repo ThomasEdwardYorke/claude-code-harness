@@ -15,22 +15,30 @@
 import { existsSync, readFileSync, writeFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Resolve the plugin root directory. Prefer the directory adjacent to `bin/`
+// (standard install) and fall back to `CLAUDE_PLUGIN_ROOT` when the CLI is
+// invoked inside a hook whose working tree points at a different install.
+// Both `resolveCorePath()` and `cmdCheck()` must share this logic so that
+// the integrity report and the core loader inspect the same tree.
+function resolvePluginRoot() {
+  const direct = resolve(__dirname, "..");
+  if (existsSync(join(direct, "core", "dist", "index.js"))) return direct;
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
+  if (envRoot && existsSync(join(envRoot, "core", "dist", "index.js"))) {
+    return envRoot;
+  }
+  return direct;
+}
 
 // Resolve the plugin's own core build. Works whether invoked via `bin/`
 // (which is on PATH once the plugin is installed) or via a direct path.
 function resolveCorePath() {
-  // bin/ lives at plugins/harness/bin/, so core/ is at ../core/dist/index.js
-  const guess = resolve(__dirname, "..", "core", "dist", "index.js");
-  if (existsSync(guess)) return guess;
-  // CLAUDE_PLUGIN_ROOT fallback when the CLI is invoked inside a hook.
-  const envRoot = process.env.CLAUDE_PLUGIN_ROOT;
-  if (envRoot) {
-    const alt = join(envRoot, "core", "dist", "index.js");
-    if (existsSync(alt)) return alt;
-  }
-  return null;
+  const candidate = join(resolvePluginRoot(), "core", "dist", "index.js");
+  return existsSync(candidate) ? candidate : null;
 }
 
 function printUsage() {
@@ -98,7 +106,9 @@ function cmdCheck() {
   const corePath = resolveCorePath();
   checks.push(["core build", corePath !== null ? "OK" : "MISSING"]);
 
-  const pluginRoot = resolve(__dirname, "..");
+  // Use the same root as resolveCorePath so `CLAUDE_PLUGIN_ROOT` switches
+  // (e.g. hook-invoked CLI) are honored by the integrity check.
+  const pluginRoot = resolvePluginRoot();
   const expected = [
     [".claude-plugin/plugin.json", "manifest"],
     ["hooks/hooks.json", "hook registration"],
@@ -106,6 +116,9 @@ function cmdCheck() {
     ["agents/worker.md", "worker agent"],
     ["agents/reviewer.md", "reviewer agent"],
     ["agents/scaffolder.md", "scaffolder agent"],
+    ["agents/codex-sync.md", "codex-sync agent"],
+    ["agents/coderabbit-mimic.md", "coderabbit-mimic agent"],
+    ["agents/security-auditor.md", "security-auditor agent"],
     ["commands/harness-plan.md", "plan command"],
     ["commands/harness-work.md", "work command"],
     ["commands/harness-review.md", "review command"],
@@ -115,6 +128,9 @@ function cmdCheck() {
     ["commands/new-feature-branch.md", "new-feature-branch command"],
     ["commands/coderabbit-review.md", "coderabbit-review command"],
     ["commands/codex-team.md", "codex-team command"],
+    ["commands/parallel-worktree.md", "parallel-worktree command"],
+    ["commands/pseudo-coderabbit-loop.md", "pseudo-coderabbit-loop command"],
+    ["commands/tdd-implement.md", "tdd-implement command"],
   ];
   for (const [rel, label] of expected) {
     const path = join(pluginRoot, rel);
@@ -147,14 +163,87 @@ async function cmdDoctor() {
       // ignore
     }
   }
-  // Detect an installed codex plugin for the codex-sync agent.
-  const home = process.env.HOME ?? "";
+
+  // Codex companion (optional — used by codex-sync / coderabbit-mimic agents).
+  // `os.homedir()` handles Windows (USERPROFILE) + POSIX HOME + edge
+  // cases where HOME is unset in container / CI environments. Falling
+  // back to `process.env.HOME ?? ""` previously caused `path.join("", …)`
+  // to resolve relative to cwd, producing false "codex not installed" /
+  // false user-overlay readings on Windows.
+  const home = homedir();
   const codexDir = join(home, ".claude", "plugins", "cache", "openai-codex", "codex");
   if (existsSync(codexDir)) {
     out.push(`codex plugin:        detected at ${codexDir}`);
   } else {
-    out.push(`codex plugin:        not installed`);
+    // Hint uses a fully-qualified `claude plugin install` command so the user
+    // can copy-paste from any directory; `install-project.sh` would be a
+    // relative path that doesn't exist in the user's project root.
+    out.push(`codex plugin:        not installed (optional — install with 'claude plugin install codex@openai-codex --scope project' to enable codex-sync / coderabbit-mimic)`);
   }
+
+  // Project-local overrides / overlays.
+  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const harnessConfigPath = join(projectDir, "harness.config.json");
+  if (existsSync(harnessConfigPath)) {
+    out.push(`harness.config.json: ${harnessConfigPath}`);
+    try {
+      const cfg = JSON.parse(readFileSync(harnessConfigPath, "utf-8"));
+      const checklistPath = cfg?.security?.projectChecklistPath;
+      if (typeof checklistPath === "string" && checklistPath.length > 0) {
+        const resolvedChecklist = resolve(projectDir, checklistPath);
+        if (existsSync(resolvedChecklist)) {
+          out.push(`project security checklist: ${resolvedChecklist}`);
+        } else {
+          out.push(`project security checklist: MISSING (${checklistPath} from harness.config.json does not resolve)`);
+        }
+      }
+      const plansFile = cfg?.work?.plansFile;
+      if (typeof plansFile === "string" && plansFile.length > 0) {
+        const plansPath = resolve(projectDir, plansFile);
+        out.push(`plans file:          ${plansPath}${existsSync(plansPath) ? "" : " (missing)"}`);
+      }
+      const handoffFiles = Array.isArray(cfg?.work?.handoffFiles) ? cfg.work.handoffFiles : [];
+      for (let i = 0; i < handoffFiles.length; i++) {
+        const rel = handoffFiles[i];
+        if (typeof rel !== "string") {
+          // Warn so misconfigurations (null / number / object entries) stay
+          // visible instead of being silently dropped from the report.
+          out.push(
+            `handoff file:        WARN entry [${i}] is not a string (got ${typeof rel}): ${JSON.stringify(rel)}`,
+          );
+          continue;
+        }
+        if (rel.length === 0) {
+          out.push(`handoff file:        WARN entry [${i}] is an empty string`);
+          continue;
+        }
+        const p = resolve(projectDir, rel);
+        out.push(`handoff file:        ${p}${existsSync(p) ? "" : " (missing — optional)"}`);
+      }
+    } catch (err) {
+      out.push(`harness.config.json: PARSE ERROR (${err instanceof Error ? err.message : String(err)})`);
+    }
+  } else {
+    out.push(`harness.config.json: not found at ${harnessConfigPath} (run 'harness init' to create one)`);
+  }
+
+  // Project-local skill scaffold (harness plugin's project-local convention).
+  const localSkillDir = join(projectDir, ".claude", "skills");
+  if (existsSync(localSkillDir)) {
+    out.push(`project skill dir:   ${localSkillDir}`);
+  } else {
+    out.push(`project skill dir:   none (optional — see CONTRIBUTING.md §5 test-bed policy)`);
+  }
+
+  // User-scope overlay (identifies plugin is running with user-level skills available).
+  const userClaudeDir = join(home, ".claude");
+  const userSkills = join(userClaudeDir, "skills");
+  const userCommands = join(userClaudeDir, "commands");
+  const userAgents = join(userClaudeDir, "agents");
+  out.push(
+    `user overlays:       skills=${existsSync(userSkills) ? "yes" : "no"}, commands=${existsSync(userCommands) ? "yes" : "no"}, agents=${existsSync(userAgents) ? "yes" : "no"}`,
+  );
+
   process.stdout.write(out.join("\n") + "\n");
   return 0;
 }

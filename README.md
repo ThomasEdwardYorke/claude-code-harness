@@ -16,6 +16,16 @@ claude plugin marketplace add <owner>/claude-code-harness
 claude plugin install harness@claude-code-harness --scope project
 ```
 
+Or use the bundled helper script from any git checkout of this repo:
+
+```bash
+# Harness only (default — recommended baseline):
+bash /path/to/claude-code-harness/scripts/install-project.sh
+
+# Harness + Codex companion (opt-in, enables codex-sync / coderabbit-mimic):
+bash /path/to/claude-code-harness/scripts/install-project.sh --with-codex
+```
+
 Or for local development:
 
 ```bash
@@ -30,6 +40,56 @@ Then in your project root:
 ```
 
 This creates a `harness.config.json` tailored to your project.
+
+### Optional companion: `openai-codex`
+
+The Harness ships stack- and LLM-neutral. Two of its agents —
+`codex-sync` and `coderabbit-mimic` — shell out to the OpenAI
+[Codex](https://github.com/openai/codex-plugin-cc) companion plugin to
+run synchronous code review / pseudo-CodeRabbit flows. Without Codex
+installed, invoking either of those two agents **errors immediately
+with a clear, grep-able message** (they don't degrade gracefully —
+they refuse to proceed). Every other agent, command, guardrail, and
+hook works identically with or without Codex. **Installing Codex is
+therefore optional**:
+
+| Plugin installed | What works | What errors on invocation |
+|------------------|------------|---------------------------|
+| `harness` only (default) | All 13 guardrails, 12 verb commands, 4 agents (worker / reviewer / scaffolder / security-auditor), all lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
+| `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
+
+`install-project.sh --with-codex` flips the opt-in; otherwise run
+`claude plugin install codex@openai-codex --scope project` manually.
+Verify with `harness doctor`, which reports:
+
+```
+codex plugin:        detected at ~/.claude/plugins/cache/openai-codex/codex
+```
+
+or
+
+```
+codex plugin:        not installed (optional — ...)
+```
+
+Re-install is a no-op if already present (idempotent).
+
+### Verifying the install — `harness doctor`
+
+```bash
+harness doctor
+```
+
+Surfaces:
+
+- Core build presence + mtime.
+- Codex companion presence.
+- `harness.config.json` location + parse status.
+- Resolved project security checklist (from `security.projectChecklistPath`).
+- Resolved plans file + handoff files.
+- Project-local skill directory (`.claude/skills/`).
+- User-level overlays (`~/.claude/{skills,commands,agents}/`) — useful
+  when diagnosing which layer a skill / command came from.
 
 ## Quick configuration
 
@@ -95,6 +155,7 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
    tested, but the layering is fragile. A refactor is scheduled for
    v0.2.0. Do not add new behaviour to that path until then.
 
-Plan file `.docs/harness-portability-plan-20260416.md` captures the full
-implementation log and the deferred list (14 residual MEDIUM/LOW/NIT
-items).
+Maintainer notes and implementation logs are kept under
+`docs/maintainer/` (excluded from marketplace distribution). See
+`CHANGELOG.md` for user-facing change history and `CONTRIBUTING.md` for
+the plugin generality policy.
