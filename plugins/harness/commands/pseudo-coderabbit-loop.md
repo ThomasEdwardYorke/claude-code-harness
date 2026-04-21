@@ -72,7 +72,9 @@ BASE_BRANCH=$(git config --get "branch.${HEAD_BRANCH}.merge" | sed 's|refs/heads
 
 # .coderabbit.yaml から profile を取得（なければ chill）
 if [ -f .coderabbit.yaml ]; then
-  PROFILE=$(yq '.reviews.profile // "chill"' .coderabbit.yaml 2>/dev/null || echo "chill")
+  PROFILE=$(yq '.reviews.profile // "chill"' .coderabbit.yaml 2>/dev/null \
+    || python3 -c "import yaml,sys; d=yaml.safe_load(open('.coderabbit.yaml')); print(d.get('reviews',{}).get('profile','chill'))" 2>/dev/null \
+    || echo "chill")
 else
   PROFILE="chill"
 fi

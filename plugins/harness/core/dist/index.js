@@ -142,6 +142,20 @@ export async function route(hookType, input) {
             }
             return taskHookResult;
         }
+        case "stop": {
+            const { handleStop } = await import("./hooks/stop.js");
+            const raw = input;
+            const stopRes = await handleStop({
+                hook_event_name: String(raw["hook_event_name"] ?? "Stop"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+            });
+            const stopHR = { decision: stopRes.decision };
+            if (stopRes.additionalContext !== undefined) {
+                stopHR.reason = stopRes.additionalContext;
+            }
+            return stopHR;
+        }
         case "session-start":
         case "session-end": {
             return { decision: "approve" };
@@ -171,7 +185,8 @@ async function main() {
             hookType === "pre-compact" ||
             hookType === "subagent-stop" ||
             hookType === "task-created" ||
-            hookType === "task-completed") {
+            hookType === "task-completed" ||
+            hookType === "stop") {
             const parsed = parseSessionInput(raw);
             result = await route(hookType, parsed);
         }

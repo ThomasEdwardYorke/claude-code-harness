@@ -174,7 +174,7 @@ test -f Plans.md && echo "Plans.md found" || echo "Plans.md missing — use /tdd
 test -f harness.config.json && cat harness.config.json | jq '.work // {}'
 
 # 4. .coderabbit.yaml 存在確認 (CodeRabbit profile)
-test -f .coderabbit.yaml && cat .coderabbit.yaml | yq '.reviews.profile // "chill"'
+test -f .coderabbit.yaml && (yq '.reviews.profile // "chill"' .coderabbit.yaml 2>/dev/null || python3 -c "import yaml; d=yaml.safe_load(open('.coderabbit.yaml')); print(d.get('reviews',{}).get('profile','chill'))" 2>/dev/null || echo "chill")
 
 # 5. Codex CLI 利用可能性
 codex --version 2>/dev/null || echo "WARNING: Codex CLI not installed — /tdd-implement v2 Phase 4-5 will skip Codex"

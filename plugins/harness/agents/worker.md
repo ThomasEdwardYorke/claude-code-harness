@@ -4,6 +4,7 @@ description: Self-contained agent that runs implement → self-review → verify
 tools: [Read, Write, Edit, Bash, Grep, Glob]
 disallowedTools: [Task]
 model: sonnet
+effort: high
 color: yellow
 maxTurns: 40
 ---

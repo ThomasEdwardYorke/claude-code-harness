@@ -135,7 +135,8 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" subagent-stop",
-            "timeout": 120
+            "timeout": 120,
+            "statusMessage": "Worker CI チェック中..."
           }
         ]
       }
@@ -146,6 +147,17 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" task-created",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" stop",
             "timeout": 10
           }
         ]
