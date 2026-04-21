@@ -162,14 +162,67 @@ async function cmdDoctor() {
       // ignore
     }
   }
-  // Detect an installed codex plugin for the codex-sync agent.
+
+  // Codex companion (optional — used by codex-sync / coderabbit-mimic agents).
   const home = process.env.HOME ?? "";
   const codexDir = join(home, ".claude", "plugins", "cache", "openai-codex", "codex");
   if (existsSync(codexDir)) {
     out.push(`codex plugin:        detected at ${codexDir}`);
   } else {
-    out.push(`codex plugin:        not installed`);
+    out.push(`codex plugin:        not installed (optional — install with 'bash install-project.sh --with-codex' to enable codex-sync / coderabbit-mimic)`);
   }
+
+  // Project-local overrides / overlays.
+  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const harnessConfigPath = join(projectDir, "harness.config.json");
+  if (existsSync(harnessConfigPath)) {
+    out.push(`harness.config.json: ${harnessConfigPath}`);
+    try {
+      const cfg = JSON.parse(readFileSync(harnessConfigPath, "utf-8"));
+      const checklistPath = cfg?.security?.projectChecklistPath;
+      if (typeof checklistPath === "string" && checklistPath.length > 0) {
+        const resolvedChecklist = resolve(projectDir, checklistPath);
+        if (existsSync(resolvedChecklist)) {
+          out.push(`project security checklist: ${resolvedChecklist}`);
+        } else {
+          out.push(`project security checklist: MISSING (${checklistPath} from harness.config.json does not resolve)`);
+        }
+      }
+      const plansFile = cfg?.work?.plansFile;
+      if (typeof plansFile === "string" && plansFile.length > 0) {
+        const plansPath = resolve(projectDir, plansFile);
+        out.push(`plans file:          ${plansPath}${existsSync(plansPath) ? "" : " (missing)"}`);
+      }
+      const handoffFiles = Array.isArray(cfg?.work?.handoffFiles) ? cfg.work.handoffFiles : [];
+      for (const rel of handoffFiles) {
+        if (typeof rel !== "string") continue;
+        const p = resolve(projectDir, rel);
+        out.push(`handoff file:        ${p}${existsSync(p) ? "" : " (missing — optional)"}`);
+      }
+    } catch (err) {
+      out.push(`harness.config.json: PARSE ERROR (${err instanceof Error ? err.message : String(err)})`);
+    }
+  } else {
+    out.push(`harness.config.json: not found at ${harnessConfigPath} (run 'harness init' to create one)`);
+  }
+
+  // Project-local skill scaffold (harness plugin's project-local convention).
+  const localSkillDir = join(projectDir, ".claude", "skills");
+  if (existsSync(localSkillDir)) {
+    out.push(`project skill dir:   ${localSkillDir}`);
+  } else {
+    out.push(`project skill dir:   none (optional — see CONTRIBUTING.md §5 test-bed policy)`);
+  }
+
+  // User-scope overlay (identifies plugin is running with user-level skills available).
+  const userClaudeDir = join(home, ".claude");
+  const userSkills = join(userClaudeDir, "skills");
+  const userCommands = join(userClaudeDir, "commands");
+  const userAgents = join(userClaudeDir, "agents");
+  out.push(
+    `user overlays:       skills=${existsSync(userSkills) ? "yes" : "no"}, commands=${existsSync(userCommands) ? "yes" : "no"}, agents=${existsSync(userAgents) ? "yes" : "no"}`,
+  );
+
   process.stdout.write(out.join("\n") + "\n");
   return 0;
 }

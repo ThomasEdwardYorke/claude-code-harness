@@ -997,3 +997,62 @@ describe("marketplace.json のクロスマーケットプレイス依存宣言 (
     expect(marketplaceJson["strict"]).toBe(true);
   });
 });
+
+describe("install-project.sh — Codex companion opt-in (Phase ζ)", () => {
+  const src = readFileSync(
+    resolve(PLUGIN_ROOT, "../..", "scripts/install-project.sh"),
+    "utf-8",
+  );
+
+  it("`--with-codex` flag の help 記述が存在", () => {
+    expect(src).toMatch(/--with-codex/);
+    expect(src).toMatch(/opt-in/i);
+  });
+
+  it("default で codex plugin を install しない (opt-in without flag)", () => {
+    // WITH_CODEX=0 default が存在し、条件分岐で codex install を gate している
+    expect(src).toMatch(/WITH_CODEX=0/);
+    expect(src).toMatch(/if\s*\[\s*"\$\{WITH_CODEX\}"\s*-eq\s*1\s*\]/);
+  });
+
+  it("codex plugin の install をスキップしたら user に explicit な note を出す", () => {
+    expect(src).toMatch(/codex@openai-codex was NOT installed/);
+  });
+
+  it("doctor 実行を次ステップとして案内", () => {
+    expect(src).toMatch(/harness doctor/);
+  });
+});
+
+describe("harness doctor — Global vs Local overlays visibility (Phase ζ)", () => {
+  const src = readFileSync(
+    resolve(PLUGIN_ROOT, "bin/harness"),
+    "utf-8",
+  );
+
+  it("Codex 検出出力が opt-in install ヒントを含む (not installed 時)", () => {
+    expect(src).toMatch(/codex plugin:\s*(?:detected|not installed)/);
+    expect(src).toMatch(/--with-codex/);
+  });
+
+  it("harness.config.json の projectChecklistPath 解決結果を表示する", () => {
+    expect(src).toMatch(/projectChecklistPath/);
+    expect(src).toMatch(/project security checklist/);
+  });
+
+  it("Plans.md / handoff ファイル の到達可能性を表示する", () => {
+    expect(src).toMatch(/plansFile/);
+    expect(src).toMatch(/handoffFiles/);
+  });
+
+  it("user-level overlay の有無 (global skills / commands / agents) を表示する", () => {
+    expect(src).toMatch(/user overlays:/);
+    expect(src).toMatch(/skills=/);
+    expect(src).toMatch(/commands=/);
+    expect(src).toMatch(/agents=/);
+  });
+
+  it("project-local skill dir (.claude/skills) の検出を表示する", () => {
+    expect(src).toMatch(/project skill dir:/);
+  });
+});

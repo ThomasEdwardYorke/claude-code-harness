@@ -16,6 +16,16 @@ claude plugin marketplace add <owner>/claude-code-harness
 claude plugin install harness@claude-code-harness --scope project
 ```
 
+Or use the bundled helper script from any git checkout of this repo:
+
+```bash
+# Harness only (default — recommended baseline):
+bash /path/to/claude-code-harness/scripts/install-project.sh
+
+# Harness + Codex companion (opt-in, enables codex-sync / coderabbit-mimic):
+bash /path/to/claude-code-harness/scripts/install-project.sh --with-codex
+```
+
 Or for local development:
 
 ```bash
@@ -30,6 +40,52 @@ Then in your project root:
 ```
 
 This creates a `harness.config.json` tailored to your project.
+
+### Optional companion: `openai-codex`
+
+The Harness ships stack- and LLM-neutral. Two of its agents —
+`codex-sync` and `coderabbit-mimic` — _additionally_ know how to shell
+out to the OpenAI [Codex](https://github.com/openai/codex-plugin-cc)
+companion plugin to run synchronous code review / pseudo-CodeRabbit
+flows. **Installing Codex is optional**:
+
+| Plugin installed | What works | What is degraded |
+|------------------|------------|------------------|
+| `harness` only (default) | All 13 guardrails, 12 verb commands, 4 agents (worker / reviewer / scaffolder / security-auditor), all lifecycle hooks | `codex-sync` and `coderabbit-mimic` fail fast with a clear "CODEX_COMPANION not set" error when invoked. Other agents and commands are unaffected. |
+| `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
+
+`install-project.sh --with-codex` flips the opt-in; otherwise run
+`claude plugin install codex@openai-codex --scope project` manually.
+Verify with `harness doctor`, which reports:
+
+```
+codex plugin:        detected at ~/.claude/plugins/cache/openai-codex/codex
+```
+
+or
+
+```
+codex plugin:        not installed (optional — ...)
+```
+
+Re-install is a no-op if already present (idempotent).
+
+### Verifying the install — `harness doctor`
+
+```bash
+harness doctor
+```
+
+Surfaces:
+
+- Core build presence + mtime.
+- Codex companion presence.
+- `harness.config.json` location + parse status.
+- Resolved project security checklist (from `security.projectChecklistPath`).
+- Resolved plans file + handoff files.
+- Project-local skill directory (`.claude/skills/`).
+- User-level overlays (`~/.claude/{skills,commands,agents}/`) — useful
+  when diagnosing which layer a skill / command came from.
 
 ## Quick configuration
 
