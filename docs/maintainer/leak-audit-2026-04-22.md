@@ -77,28 +77,40 @@ Scope:
 
 ## Decisions Deferred to Future Phases
 
-The following were identified during audit but postponed to subsequent sessions to limit scope per approved Q-plan:
+The following were identified during audit but postponed to subsequent sessions to limit scope per approved Q-plan. **Phases γ / δ / ε / ζ have since been implemented in the 2026-04-22 follow-up session — the "Status as of 2026-04-22 evening" entries below track progress.**
 
-### Phase γ (config 基盤整合)
-- Wire `work.plansFile` / `worktree.*` / `tddEnforce.*` / `codeRabbit.*` through loader / template / init (schema exists, wiring incomplete)
+### Phase γ (config 基盤整合) — ✅ Done (2026-04-22)
+- ~~Wire `work.plansFile` / `worktree.*` / `tddEnforce.*` / `codeRabbit.*` through loader / template / init~~
+- Implemented in commit `5d22999` (feature/model-b-evolution): `HarnessConfig` interface extended with `WorkConfig` (maxParallel / labelPriority / criticalLabels / testCommand / qualityGates / failFast), `WorktreeConfig`, `TddEnforceConfig`, `CodeRabbitConfig`, `QualityGatesConfig`. `mergeConfig` deep-merges `work.qualityGates` an extra layer so per-gate overrides do not clobber the siblings. 10 new `config.test.ts` assertions lock in defaults and override semantics.
 
-### Phase δ (full CONFIG-IZE)
-- `work.assignmentSectionMarkers` for `pre-compact.ts` `担当表` keyword
-- `work.handoffFiles` / `worktree.sharedSidecarPaths` schema addition
-- `work.changeLogFile` for optional change-log reference
-- `tooling.pythonCandidateDirs` (default `["src", "app"]`, `backend/` removed from default — requires test-bed side to add explicit override)
-- `release.strategy` / `release.integrationBranch` / `release.testCommand` for branch model
+### Phase δ (full CONFIG-IZE) — ✅ Mostly done (2026-04-22)
+- ~~`work.assignmentSectionMarkers` for `pre-compact.ts` `担当表` keyword~~ — was already wired in Phase β.
+- ~~`work.handoffFiles`~~ — was already wired in Phase β.
+- ~~`work.changeLogFile` for optional change-log reference~~ — was already wired in Phase β.
+- ~~`tooling.pythonCandidateDirs` (default `["src", "app"]`, `backend/` removed from default — requires test-bed side to add explicit override)~~ — implemented in commit `c17352d` via `ToolingConfig` interface + `resolvePythonCandidateDirs()` with defensive narrow (fail-open on shape-invalid config). parts-management side added `"tooling": {"pythonCandidateDirs": ["backend"]}` override in commit `f289c0e` (feature/harness-model-b).
+- ~~`release.strategy` / `release.integrationBranch` / `release.testCommand` for branch model~~ — implemented in commit `c17352d` via `ReleaseConfig` interface (adds `productionBranch` field too — the default `main` branch name). Three-branch default matches `/branch-merge` + `/harness-release` spec; two-branch trunk-style projects flip `strategy: "two-branch"`.
+- _Still pending_: `worktree.sharedSidecarPaths` schema addition (not needed for current test-bed setup, deferred until a second project requires it).
 
-### Phase ε (full RELOCATE to project-local skill)
-- Create `<test-bed>/.claude/skills/<project-name>-local-rules/` scaffold with references/
-- Move WeasyPrint / defusedxml / Excel checklist out of `security-auditor.md` into `security-checklist.md` under the local skill
-- Move create_script / protected-data runbook into `review-runbook.md`
-- Remove `--test-pipeline` from `harness-work.md` entirely (Q-4 selected DELETE); provide replacement as test-bed `scripts/check-pipeline.sh`
+### Phase ε (full RELOCATE to project-local skill) — ✅ Done (2026-04-22)
+- ~~Create `<test-bed>/.claude/skills/<project-name>-local-rules/` scaffold with references/~~ — done on the parts-management side in commit `c1383fe`: `.claude/skills/parts-management-local-rules/SKILL.md` + `references/security-checklist.md` + `references/review-runbook.md` + `references/pipeline-check.md`. `.gitignore` now promotes `.claude/skills/**` to tracked (other `.claude/*` stay local).
+- ~~Move WeasyPrint / defusedxml / Excel checklist out of `security-auditor.md` into `security-checklist.md` under the local skill~~ — the plugin-side `security-auditor.md` was already stack-neutralised in Phase β; the project-side checklist materialises in `references/security-checklist.md`. parts-management `harness.config.json` points at it via `security.projectChecklistPath`.
+- ~~Move create_script / protected-data runbook into `review-runbook.md`~~ — the predecessor-project references were already scrubbed in Phase β; the generic review red-flag catalogue now lives in `references/review-runbook.md` on the project side.
+- _Still pending_: ~~Remove `--test-pipeline` from `harness-work.md` entirely~~ — the flag is still in the harness-work spec; the scheduling of a DELETE is picked up in the next session's test-pipeline cleanup pass. Replacement `scripts/check-pipeline.sh` is superseded by the project-side `references/pipeline-check.md` (command listing).
 
-### Phase ζ (install)
-- `install-project.sh` Codex auto-install → opt-in (`--with-codex`)
-- README "optional companion" section
-- `harness doctor` detects missing Codex
+### Phase ζ (install) — ✅ Done (2026-04-22)
+- ~~`install-project.sh` Codex auto-install → opt-in (`--with-codex`)~~ — implemented in commit `9b5e637`. `WITH_CODEX=0` default, `--with-codex` / `--help` / `-h` flag parsing, explicit note when skipping. Re-runs are idempotent.
+- ~~README "optional companion" section~~ — done in the same commit; `README.md` now carries "Optional companion: `openai-codex`" (with a has-Codex / no-Codex truth table) and "Verifying the install — `harness doctor`".
+- ~~`harness doctor` detects missing Codex~~ — expanded in the same commit. `cmdDoctor` now reports (a) core build, (b) Codex presence with opt-in hint, (c) `harness.config.json` resolution / parse status, (d) `security.projectChecklistPath` file existence, (e) `plansFile` + `handoffFiles` reachability, (f) `.claude/skills/` project-local skill dir, (g) `~/.claude/{skills,commands,agents}/` user-level overlays. content-integrity locks down 9 assertions on both the shell script and the CLI source.
+
+### New phases deferred to future sessions (2026-04-22 evening)
+
+These surfaced from Codex Worker A + B's official-docs audit and are too large for this follow-up session:
+
+- **Phase η (hooks)** — Hook event coverage is 10/27 per Claude Code spec. Missing events: `WorktreeCreate` / `WorktreeRemove` / `UserPromptSubmit` / `UserPromptExpansion` / `PostToolUseFailure` / `InstructionsLoaded` / `CwdChanged` / `FileChanged`, plus the 7 others enumerated in `research-anthropic-official-2026-04-22.md` §Hooks.
+- **Phase θ (hook output schema)** — `HookResult` only supports `decision` / `reason` / `systemMessage`. Spec supports 11 additional fields (`continue`, `stopReason`, `suppressOutput`, `updatedPermissions`, `updatedInput`, `retry`, `watchPaths`, `worktreePath`, `updatedMCPToolOutput`, `action`, `content`).
+- **Phase ι (commands → skills rename)** — Per Codex B recommendation, `commands/*.md` → `skills/<name>/SKILL.md` to get automatic `/harness:<name>` namespacing and avoid same-name conflict with project-local commands. Breaking change; needs user sign-off.
+- **Phase κ (isolation frontmatter)** — `agents/*.md` can declare `isolation: worktree` to get automatic worktree-backed execution. Aligns with plugin's parallel-worktree pitch.
+- **Phase λ (remove `--test-pipeline`)** — Q-4 DELETE decision from leak-audit still pending; supersede with project-side `pipeline-check.md` + `/harness-work` auto-detection.
 
 ## Test Bed Policy (codified in CONTRIBUTING.md §5)
 
