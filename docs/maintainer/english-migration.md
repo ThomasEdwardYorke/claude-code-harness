@@ -73,6 +73,17 @@ While migration is incomplete:
 |---|---|---|---|---|
 | 2026-04-22 | `plugins/harness/core/src/hooks/pre-compact.ts` | `[Plans.md 担当表]` section header, `担当表` hardcode | `[assignment-table]` section header + config-driven markers | `e6a92b2` (partial) |
 | 2026-04-22 | `plugins/harness/core/src/hooks/task-lifecycle.ts` | Japanese plans-reminder string | Config-driven reminder using `work.plansFile` | `e6a92b2` (partial) |
+| 2026-04-22 (evening) | `plugins/harness/core/src/__tests__/index.test.ts` (NEW) | — (new file) | English-primary: describe / it titles, comments, fixture strings | `37ce15a` |
+| 2026-04-22 (evening) | `plugins/harness/core/src/__tests__/content-integrity.test.ts` (§plugin.json / §marketplace.json / §install-project.sh / §harness doctor — 23 new assertions) | — (new sections) | English-primary section titles and assertion messages | `8751f2d` + `9b5e637` |
+| 2026-04-22 (evening) | `plugins/harness/core/src/config.ts` (§ToolingConfig / §ReleaseConfig / §QualityGatesConfig / §WorktreeConfig / §TddEnforceConfig / §CodeRabbitConfig) | — (new interfaces) | English-primary doc comments | `5d22999` + `c17352d` |
+| 2026-04-22 (evening) | `plugins/harness/schemas/harness.config.schema.json` (§tooling / §release — 2 new sections) | — (new sections) | English-primary `description` fields | `c17352d` |
+| 2026-04-22 (evening) | `plugins/harness/.claude-plugin/plugin.json` (commands / agents / hooks declarations, expanded description) | Brief English description | Expanded English description listing the 6-agent / 12-command / 10-hook-event composition | `8751f2d` |
+| 2026-04-22 (evening) | `.claude-plugin/marketplace.json` (allowCrossMarketplaceDependenciesOn, expanded description) | Minimal English | Expanded English with Codex companion note | `8751f2d` |
+| 2026-04-22 (evening) | `README.md` (§Optional companion / §Verifying the install) | (no such sections) | English-primary sections | `9b5e637` |
+| 2026-04-22 (evening) | `scripts/install-project.sh` (`--with-codex` flag + help block + skip-note) | English-primary | Still English-primary, extended text for new opt-in | `9b5e637` |
+| 2026-04-22 (evening) | `plugins/harness/bin/harness` (`cmdDoctor` expansion) | Bilingual English/Japanese labels | Kept English label wording for new lines (`project security checklist`, `plans file`, `project skill dir`, `user overlays`) — consistent with pre-existing English labels | `9b5e637` |
+
+**Phase 1 rule compliance statement (2026-04-22 evening session)**: No Japanese prose was introduced into shipped spec during this session. Changes to pre-existing Japanese-dominant files (`plugins/harness/commands/harness-setup.md`, `plugins/harness/agents/worker.md`) only touched localized sections in the same language as the surrounding text (Japanese), per the "incremental migration" rule. No new Phase-1-regression incurred.
 
 ## Open Questions
 

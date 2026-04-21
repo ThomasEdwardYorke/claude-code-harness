@@ -46,6 +46,10 @@ Each item ported from test-bed to plugin:
 | Date | Feature | Removed project-local values | Added config keys | Added test assertions | Release |
 |---|---|---|---|---|---|
 | 2026-04-22 | Generality guardrail + 119-leak cleanup | `feature/new-partslist`, `upper_script`, `create_script_from_*`, `protected-data/`, `全9ジャンル`, `script_generate`, `Phase N 申送 M-NN`, `Round N`, `A-N rM`, `CLAUDE.local.md`, `next-session-prompt.md`, `WeasyPrint`/`defusedxml`/`psycopg` mandated checklist, `Plans.md` hardcode in `pre-compact.ts`/`task-lifecycle.ts`, `担当表` hardcode in hooks, `PYTHONPATH=. pytest` universal default | `work.plansFile`, `work.assignmentSectionMarkers`, `work.handoffFiles`, `work.changeLogFile`, `security.projectChecklistPath`, `security.enabledChecks` | `generality.test.ts` 10 series (B-1..B-9), 941 assertions total; `content-integrity.test.ts` tracker-ID hygiene | v0.1.0 (unreleased) |
+| 2026-04-22 (evening) | Phase γ — schema-aligned typed config surface | `work.maxParallel`/`.labelPriority`/`.criticalLabels`/`.testCommand`/`.qualityGates`/`.failFast`, `worktree.*`, `tddEnforce.*`, `codeRabbit.*` were schema-only and not surfaced in typed config | `WorkConfig` (6 new fields), `QualityGatesConfig`, `WorktreeConfig`, `TddEnforceConfig`, `CodeRabbitConfig`, union `WorktreeEnabledMode` / `PseudoCoderabbitProfile` | `config.test.ts` §Phase γ (10 assertions covering defaults + deep-merge of `work.qualityGates`) | v0.1.0 (unreleased) |
+| 2026-04-22 (evening) | Phase δ — `tooling.pythonCandidateDirs` + `release.*` | Test-bed-specific hardcode array `["backend","src","app"]` in `subagent-stop.ts`; branch-name hardcode (`dev` / `main`) in release / branch-merge docs | `tooling.pythonCandidateDirs` (default `["src","app"]`, backend/ opt-in), `release.strategy`, `release.integrationBranch`, `release.productionBranch`, `release.testCommand` | `config.test.ts` §Phase δ (5 assertions); `hooks.test.ts` §detectAvailableChecks rewritten for stack-neutral default (9 tests); `content-integrity.test.ts` for worker.md + subagent-stop.ts new shape | v0.1.0 (unreleased) |
+| 2026-04-22 (evening) | plugin.json / marketplace.json manifest explicit declaration | Implicit directory-discovery reliance; missing cross-marketplace dep | `plugin.json.commands[]` (12), `plugin.json.agents[]` (6), `plugin.json.hooks`; `marketplace.json.allowCrossMarketplaceDependenciesOn: ["openai-codex"]` | `content-integrity.test.ts` §plugin.json (4) + §marketplace.json (3) = 7 assertions | v0.1.0 (unreleased) |
+| 2026-04-22 (evening) | Phase ζ — Codex companion opt-in + harness doctor overlay visibility | `install-project.sh` forced Codex install; `harness doctor` only reported Codex presence, not the rest of the overlay stack | Behavior change (`install-project.sh --with-codex` flag); `harness doctor` surfaces `harness.config.json` parse + `security.projectChecklistPath` resolution + `work.plansFile`/`handoffFiles` reachability + `.claude/skills/` presence + user-level `~/.claude/{skills,commands,agents}/` overlays | `content-integrity.test.ts` §install-project.sh (5) + §harness doctor (5) = 10 assertions | v0.1.0 (unreleased) |
 
 ---
 
@@ -103,9 +107,22 @@ This is the first formal entry — a retrospective of the Model B evolution work
 
 ## Open Follow-up Items
 
-Recorded for future sessions (maintainer-only, not part of shipped plugin spec):
+Recorded for future sessions (maintainer-only, not part of shipped plugin spec).
 
-1. Create actual `<test-bed>/.claude/skills/<project-name>-local-rules/` scaffold with references/
-2. Implement full CONFIG-IZE of deferred items (`worktree.*` wiring, `release.*` wiring, `tooling.pythonCandidateDirs`)
-3. Empty out `workMode.bypass*` semantics disagreement (Codex adversarial review M-6)
-4. English migration of shipped spec (Codex adversarial review C-3) — see `english-migration.md`
+### ✅ Resolved in 2026-04-22 evening session
+
+1. ~~Create actual `<test-bed>/.claude/skills/<project-name>-local-rules/` scaffold with references/~~ — **Done** (Phase ε, parts-management commit `c1383fe`). Scaffold contains `SKILL.md` + 3 references (`security-checklist.md`, `review-runbook.md`, `pipeline-check.md`). `.gitignore` updated on the test-bed to promote `.claude/skills/**` to tracked.
+2. ~~Implement full CONFIG-IZE of deferred items (`worktree.*` wiring, `release.*` wiring, `tooling.pythonCandidateDirs`)~~ — **Done** (Phase γ/δ, plugin commits `5d22999` + `c17352d`). All schema fields are now surfaced via typed `HarnessConfig` with defensive narrow in consumers.
+3. ~~Empty out `workMode.bypass*` semantics disagreement (Codex adversarial review M-6)~~ — **Done** (plugin commit `477397c`). schema / config.ts / tests were already aligned; the gap was docs. `harness-setup.md` now carries a dedicated subsection with the per-flag effect + non-effect (R10 / main protection intact).
+
+### 🟡 Still open
+
+4. English migration of shipped spec (Codex adversarial review C-3) — see `english-migration.md`. Phase 1 (new-file English-only rule) is now compliance-verified per the migration log; Phase 2 (critical-path migration of `harness-work.md` / `tdd-implement.md` / `parallel-worktree.md` / `worker.md` / `reviewer.md`) and Phase 3 (remaining files) remain deferred.
+
+### 🆕 New follow-ups surfaced by the 2026-04-22 evening Codex Worker A + B official-docs audit
+
+5. **Phase η — 17 unimplemented hook events.** Per `research-anthropic-official-2026-04-22.md` (Codex Worker A, Top 5 finding #1): harness handles 10 of 27 Claude Code hook events. Missing: `WorktreeCreate` / `WorktreeRemove` / `UserPromptSubmit` / `UserPromptExpansion` / `PostToolUseFailure` / `InstructionsLoaded` / `CwdChanged` / `FileChanged`, plus 9 others. `WorktreeCreate` is especially valuable as a workaround for open issue `anthropics/claude-code#28041` (`.claude/` not inherited by `--worktree`).
+6. **Phase θ — `HookResult` field coverage.** Per Worker A Top 5 #2: `HookResult` only supports `decision` / `reason` / `systemMessage`. Spec supports 11 more fields (`continue`, `stopReason`, `suppressOutput`, `updatedPermissions`, `updatedInput`, `retry`, `watchPaths`, `worktreePath`, `updatedMCPToolOutput`, `action`, `content`). Breaking-change judgment required per field.
+7. **Phase ι — `commands/` → `skills/` namespace migration.** Per Worker B Top 5 #1: shipping commands in `commands/*.md` puts them in the global namespace; migrating to `skills/<name>/SKILL.md` yields automatic `/harness:<name>` namespacing. Breaking change; needs explicit user sign-off before merging.
+8. **Phase κ — `isolation: worktree` agent frontmatter.** Per Worker A §1.3 gap: `worker`, `reviewer`, `security-auditor` can opt into worktree isolation declaratively. Aligns with the harness's parallel-worktree pitch.
+9. **Phase λ — Remove `--test-pipeline` subflow** from `harness-work.md` per Q-4 DELETE decision carried over from leak-audit. Project-local replacement is already in place via `pipeline-check.md`.
