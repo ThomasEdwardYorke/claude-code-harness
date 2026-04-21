@@ -173,7 +173,7 @@ git push -u origin <branch>
 ### Codex レビューループ (Phase 5)
 {直した項目}
 
-### 申送
+### Follow-up notes
 {coordinator が拾うべき残課題}
 ```
 

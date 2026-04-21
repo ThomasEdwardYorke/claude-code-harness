@@ -2,13 +2,16 @@
  * hooks/pre-compact.ts
  *
  * PreCompact hook handler.
- * Fires before context compaction. Reads project state (Plans.md 担当表,
- * open PRs) and returns it as additionalContext so it survives compaction.
+ * Fires before context compaction. Reads project state (task/plan file
+ * assignment table, open PRs) and returns it as additionalContext so it
+ * survives compaction. File paths and section keywords are configurable via
+ * `harness.config.json` (work.plansFile / work.assignmentSectionMarkers).
  */
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
+import { loadConfigSafe } from "../config.js";
 
 const MAX_PLANS_SIZE = 512 * 1024;
 
@@ -27,7 +30,11 @@ export interface PreCompactResult {
 
 function readAssignmentTable(projectRoot: string): string | null {
   try {
-    const plansPath = resolve(projectRoot, "Plans.md");
+    const config = loadConfigSafe(projectRoot);
+    const plansFile = config.work.plansFile;
+    const markers = config.work.assignmentSectionMarkers;
+
+    const plansPath = resolve(projectRoot, plansFile);
     if (!existsSync(plansPath)) return null;
 
     const stat = statSync(plansPath);
@@ -36,8 +43,8 @@ function readAssignmentTable(projectRoot: string): string | null {
     const content = readFileSync(plansPath, "utf-8");
     const lines = content.split("\n");
 
-    const tableStart = lines.findIndex(
-      (l) => l.includes("担当表") || l.includes("Assignment"),
+    const tableStart = lines.findIndex((l) =>
+      markers.some((m) => l.includes(m)),
     );
     if (tableStart < 0) return null;
 
@@ -120,7 +127,7 @@ export async function handlePreCompact(
 
   const assignmentTable = readAssignmentTable(projectRoot);
   if (assignmentTable) {
-    sections.push("[Plans.md 担当表]");
+    sections.push("[assignment-table]");
     sections.push(assignmentTable);
   }
 

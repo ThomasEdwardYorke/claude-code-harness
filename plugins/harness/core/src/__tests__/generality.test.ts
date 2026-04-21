@@ -1,4 +1,4 @@
-/* generality-exemption: all, detector harness itself must reference patterns it blocks */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-3a,B-3b,B-3c,B-3d,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 — HARNESS-generality-self, detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -53,9 +53,24 @@ const BLOCKLIST_TARGETS: ScopeTarget[] = [
   { dir: "agents", exts: [".md"], recursive: false },
   { dir: "commands", exts: [".md"], recursive: false },
   { dir: "core/src/hooks", exts: [".ts"], recursive: false },
+  // Codex 敵対的レビュー [C-1] 対応: ガードレール範囲を public docs / schema / 非 test 実装へ拡張
+  { dir: "schemas", exts: [".json"], recursive: false },
+  { dir: "core/src", exts: [".ts"], recursive: false }, // 直下のみ (index.ts / types.ts / config.ts 等)
 ];
 
-// テスト describe 文に leak が紛れるリスクを別枠で検出する (soft warning、ただし実際は厳格 assert)。
+// REPO-level targets (PLUGIN_ROOT 外、repo root 直下を別スキャン)
+interface RepoRootTarget {
+  relativePath: string; // REPO_ROOT からの相対
+  exts: string[];
+}
+
+const REPO_ROOT_TARGETS: RepoRootTarget[] = [
+  { relativePath: "README.md", exts: [".md"] },
+  { relativePath: "docs/en", exts: [".md"] },
+  { relativePath: "docs/ja", exts: [".md"] },
+];
+
+// テスト describe 文に leak が紛れるリスクを別枠で検出する。
 const WARN_TARGETS: ScopeTarget[] = [
   { dir: "core/src/__tests__", exts: [".ts"], recursive: false },
 ];
@@ -132,13 +147,14 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     appliesToTests: true,
   },
 
-  // ─────────────── 系列3: 内部タスクトラッカー ID ───────────────
+  // ─────────────── 系列3: 内部タスクトラッカー ID (M-4 拡張: 広い regex) ───────────────
   {
     id: "B-3a",
     category: "tracker-id",
-    pattern: /Phase\s*\d+\s*申送/g,
+    pattern:
+      /(?:Phase\s*\d+[^.\n]{0,40}?申送|Phase\s*\d+\s*Codex[^.\n]{0,40}?申送|申送\s*[A-Z]-\d+|申送\s*M-\d+)/g,
     message:
-      "内部タスクトラッカー ID (`Phase N 申送`) が含まれています。" +
+      "内部タスクトラッカー ID (`Phase N 申送` / `Phase N Codex レビュー申送 C-N` / `申送 M-NN`) が含まれています。" +
       "shipped spec には書かず、CHANGELOG.md / commit message / docs/maintainer/ に移管してください。",
     appliesToTests: true,
   },
@@ -154,10 +170,19 @@ const BLOCK_PATTERNS: BlockPattern[] = [
   {
     id: "B-3c",
     category: "tracker-id",
-    pattern: /\bA-\d+\s*r\d+\b/g,
+    pattern: /\b[Aa]-\d+\s*(?:r\d+|round\s*\d+)(?:\s*[A-Z][a-z]+-\d+)?/g,
     message:
-      "内部 Codex レビューラウンド ID (`A-6 r\\d+`) が含まれています。" +
+      "内部 Codex レビューラウンド ID (`A-N rM` / `A-N round M Major-L` 等) が含まれています。" +
       "maintainer 内部ログの ID を shipped spec に残さないでください。",
+    appliesToTests: true,
+  },
+  {
+    id: "B-3d",
+    category: "tracker-id",
+    pattern: /\b(?:Major|Minor|Trivial|Critical)-\d+\b/g,
+    message:
+      "内部 Codex レビュー severity ID (`Major-N` / `Minor-N` 等) が tracker label として含まれています。" +
+      "shipped spec では description として書くか CHANGELOG.md に移管してください。",
     appliesToTests: true,
   },
 
@@ -196,6 +221,63 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "抽象化 (`ORM parameter binding 使用`) + project-local `security.projectChecklistPath` 経由にしてください。",
     appliesToTests: false,
   },
+
+  // ─────────────── 系列6: Plans.md ファイル名 hardcode (Codex [C-1]) ───────────────
+  // core hooks で `"Plans.md"` を hardcoded path として使うと、PLAN_FILE / plansFile 設定を無視する。
+  // 純粋な言及 (`Plans.md 担当表` 等) はOKで、`resolve(projectRoot, "Plans.md")` のような実装コードが NG。
+  {
+    id: "B-6",
+    category: "project-file",
+    pattern: /resolve\([^,)]+,\s*["']Plans\.md["']\)|readFileSync\([^,)]+["']Plans\.md["']/g,
+    message:
+      "Plans.md のファイル名が core 実装に hardcode されています。" +
+      "`work.plansFile` 設定 (schema 定義済) を読んで fallback するようにしてください。",
+    appliesToTests: false,
+  },
+
+  // ─────────────── 系列7: 日本語 UI keyword hardcode in core hooks (Codex [C-3]) ───────────────
+  // core/src/hooks/*.ts で `担当表` 等を実行時分岐の literal として使うと、i18n が不可能。
+  {
+    id: "B-7",
+    category: "project-file",
+    // TS ファイル内の string literal として日本語 UI keyword を hardcoded
+    // (description / comment は別、`.includes("担当表")` のような実装コードのみ)
+    pattern:
+      /\.(?:includes|startsWith|endsWith|match|test|search)\(\s*["'](?:担当表|未着手|進行中|完了|計画|設計|実装)["']\)/g,
+    message:
+      "日本語 UI キーワードが core 実装の runtime 分岐に hardcode されています。" +
+      "`work.assignmentSectionMarkers` / `work.statusKeywords` config 経由で受ける設計にしてください。",
+    appliesToTests: false,
+  },
+
+  // ─────────────── 系列8: 絶対パス hardcode in shipped spec (Codex [C-1]) ───────────────
+  {
+    id: "B-8",
+    category: "project-file",
+    // 代表的な開発者固有パス: /Users/<name>/, /home/<name>/, C:\Users\<name>\
+    pattern: /\/Users\/[a-z][a-z0-9_-]+\/|\/home\/[a-z][a-z0-9_-]+\/|C:\\Users\\[A-Za-z]/g,
+    message:
+      "個人固有の絶対パス (`/Users/<name>/...` 等) が shipped spec に含まれています。" +
+      "`/path/to/project` のような placeholder に置換してください。",
+    appliesToTests: true,
+  },
+
+  // ─────────────── 系列9: Python stack 実行例の universal default 化 (Codex [M-3]) ───────────────
+  // 「Python example:」のようなラベルなしで Python コマンドを plugin-wide default として書くのは NG。
+  {
+    id: "B-9",
+    category: "web-stack",
+    // `PYTHONPATH=. pytest` / `source .venv/bin/activate` / `python3 -m pip list --outdated` 等
+    pattern:
+      /(?:source\s+\.venv\/bin\/activate|PYTHONPATH=[.\w\/]+\s+pytest|pip install --upgrade|python3?\s+-m\s+pip)/g,
+    message:
+      "Python 固有の実行コマンドが universal default として書かれています。" +
+      "`Python example:` などのラベルで stack-specific と明示するか、`work.testCommand` config 経由にしてください。",
+    appliesToTests: false,
+  },
+
+  // B-10 (shipped spec 日本語混入) は本 Phase では policy-based 運用 (CONTRIBUTING §1.2 + 段階移行 plan)。
+  // 実装は `docs/maintainer/english-migration.md` で roadmap 化 → 次セッション以降で CI 強制化予定。
 ];
 
 // ---------------------------------------------------------------------------
@@ -209,20 +291,57 @@ const EXEMPTION_FILE_HEAD_PATTERNS = [
   /\/\*\s*generality-exemption(?::\s*([^*]+?))?\s*\*\//,
 ];
 
-function hasFileExemption(content: string, patternId: string): boolean {
-  // ファイル先頭 500 文字以内の宣言のみ有効
-  const head = content.slice(0, 500);
+/**
+ * Parse an exemption declaration from a file head.
+ * Codex [C-2] 対応: `all` を禁止し、pattern-id list を必須化する。
+ * 形式: `generality-exemption: B-1,B-2a,... — <issue-key>, <reason>`
+ * - patternIds: 明示的な pattern-id list (B-\d[a-z]? 形式)
+ * - issueKey: `HARNESS-\d+` など (推奨、必須ではない)
+ * 返却: { patternIds, reason } or null (exemption 無し)。形式違反時は throw。
+ */
+function parseExemption(
+  content: string,
+): { patternIds: Set<string>; reason: string } | null {
+  const head = content.slice(0, 800);
   for (const re of EXEMPTION_FILE_HEAD_PATTERNS) {
     const match = re.exec(head);
-    if (match) {
-      const reason = match[1] ?? "";
-      // reason に patternId が含まれるか "all" 宣言なら免除
-      if (reason.includes(patternId) || /\ball\b/i.test(reason)) {
-        return true;
-      }
+    if (!match) continue;
+    const reason = (match[1] ?? "").trim();
+    if (!reason) {
+      throw new Error(
+        "generality-exemption declaration requires an explicit pattern-id list " +
+          "(e.g. `generality-exemption: B-1,B-2a — HARNESS-42, short reason`). " +
+          "Empty reason is not allowed.",
+      );
     }
+    // Codex [C-2]: `all` は構造的欠陥なので禁止
+    if (/\ball\b/i.test(reason)) {
+      throw new Error(
+        "generality-exemption `all` is prohibited (Codex adversarial review [C-2]). " +
+          "Declare explicit pattern IDs (e.g. `B-1,B-2a,B-3c`) so the exemption is scoped. " +
+          "Found: " +
+          reason,
+      );
+    }
+    // pattern-id を抽出 (B-\d[a-z]? 形式)
+    const ids = Array.from(reason.matchAll(/\bB-\d+[a-z]?\b/g)).map((m) => m[0]);
+    if (ids.length === 0) {
+      throw new Error(
+        "generality-exemption must explicitly list pattern IDs " +
+          "(e.g. `B-1,B-2a` — issue key, reason). " +
+          "None found in: " +
+          reason,
+      );
+    }
+    return { patternIds: new Set(ids), reason };
   }
-  return false;
+  return null;
+}
+
+function hasFileExemption(content: string, patternId: string): boolean {
+  const parsed = parseExemption(content);
+  if (!parsed) return false;
+  return parsed.patternIds.has(patternId);
 }
 
 function hasLineExemption(line: string): boolean {

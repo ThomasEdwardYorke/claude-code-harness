@@ -3,8 +3,10 @@
  *
  * TaskCreated / TaskCompleted hook handlers.
  * Logs task state changes for coordinator monitoring.
- * Plans.md 担当表の自動更新は coordinator worktree のみで実行可能なため、
- * ここではログ出力 + additionalContext でフィードバックを返す。
+ * The plan file path is configurable via `harness.config.json` (work.plansFile).
+ * Automatic assignment-table updates are intentionally not performed here —
+ * they are coordinator-only work. This hook only emits reminders via
+ * `additionalContext`.
  */
 export interface TaskLifecycleInput {
     hook_event_name: string;

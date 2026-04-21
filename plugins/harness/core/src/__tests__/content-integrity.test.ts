@@ -2,7 +2,7 @@
  * core/src/__tests__/content-integrity.test.ts
  * agents / commands Markdown の不変条件を検証するリグレッションテスト。
  *
- * 2026-04-21 追加: Phase 3 Codex レビュー申送 C-1 / M-2 / M-3 / m-2 に対応。
+ * 詳細履歴は CHANGELOG.md を参照。
  * ここで守りたい不変条件を破壊する修正は CI で即検知される。
  */
 
@@ -256,7 +256,7 @@ describe("coderabbit-mimic agent の静的解析呼出安全性", () => {
     // rev-parse --verify による base ref 確認 + fallback を持つこと。
     expect(content).toMatch(/rev-parse\s+--verify[\s\S]{0,200}?origin\/\$BASE_BRANCH/);
     expect(content).toMatch(/BASE_REF[\s\S]{0,80}?(?:origin\/\$BASE_BRANCH|fallback)/);
-    // r7 Major-7: `BASE_REF=HEAD` (空 diff fallback) は false-clear review を生むので禁止。
+    // r7 Major severity: `BASE_REF=HEAD` (空 diff fallback) は false-clear review を生むので禁止。
     // 検証済み ref が無ければ hard error (exit 1) が期待される。
     expect(content).not.toMatch(/BASE_REF\s*=\s*["']?HEAD["']?\s*$/m);
     expect(content).toMatch(/no valid base ref[\s\S]{0,200}?exit\s+1|exit\s+1[\s\S]{0,200}?(?:false-clear|base ref)/);
@@ -370,7 +370,7 @@ describe("harness-work command の profile 読取り fallback", () => {
     // 旧: `$1..$N のみ保証` は 1-based 前提。残存を広いパターンで禁止。
     // 新: `$ARGUMENTS / $ARGUMENTS[N] / $N (0-based)` の公式表記に揃える。
     //
-    // round 11 の Minor-1 指摘: backtick 付きや前置テキストを含む残存を見逃さないよう、
+    // 過去 review round の指摘: backtick 付きや前置テキストを含む残存を見逃さないよう、
     // どこに `$1..$N` が出現しても FAIL する広いパターンに修正する。
     expect(content).not.toMatch(/\$1\s*\.\.\s*\$N/);
     // 公式仕様に則った 0-based 表記の説明があること
@@ -401,7 +401,7 @@ describe("harness-work command の profile 読取り fallback", () => {
 
   it("CLI --profile= 抽出が case 文で完全一致判定", () => {
     // r5 の `grep -oE -- '--profile=(chill|assertive|strict)'` は substring match のため
-    // `--profile=strict1` を `--profile=strict` に誤抽出する (r6 Minor-1 指摘)。
+    // `--profile=strict1` を `--profile=strict` に誤抽出する (過去 review 指摘)。
     // argv 配列化 + case 文で完全一致比較。
     // CodeRabbit PR #1 Major: argv 全走査ではなく末尾 token 限定に変更 (task description 本文の
     // `--profile=...` 引用文言を option と誤認しない)。どちらの実装でも完全一致 case 文は必須。

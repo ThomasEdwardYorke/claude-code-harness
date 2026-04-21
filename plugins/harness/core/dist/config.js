@@ -27,6 +27,20 @@ export const DEFAULT_CONFIG = {
     codex: { enabled: false },
     workMode: { bypassRmRf: false, bypassGitPush: false },
     tampering: { severity: "approve" },
+    work: {
+        plansFile: "Plans.md",
+        // Default markers support ja / en projects. Override via harness.config.json.
+        assignmentSectionMarkers: ["担当表", "Assignment", "In Progress"],
+        handoffFiles: [],
+    },
+    security: {
+        enabledChecks: [
+            "api-key-leak",
+            "injection",
+            "file-permissions",
+            "dependencies",
+        ],
+    },
 };
 // ============================================================
 // Loader
@@ -39,6 +53,8 @@ function mergeConfig(partial) {
         codex: { ...DEFAULT_CONFIG.codex, ...(partial.codex ?? {}) },
         workMode: { ...DEFAULT_CONFIG.workMode, ...(partial.workMode ?? {}) },
         tampering: { ...DEFAULT_CONFIG.tampering, ...(partial.tampering ?? {}) },
+        work: { ...DEFAULT_CONFIG.work, ...(partial.work ?? {}) },
+        security: { ...DEFAULT_CONFIG.security, ...(partial.security ?? {}) },
     };
 }
 /**

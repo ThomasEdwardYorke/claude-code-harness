@@ -181,7 +181,7 @@ git diff HEAD~1 -- <changed_files>
 プロジェクトの package manager に応じて実行:
 
 ```bash
-# Python:       python3 -m pip list --outdated
+# Python (pip):  pip list --outdated
 # Node.js:      npm outdated
 # Rust:         cargo outdated
 # Go:           go list -u -m all
@@ -190,13 +190,16 @@ git diff HEAD~1 -- <changed_files>
 - セキュリティ上重要な更新がある場合は警告
 - **実際の更新はユーザー承認後のみ実施**（自動 upgrade は禁止）
 
-### 2. コード品質チェック
+### 2. コード品質 + テストチェック
 
-プロジェクトの lint / typecheck コマンドを実行:
+プロジェクトの lint / typecheck / test コマンドを実行 (SubagentStop hook と同じ resolution):
+
+- `harness.config.json` の `work.testCommand` を優先
+- 未設定なら package-manager 自動検出 (pyproject.toml / package.json / Cargo.toml / go.mod)
 
 ```bash
-# プロジェクトの慣用コマンドに従う:
-#   Python:   ruff check / mypy (pyproject.toml あり)
+# プロジェクトの慣用コマンドに従う (lint + typecheck + test):
+#   Python:   ruff check / mypy (pyproject.toml あり), pytest (tests/ あり)
 #   Node.js:  npm run lint / npm run typecheck
 #   Rust:     cargo clippy / cargo check
 #   Go:       go vet ./... / golangci-lint run

@@ -7,11 +7,14 @@
     "description": "Portable TypeScript guardrail + agent harness for Claude Code",
     "version": "0.1.0"
   },
+  "strict": true,
   "plugins": [
     {
       "name": "harness",
       "source": "./plugins/harness",
-      "description": "Guardrails R01-R13, 3 general agents, 5 verb skills, zero native dependencies"
+      "description": "Guardrails R01-R13, 3 general agents, 5 verb skills, zero native dependencies",
+      "license": "MIT",
+      "version": "0.1.0"
     }
   ]
 }

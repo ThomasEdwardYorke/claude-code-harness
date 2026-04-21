@@ -2,8 +2,10 @@
  * hooks/pre-compact.ts
  *
  * PreCompact hook handler.
- * Fires before context compaction. Reads project state (Plans.md 担当表,
- * open PRs) and returns it as additionalContext so it survives compaction.
+ * Fires before context compaction. Reads project state (task/plan file
+ * assignment table, open PRs) and returns it as additionalContext so it
+ * survives compaction. File paths and section keywords are configurable via
+ * `harness.config.json` (work.plansFile / work.assignmentSectionMarkers).
  */
 export interface PreCompactInput {
     hook_event_name: string;

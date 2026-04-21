@@ -725,7 +725,7 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 
 ---
 
-## 申送 (Codex 調査で判明した未検証事項)
+## Follow-up notes (Codex 調査で判明した未検証事項)
 
 以下は公式ドキュメントで明示されていない / 実運用で検証が必要な事項。リグレッション発生時の原因特定用に記録:
 
@@ -764,7 +764,7 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 
 ## スキル更新履歴
 
-- **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、申送セクション、フォールバック戦略追加。
+- **v4.1 (2026-04-19 Codex 調査反映)**: Auto Mode Detection v2 (依存グラフ考慮、独立グループ数ベース)、`--affected` オプション追加 (Nx 流)、Phase fan-out パターン明示化、`harness.config.json` 拡張フィールド詳細化 (tddEnforce / worktree.forceDisableReasons / codeRabbit bucket size)、品質ゲート一覧、follow-up notes セクション、フォールバック戦略追加。
 - **v4 (2026-04-19)**: 内部委譲化。`/tdd-implement` v2 / `/parallel-worktree` v1 への委譲レイヤーに刷新。品質ゲート常時強制。v3 以前で発覚した「worker 丸投げで品質ゲート省略」問題を構造解消 (詳細は CHANGELOG.md)。
 - **v3**: Auto Mode Detection (Solo/Parallel/Breezing) 導入、`--codex` オプション追加、サブフロー (fix-bug/add-feature/test-pipeline) 統合。
 - **v2, v1**: レガシー (`work` / `breezing` / `fix-bug` / `add-feature` / `test-pipeline` が別スキルだった時代)。

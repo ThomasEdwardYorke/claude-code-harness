@@ -3,12 +3,15 @@
  *
  * TaskCreated / TaskCompleted hook handlers.
  * Logs task state changes for coordinator monitoring.
- * Plans.md 担当表の自動更新は coordinator worktree のみで実行可能なため、
- * ここではログ出力 + additionalContext でフィードバックを返す。
+ * The plan file path is configurable via `harness.config.json` (work.plansFile).
+ * Automatic assignment-table updates are intentionally not performed here —
+ * they are coordinator-only work. This hook only emits reminders via
+ * `additionalContext`.
  */
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadConfigSafe } from "../config.js";
 
 export interface TaskLifecycleInput {
   hook_event_name: string;
@@ -26,16 +29,22 @@ export interface TaskLifecycleResult {
   taskSubject?: string | undefined;
 }
 
+function plansReminder(projectRoot: string, verb: string): string {
+  const config = loadConfigSafe(projectRoot);
+  const plansFile = config.work.plansFile;
+  const hasPlans = existsSync(resolve(projectRoot, plansFile));
+  return hasPlans
+    ? ` — ${plansFile} の assignment section (${verb}) への反映を検討してください`
+    : "";
+}
+
 export async function handleTaskCreated(
   input: TaskLifecycleInput,
 ): Promise<TaskLifecycleResult> {
   const projectRoot = input.cwd ?? process.cwd();
-  const hasPlans = existsSync(resolve(projectRoot, "Plans.md"));
   const taskInfo = input.task_subject ?? input.task_id ?? "unknown";
-
-  const context = hasPlans
-    ? `[TaskCreated] ${taskInfo} — Plans.md 担当表への反映を検討してください`
-    : `[TaskCreated] ${taskInfo}`;
+  const suffix = plansReminder(projectRoot, "task-created entry");
+  const context = `[TaskCreated] ${taskInfo}${suffix}`;
 
   return {
     decision: "approve",
@@ -49,12 +58,9 @@ export async function handleTaskCompleted(
   input: TaskLifecycleInput,
 ): Promise<TaskLifecycleResult> {
   const projectRoot = input.cwd ?? process.cwd();
-  const hasPlans = existsSync(resolve(projectRoot, "Plans.md"));
   const taskInfo = input.task_subject ?? input.task_id ?? "unknown";
-
-  const context = hasPlans
-    ? `[TaskCompleted] ${taskInfo} — Plans.md 担当表の更新と完了セクションへの移動を検討してください`
-    : `[TaskCompleted] ${taskInfo}`;
+  const suffix = plansReminder(projectRoot, "completion section move");
+  const context = `[TaskCompleted] ${taskInfo}${suffix}`;
 
   return {
     decision: "approve",

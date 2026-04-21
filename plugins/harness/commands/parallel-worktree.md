@@ -23,7 +23,7 @@ argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N
 
 Model B は各 worktree で独立 `claude` プロセスを起動し、同一 harness で Phase 1-8 を完全実行する構成。
 `claude --worktree` の `.claude/` 非継承バグ (issue #28041) 解消後、または sibling worktree + `claude -n <slug>` + tmux 管理で実現予定。
-詳細は `docs/harness-model-b-plan.md` を参照。
+詳細は `docs/maintainer/ROADMAP-model-b.md` を参照 (maintainer-only、plugin 配布対象外)。
 
 ---
 
@@ -45,8 +45,8 @@ Model B は各 worktree で独立 `claude` プロセスを起動し、同一 har
 ```json
 {
   "feature_branch": "feature/parent-integration",
-  "base_dir": "/Users/me/dev/myproject",
-  "worktree_parent_dir": "/Users/me/dev",
+  "base_dir": "/path/to/project",
+  "worktree_parent_dir": "/path/to/project-parent",
   "worktree_prefix": "myproject-wt-",
   "sub_tasks": [
     {
@@ -195,7 +195,7 @@ PR 作成はしない (coordinator 実施)。
 4. 静的解析結果
 5. Codex 並列検証サマリ (Phase 4)
 6. Codex レビューループで直した項目 (Phase 5)
-7. 申送 (coordinator が拾うべき残課題)
+7. Follow-up notes (coordinator が拾うべき残課題)
 ```
 
 ### 並列数の調整

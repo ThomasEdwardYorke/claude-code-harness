@@ -28,6 +28,35 @@ export interface TamperingConfig {
     /** Decision returned when tampering patterns are detected. */
     severity: TamperingSeverity;
 }
+export interface WorkConfig {
+    /** Relative path to the project's task/plan file. Consumed by pre-compact and task-lifecycle hooks. */
+    plansFile: string;
+    /**
+     * Section header keywords used to locate the assignment table inside the
+     * plans file. Supports ja/en projects. First-match wins.
+     */
+    assignmentSectionMarkers: string[];
+    /**
+     * Project-specific session-handoff file paths that /harness-work and
+     * /parallel-worktree update when closing a session. Existence-optional.
+     */
+    handoffFiles: string[];
+    /**
+     * Optional relative path to a project-local change log consumed by
+     * /harness-plan sync. If unset, sync skips change-log scanning.
+     */
+    changeLogFile?: string;
+}
+export interface SecurityConfig {
+    /**
+     * Relative path to a project-local security checklist. security-auditor
+     * loads this file as addendum when present; otherwise runs the stack-neutral
+     * generic checklist only.
+     */
+    projectChecklistPath?: string;
+    /** Enabled security check categories. */
+    enabledChecks: string[];
+}
 export interface HarnessConfig {
     /** Human-readable project name (shown in messages). */
     projectName: string;
@@ -51,6 +80,8 @@ export interface HarnessConfig {
     codex: CodexConfig;
     workMode: WorkModeConfig;
     tampering: TamperingConfig;
+    work: WorkConfig;
+    security: SecurityConfig;
 }
 export declare const DEFAULT_CONFIG: HarnessConfig;
 /**

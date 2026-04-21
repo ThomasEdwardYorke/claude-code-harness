@@ -74,9 +74,29 @@
     "work": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Settings consumed by /harness-work, /tdd-implement, /parallel-worktree, and core hooks (stop / subagent-stop).",
+      "description": "Settings consumed by /harness-work, /tdd-implement, /parallel-worktree, and core hooks (stop / subagent-stop / pre-compact / task-lifecycle).",
       "properties": {
-        "plansFile": { "type": "string", "default": "Plans.md" },
+        "plansFile": {
+          "type": "string",
+          "default": "Plans.md",
+          "description": "Relative path to the project's task / plan file. Consumed by pre-compact and task-lifecycle hooks to read assignment tables before compaction."
+        },
+        "assignmentSectionMarkers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["担当表", "Assignment", "In Progress"],
+          "description": "Section header keywords used to locate the assignment table inside the plans file. Supports ja/en projects. First-match wins."
+        },
+        "handoffFiles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Project-specific session-handoff file paths that /harness-work and /parallel-worktree update when closing a session. Existence-optional (if a listed path is missing, the hook skips it silently)."
+        },
+        "changeLogFile": {
+          "type": "string",
+          "description": "Optional relative path to a project-local change log consumed by /harness-plan sync. If unset, sync skips change-log scanning."
+        },
         "maxParallel": { "type": "integer", "minimum": 1, "maximum": 16, "default": 4 },
         "labelPriority": {
           "type": "array",
@@ -99,6 +119,32 @@
           }
         },
         "failFast": { "type": "boolean", "default": true }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by security-auditor agent. Lets projects supply their own stack-specific security checklist without modifying plugin core.",
+      "properties": {
+        "projectChecklistPath": {
+          "type": "string",
+          "description": "Relative path to a project-local security checklist (e.g. `./AGENTS.md`, `./docs/security.md`, or a SKILL.md reference). security-auditor agent loads this file as addendum when present; otherwise runs the stack-neutral generic checklist only."
+        },
+        "enabledChecks": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "api-key-leak",
+              "injection",
+              "file-permissions",
+              "dependencies",
+              "project-specific"
+            ]
+          },
+          "default": ["api-key-leak", "injection", "file-permissions", "dependencies"],
+          "description": "Enabled security check categories. `project-specific` is effective only when `projectChecklistPath` is set."
+        }
       }
     },
     "worktree": {

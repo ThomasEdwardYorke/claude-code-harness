@@ -40,6 +40,37 @@ export interface TamperingConfig {
   severity: TamperingSeverity;
 }
 
+export interface WorkConfig {
+  /** Relative path to the project's task/plan file. Consumed by pre-compact and task-lifecycle hooks. */
+  plansFile: string;
+  /**
+   * Section header keywords used to locate the assignment table inside the
+   * plans file. Supports ja/en projects. First-match wins.
+   */
+  assignmentSectionMarkers: string[];
+  /**
+   * Project-specific session-handoff file paths that /harness-work and
+   * /parallel-worktree update when closing a session. Existence-optional.
+   */
+  handoffFiles: string[];
+  /**
+   * Optional relative path to a project-local change log consumed by
+   * /harness-plan sync. If unset, sync skips change-log scanning.
+   */
+  changeLogFile?: string;
+}
+
+export interface SecurityConfig {
+  /**
+   * Relative path to a project-local security checklist. security-auditor
+   * loads this file as addendum when present; otherwise runs the stack-neutral
+   * generic checklist only.
+   */
+  projectChecklistPath?: string;
+  /** Enabled security check categories. */
+  enabledChecks: string[];
+}
+
 export interface HarnessConfig {
   /** Human-readable project name (shown in messages). */
   projectName: string;
@@ -63,6 +94,8 @@ export interface HarnessConfig {
   codex: CodexConfig;
   workMode: WorkModeConfig;
   tampering: TamperingConfig;
+  work: WorkConfig;
+  security: SecurityConfig;
 }
 
 // ============================================================
@@ -85,6 +118,20 @@ export const DEFAULT_CONFIG: HarnessConfig = {
   codex: { enabled: false },
   workMode: { bypassRmRf: false, bypassGitPush: false },
   tampering: { severity: "approve" },
+  work: {
+    plansFile: "Plans.md",
+    // Default markers support ja / en projects. Override via harness.config.json.
+    assignmentSectionMarkers: ["担当表", "Assignment", "In Progress"],
+    handoffFiles: [],
+  },
+  security: {
+    enabledChecks: [
+      "api-key-leak",
+      "injection",
+      "file-permissions",
+      "dependencies",
+    ],
+  },
 };
 
 // ============================================================
@@ -99,6 +146,8 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     codex: { ...DEFAULT_CONFIG.codex, ...(partial.codex ?? {}) },
     workMode: { ...DEFAULT_CONFIG.workMode, ...(partial.workMode ?? {}) },
     tampering: { ...DEFAULT_CONFIG.tampering, ...(partial.tampering ?? {}) },
+    work: { ...DEFAULT_CONFIG.work, ...(partial.work ?? {}) },
+    security: { ...DEFAULT_CONFIG.security, ...(partial.security ?? {}) },
   };
 }
 
