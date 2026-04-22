@@ -61,6 +61,35 @@ describe("HookResult", () => {
     };
     expect(result.decision).toBe("ask");
   });
+
+  it("optional / control fields (worktreePath / continue / stopReason / suppressOutput) を表現できる", () => {
+    // 後方互換維持のための compile-time coverage:
+    //   optional field 追加が引き続き optional のまま保たれ (required 化せず)、
+    //   既存 consumer が decision のみで HookResult を構築できることを保証する。
+    const minimal: HookResult = { decision: "approve" };
+    expect(minimal.worktreePath).toBeUndefined();
+    expect(minimal.continue).toBeUndefined();
+    expect(minimal.stopReason).toBeUndefined();
+    expect(minimal.suppressOutput).toBeUndefined();
+
+    // WorktreeCreate 成功経路: worktreePath を持つ HookResult
+    const worktreeSuccess: HookResult = {
+      decision: "approve",
+      worktreePath: "/abs/path/to/wt",
+    };
+    expect(worktreeSuccess.worktreePath).toBe("/abs/path/to/wt");
+
+    // Universal control fields (Claude Code hooks protocol 準拠)
+    const universal: HookResult = {
+      decision: "approve",
+      continue: false,
+      stopReason: "user abort",
+      suppressOutput: true,
+    };
+    expect(universal.continue).toBe(false);
+    expect(universal.stopReason).toBe("user abort");
+    expect(universal.suppressOutput).toBe(true);
+  });
 });
 
 describe("GuardRule", () => {

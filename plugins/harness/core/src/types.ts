@@ -37,6 +37,55 @@ export interface HookResult {
   reason?: string;
   /** Extra context surfaced to Claude. */
   systemMessage?: string;
+
+  // ----------------------------------------------------------
+  // Universal control fields (Claude Code hooks protocol)
+  //
+  // 公式仕様: https://code.claude.com/docs/en/hooks
+  // これらは全 hook event で top-level に置ける汎用 field。event-specific な
+  // field (updatedInput / updatedPermissions / updatedMCPToolOutput /
+  // retry / action / content 等) は `hookSpecificOutput` nested object の
+  // 下に入る規約だが、現実装は command hook の raw stdout 運用に集中し、
+  // 必要になった event から段階的に追加する。
+  // ----------------------------------------------------------
+
+  /**
+   * Default `true`. `false` で Claude Code を完全停止させる。停止時は
+   * `stopReason` を user に表示 (Claude には渡らない)。
+   *
+   * 現 harness 実装は全 hook で fail-open のため通常は未設定 (= true)。
+   */
+  continue?: boolean;
+
+  /**
+   * `continue: false` 時に user へ見せる停止理由メッセージ。
+   */
+  stopReason?: string;
+
+  /**
+   * Default `false`。true にすると debug log から stdout を除外する。
+   * 機微情報を含む hook 出力を debug 画面に出したくない場合に使用。
+   */
+  suppressOutput?: boolean;
+
+  // ----------------------------------------------------------
+  // Event-specific top-level fields (command hook raw stdout mode で使用)
+  //
+  // 本来 `hookSpecificOutput.worktreePath` で返すのが JSON (HTTP hook) の
+  // 公式規約だが、command hook は stdout に raw absolute path を直接出す。
+  // route() → index.ts main() の橋渡しとして HookResult に worktreePath を
+  // 載せ、main() の worktree-create 分岐で raw stdout に書き出す。
+  // ----------------------------------------------------------
+
+  /**
+   * WorktreeCreate hook の出力 — 作成された worktree の absolute path。
+   * blocking protocol 準拠 handler が設定する。
+   *
+   * - 設定あり: index.ts main() が raw path を stdout に書き出し、exit 0
+   * - 設定なし: main() は exit 1 (公式仕様: any non-zero exit causes
+   *   worktree creation to fail — blocking hook の挙動)
+   */
+  worktreePath?: string;
 }
 
 // ============================================================

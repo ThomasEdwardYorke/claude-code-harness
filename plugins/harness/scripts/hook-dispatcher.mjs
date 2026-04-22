@@ -15,6 +15,17 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 function failOpen(reason) {
+  // worktree-create は blocking hook protocol に従う: 成功 = raw absolute path を
+  // stdout、失敗 = non-zero exit。dispatcher 段階で fail した場合も JSON を
+  // stdout に流すと Claude Code がそれを path と誤認して worktree 作成に失敗する
+  // (stdin 未読の handler でも、missing CLAUDE_PLUGIN_ROOT / dist 未 build 等の
+  // dispatcher 層失敗が protocol-corrupt な success とみなされる)。
+  // 該当 hook 種別では stderr に理由を書き exit 1 で明示 fail させる。
+  const hookType = process.argv[2];
+  if (hookType === "worktree-create") {
+    process.stderr.write(`hook-dispatcher (worktree-create): ${reason}\n`);
+    process.exit(1);
+  }
   process.stdout.write(
     JSON.stringify({ decision: "approve", reason }) + "\n",
   );

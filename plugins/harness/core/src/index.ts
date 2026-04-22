@@ -205,8 +205,15 @@ export async function route(
       return wrHR;
     }
     case "worktree-create": {
-      // Phase η P0-κ scaffold: hooks.json 未登録のため実運用では発火しないが、
-      // Phase κ-2 で protocol-compliant 実装に差し替える前提で route() 経路は先行整備。
+      // WorktreeCreate blocking protocol: 公式仕様
+      // (https://code.claude.com/docs/en/hooks) に従い、command hook として
+      // 実 `git worktree add` を実行し absolute path を返す。
+      //
+      // HookResult の mapping:
+      //   - worktreePath: handler が成功時に返す absolute path (main() で raw stdout)
+      //   - reason: handler が失敗時に返すエラー理由 (main() で stderr)
+      //   - systemMessage: 失敗時 debug log 用に additionalContext を載せる
+      //     (成功時の raw path stdout を妨げない形で observability を担保)
       const { handleWorktreeCreate } = await import(
         "./hooks/worktree-lifecycle.js"
       );
@@ -221,8 +228,14 @@ export async function route(
         transcript_path: extractString(raw, "transcript_path"),
       });
       const wcHR: HookResult = { decision: wcRes.decision };
+      if (wcRes.worktreePath !== undefined) {
+        wcHR.worktreePath = wcRes.worktreePath;
+      }
+      if (wcRes.reason !== undefined) {
+        wcHR.reason = wcRes.reason;
+      }
       if (wcRes.additionalContext !== undefined) {
-        wcHR.reason = wcRes.additionalContext;
+        wcHR.systemMessage = wcRes.additionalContext;
       }
       return wcHR;
     }
@@ -297,6 +310,32 @@ async function main(): Promise<void> {
 
   if (hookType === "permission" && result.systemMessage !== undefined) {
     process.stdout.write(result.systemMessage + "\n");
+  } else if (hookType === "worktree-create") {
+    // WorktreeCreate blocking protocol:
+    //   公式仕様 (https://code.claude.com/docs/en/hooks) により、command hook は
+    //   raw absolute path を stdout に書き出す。exit 0 = 成功、any non-zero = 失敗。
+    //
+    //   - worktreePath 設定あり: raw path を stdout、exit 0
+    //   - worktreePath 未設定: stderr に reason、exit 1 で blocking 失敗
+    //
+    //   additionalContext は systemMessage 経由で届くので、失敗時の debug 用に
+    //   stderr にも流す (Claude Code の hook log に残る)。
+    //
+    //   `process.exitCode = 1; return;` pattern: `process.exit(1)` を即呼ぶと
+    //   stderr / stdout の非同期 flush が完了する前に process が terminate し得る。
+    //   main() を return で抜けて Node.js event loop 自然終了に任せることで、
+    //   drain 後に exit code 1 で terminate することを保証する (stream 書込ロスト回避)。
+    if (typeof result.worktreePath === "string" && result.worktreePath !== "") {
+      process.stdout.write(result.worktreePath + "\n");
+    } else {
+      if (result.reason) {
+        process.stderr.write(result.reason + "\n");
+      }
+      if (result.systemMessage) {
+        process.stderr.write(result.systemMessage + "\n");
+      }
+      process.exitCode = 1;
+    }
   } else {
     process.stdout.write(JSON.stringify(result) + "\n");
   }

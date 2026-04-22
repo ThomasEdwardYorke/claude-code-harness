@@ -1,37 +1,57 @@
 /**
  * hooks/worktree-lifecycle.ts
  *
- * WorktreeCreate / WorktreeRemove hook handlers — Phase η P0-κ (2026-04-22).
+ * WorktreeCreate / WorktreeRemove hook handlers.
  *
- * ## 公式仕様 (research-anthropic-official-2026-04-22.md § 3 フック)
+ * ## 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23)
  *
- * - **WorktreeCreate**: Claude Code 既定の `git worktree` 作成処理を **完全置換** する
- *   blocking hook。`command` stdout に absolute path を書き出すプロトコル必須。
- *   matcher 非対応、毎回発火。observability 用途だけで登録すると作成自体が失敗する。
+ * - **WorktreeCreate (blocking)**: Claude Code 既定の `git worktree` 作成処理を
+ *   **完全置換**する blocking hook。command hook の場合は raw absolute path を
+ *   stdout に書き出す (HTTP hook は `hookSpecificOutput.worktreePath`)。
+ *   exit 0 = 成功、any non-zero exit = worktree 作成失敗。
+ *   matcher 非対応、毎回発火。
  *
- * - **WorktreeRemove**: non-blocking observability hook。失敗は debug-only で
+ * - **WorktreeRemove (non-blocking)**: observability hook。失敗は debug-only で
  *   本体処理に影響しない。matcher 非対応、毎回発火。
  *
- * ## 本 Phase の設計判断
+ * ## 本 handler の責務
  *
- * 1. **WorktreeRemove**: `hooks.json` に登録し、`/parallel-worktree` 運用や
- *    `isolation: worktree` agent 終了時に coordinator への同期リマインダーを出す。
- *    既存の `pre-compact.ts` と同じく `loadConfigSafe` で fail-open を担保。
+ * 1. **WorktreeRemove**: `/parallel-worktree` 運用や `isolation: worktree` agent
+ *    終了時に coordinator への同期リマインダー (Plans.md 担当表) を出す。
+ *    `loadConfigSafe` で fail-open を担保。
  *
- * 2. **WorktreeCreate**: **hooks.json には登録しない**。既定挙動を置換する blocking
- *    protocol 準拠実装は Phase κ-2 (`isolation: worktree` + `WorktreeCreate/Remove`
- *    hook 協調設計) で行う。本 Phase では `route()` / `HookType` union の scaffold
- *    のみ整備し、追加実装の前進路を確保する。handler は呼ばれれば approve + scaffold
- *    notice を返すだけ (副作用なし)。
+ * 2. **WorktreeCreate (blocking protocol production)**: 実 `git worktree add` を
+ *    実行し、作成した worktree の absolute path を HookResult.worktreePath に
+ *    載せる。index.ts main() の worktree-create 分岐が worktreePath を raw stdout
+ *    に書き出す。失敗時 (name invalid / non-git cwd / git failure) は worktreePath
+ *    未設定で返し、main() が exit 1 に変換して公式 blocking protocol に従う。
  *
- * ## 関連 doc
+ * ## `isolation: worktree` 協調設計の扱い
+ *
+ * 現行: agent frontmatter `isolation: worktree` は未付与 (regression guard 済)。
+ * `/parallel-worktree` の手動 `git worktree add` 運用と二重 worktree 作成干渉
+ * リスクがあるため。WorktreeCreate hook の infrastructure は整備完了し、将来
+ * 特定 agent で `isolation: worktree` を有効化する際には `/parallel-worktree` と
+ * の共存ロジック (env marker / cwd 判定 / handler 側 idempotent 再利用) を
+ * 組み合わせて二重作成を防ぐ設計に移行する。
+ *
+ * ## 関連 doc (設計経緯)
  * - docs/maintainer/research-anthropic-official-2026-04-22.md
  * - docs/maintainer/research-subagent-isolation-2026-04-22.md
- * - docs/maintainer/ROADMAP-model-b.md (Phase 1 hook events、Phase κ-2)
+ * - docs/maintainer/ROADMAP-model-b.md
+ * - CHANGELOG.md (feature history)
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { loadConfigSafe } from "../config.js";
 
 // pre-compact.ts と同じ安全上限: Plans.md を読み込む際の byte 上限。
@@ -74,7 +94,81 @@ export interface WorktreeCreateInput {
 
 export interface WorktreeCreateResult {
   decision: "approve";
+  /** 人間可読の diagnostic (成功/失敗両方に含まれる、observability 用)。 */
   additionalContext?: string;
+  /**
+   * 失敗時の理由 (blocking protocol で worktreePath 未設定になった原因)。
+   * main() が exit 1 で stderr に書き出す候補文字列として使われる。
+   */
+  reason?: string;
+  /**
+   * 成功時のみ設定される、作成された worktree の absolute path。
+   * index.ts main() の worktree-create 分岐が raw stdout に書き出す。
+   * 未設定 (failure) だと main() は exit 1 で blocking 失敗を通知。
+   */
+  worktreePath?: string;
+}
+
+// ------------------------------------------------------------
+// name validation
+// ------------------------------------------------------------
+//
+// WorktreeCreate input の `name` は Claude Code が生成する slug 名だが、
+// hook 入力なので最悪 shell injection / path traversal を想定した defensive
+// validation を行う。
+//
+// - 空文字列 / undefined → reject
+// - path separator (/ or \) → reject (sibling 規約 `<parent>/<basename>-wt-<name>` を壊す)
+// - `.` 先頭 → reject (隠し directory 化)
+// - shell metachar ($ ` ; | & < > * ? ! ( ) { } [ ] # " ' newline) → reject
+// - 連続空白 / 先頭空白 → reject
+// - 長さ上限 64 (filesystem / git branch name の安全域)
+
+/**
+ * 長さ上限 64 文字は NAME_ALLOWED_PATTERN の trailing quantifier `{0,63}` が
+ * 先頭 1 文字と合わせて enforce する (1 + 63 = 64)。別途の length ガードは
+ * regex に届く前に fire しない dead code となるため置かず、regex と「最大長」
+ * の契約を一本化している。
+ *
+ * 追加 git check-ref-format 準拠制約:
+ * - 先頭 `.` を reject (既存 startsWith check)
+ * - 連続 `..` を reject (git refname 禁止)
+ * - 末尾 `.` を reject (git refname 禁止)
+ * - `.lock` suffix を reject (git が refs/heads/ 配下の reserved suffix として使う)
+ *
+ * (regex 側は control char / space / `~ ^ : ? * [ \ /` 等の禁止文字を
+ * character class で既に除外している)
+ */
+const NAME_ALLOWED_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+
+function validateWorktreeName(name: string): { ok: boolean; reason?: string } {
+  if (name.length === 0) {
+    return { ok: false, reason: "name is empty" };
+  }
+  if (name.startsWith(".")) {
+    return { ok: false, reason: "name cannot start with '.'" };
+  }
+  if (!NAME_ALLOWED_PATTERN.test(name)) {
+    return {
+      ok: false,
+      reason:
+        "name must match [A-Za-z0-9_] + [A-Za-z0-9_.-]{0,63} (max 64 chars, no path separators / shell metachars)",
+    };
+  }
+  // git check-ref-format --branch 準拠: `..` / trailing `.` / `.lock` 拒否
+  if (name.includes("..")) {
+    return { ok: false, reason: "name cannot contain '..' (git refname rule)" };
+  }
+  if (name.endsWith(".")) {
+    return { ok: false, reason: "name cannot end with '.' (git refname rule)" };
+  }
+  if (name.endsWith(".lock")) {
+    return {
+      ok: false,
+      reason: "name cannot end with '.lock' (reserved git ref suffix)",
+    };
+  }
+  return { ok: true };
 }
 
 // ============================================================
@@ -192,62 +286,569 @@ export async function handleWorktreeRemove(
 }
 
 // ============================================================
-// handleWorktreeCreate (scaffold only, NOT registered in hooks.json)
+// handleWorktreeCreate (blocking protocol production)
 //
-// ## 重要: なぜ hooks.json に登録しないのか
+// ## Protocol
 //
-// WorktreeCreate は既定 git worktree 作成を「完全置換」する blocking hook で、
-// observability だけを目的に登録すると Claude Code 側が期待する
-// `worktreePath` が返らず、worktree 作成自体が失敗する。詳細は研究レポート
-// `docs/maintainer/research-anthropic-official-2026-04-22.md § 3` (フック) を参照。
+// 公式仕様 (https://code.claude.com/docs/en/hooks):
+//   - Command hook: raw absolute path を stdout に書き出す (NOT JSON)
+//   - HTTP hook: `hookSpecificOutput.worktreePath` を含む JSON を返す
+//   - exit 0 = 成功、any non-zero exit = worktree 作成失敗 (blocking semantics、
+//     他の hook とは違い「exit 2 だけが特別」ではない。全ての non-zero が fatal)
 //
-// Phase κ-2 (isolation: worktree 協調設計) で protocol-compliant 実装
-// (stdout に path を出す serializer 分岐 + git worktree 作成ロジック) を
-// 追加する時に本 handler を本登録する前提で、現時点では route() 経路だけ
-// 整えた scaffold とする。
+// 本 handler は command hook として呼ばれる想定で、実 `git worktree add` を実行し、
+// 成功時は `worktreePath` に absolute path を載せて返す。失敗時は worktreePath を
+// 未設定のまま返し、index.ts main() が exit 1 に変換する。
 //
-// ## 失敗モードの明示 (Codex review 対応 WL-6)
+// ## Worktree path の規約
 //
-// 本 scaffold を誤って hooks.json に登録すると以下が起きる:
-//   (1) Claude Code が WorktreeCreate を発火し、本 handler を invoke
-//   (2) 現 index.ts main() が `{decision, reason}` JSON を stdout に出力
-//   (3) 公式プロトコルは stdout に絶対 path を期待しているため、JSON 文字列は
-//       有効な path としてパースできず worktree 作成が失敗
-//   (4) ユーザー視点では `claude --worktree` / isolation: worktree agent 起動が
-//       不能になる (エラー: worktreePath 未設定 or 空)
-// Phase κ-2 で stdout serializer + git worktree コマンドを追加するまで
-// hooks.json への登録を禁止する。
+// sibling 配置: `<parent-of-cwd>/<basename-of-cwd>-wt-<name>`
+// 例: cwd = `/path/to/my-project`, name = `foo` → `/path/to/my-project-wt-foo`
+//
+// この規約は `/parallel-worktree` の手動 worktree 作成 (`../<project>-wt-<slug>/`) と
+// 一致させており、将来的な agent isolation: worktree と coordinator 手動管理の
+// 共存ロジックで path 比較による二重検出を容易にする意図がある。
+//
+// ## Branch 命名
+//
+// `harness-wt/<name>` prefix を使う:
+//   - 既存 branch (feature/*, main, dev 等) との名前空間衝突を回避
+//   - git worktree list / branch list で「harness 由来」であることが一目で分かる
+//   - 将来の automated cleanup 対象を prefix で特定可能
+//
+// ## Idempotency
+//
+// 同 name で 2 回呼ばれた場合: 既存 worktree を検出し、その path を再度返す
+// (re-create しない)。`git worktree add` は同 path が既に存在すると失敗するため、
+// existsSync で先に判定する。
 // ============================================================
+
+/**
+ * path を OS-native realpath で正規化。対象が存在しない場合は parent を正規化して
+ * basename と合成 (macOS `/var` → `/private/var` symlink 等の差を吸収、Windows の
+ * 8.3 短縮名 `RUNNER~1` → `runneradmin` も拡張)。両方失敗なら resolve で fallback。
+ *
+ * `realpathSync.native` は OS の canonicalization API を呼び出すため、`realpathSync`
+ * (Node.js 内部 JS 実装) と違い Windows 短縮名を確実に展開する。
+ */
+function normalizePath(p: string): string {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    // nothing
+  }
+  try {
+    return join(realpathSync.native(dirname(p)), basename(p));
+  } catch {
+    return resolve(p);
+  }
+}
+
+/**
+ * Windows 互換の slash 統一: backslash を forward slash に畳む。
+ *
+ * Git は `git worktree list --porcelain` で常に forward slash を出力するが、
+ * Node.js の `realpathSync` / `resolve` は Windows で backslash を返すため、
+ * path 比較を行う際に両者を同一 slash 形式に揃える必要がある。
+ */
+function toForwardSlash(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/**
+ * git worktree list --porcelain の出力をパースして、指定 path AND 指定 branch 両方
+ * が一致する worktree が既に存在するかを判定する。存在するなら path (正規化後) を
+ * 返す。path だけ一致して branch が異なる worktree (別目的で checkout 済) は
+ * idempotent reuse の対象としない (誤って別 branch の worktree を再利用しない)。
+ *
+ * --porcelain 形式サンプル:
+ *   worktree /main/repo
+ *   HEAD abc123...
+ *   branch refs/heads/main
+ *   (空行区切り)
+ *   worktree /other/wt
+ *   HEAD def456...
+ *   branch refs/heads/foo
+ *
+ * macOS では `/var/folders/...` と `/private/var/folders/...` の symlink 差、
+ * Windows では `RUNNER~1` / `runneradmin` の 8.3 短縮名差を `realpathSync.native`
+ * で吸収し、forward slash 統一形式で比較する。
+ */
+function findExistingWorktree(
+  repo: string,
+  targetPath: string,
+  expectedBranch: string,
+): string | null {
+  try {
+    // `-z` により path / field は NUL 終端、stanza 境界も NUL。path に改行が
+    // 含まれるケースでも line split で corrupt しない公式推奨形式。
+    const out = execFileSync(
+      "git",
+      ["worktree", "list", "--porcelain", "-z"],
+      {
+        cwd: repo,
+        stdio: ["pipe", "pipe", "pipe"],
+        encoding: "utf-8",
+      },
+    );
+    const normalizedTarget = toForwardSlash(normalizePath(targetPath));
+    const expectedRef = `refs/heads/${expectedBranch}`;
+
+    // -z 出力の stanza 境界は double-NUL (empty field), stanza 内の field
+    // 境界は single NUL。stanza ごとに path / branch / prunable 属性を抽出し、
+    // path 実在 + branch 一致 + 非 prunable の stanza のみ match 判定。
+    const stanzas = out.split("\0\0");
+    let currentPath: string | null = null;
+    let currentBranch: string | null = null;
+    let currentPrunable = false;
+
+    for (const stanza of stanzas) {
+      currentPath = null;
+      currentBranch = null;
+      currentPrunable = false;
+      const fields = stanza.split("\0");
+      for (const field of fields) {
+        if (field.startsWith("worktree ")) {
+          currentPath = field.slice("worktree ".length).trim();
+        } else if (field.startsWith("branch ")) {
+          currentBranch = field.slice("branch ".length).trim();
+        } else if (field === "prunable" || field.startsWith("prunable ")) {
+          currentPrunable = true;
+        }
+        // HEAD / bare / detached / locked 等の属性は idempotency 判定には
+        // 使わないので無視。
+      }
+      if (
+        currentPath !== null &&
+        currentBranch === expectedRef &&
+        !currentPrunable &&
+        existsSync(currentPath)
+      ) {
+        const normalizedPath = toForwardSlash(normalizePath(currentPath));
+        if (normalizedPath === normalizedTarget) {
+          return currentPath;
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `.worktreeinclude` に記された local-only ファイル (例: `.env` / `.venv` や
+ * project 固有の設定) を新 worktree に copy する。Claude Code 既定の worktree
+ * 作成はこの処理を内部で行うが、WorktreeCreate hook 登録時は既定処理が完全
+ * 置換されるため、hook 側で replication する必要がある。
+ *
+ * ファイル/ディレクトリの path が記された 1 entry/行の plain text file を想定。
+ * 行頭 `#` はコメント。実ファイル相対 path は `repoRoot` 基点。存在しない
+ * エントリや glob 失敗は debug-only ("[worktreeinclude-skipped] ..." note) で
+ * 継続、hook 自体は fail-open (worktree 作成は既に成功)。
+ *
+ * @returns 各エントリに対する observability note の配列 (additionalContext 向け)
+ */
+function replicateWorktreeInclude(
+  repoRoot: string,
+  worktreePath: string,
+): string[] {
+  const notes: string[] = [];
+  const includeFile = resolve(repoRoot, ".worktreeinclude");
+  if (!existsSync(includeFile)) {
+    return notes; // 設定なし、silent no-op
+  }
+  let raw: string;
+  try {
+    const stat = statSync(includeFile);
+    if (stat.size > MAX_PLANS_SIZE) {
+      notes.push(
+        "[worktreeinclude-skipped] .worktreeinclude exceeds safe size cap; replication aborted",
+      );
+      return notes;
+    }
+    raw = readFileSync(includeFile, "utf-8");
+  } catch {
+    notes.push("[worktreeinclude-skipped] failed to read .worktreeinclude");
+    return notes;
+  }
+  const entries = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+  for (const entry of entries) {
+    // path separator / `..` を含む entry は reject (traversal 防止)
+    if (entry.includes("..") || entry.startsWith("/") || entry.startsWith("\\")) {
+      notes.push(
+        `[worktreeinclude-skipped] unsafe path rejected: ${sanitizeForContext(entry)}`,
+      );
+      continue;
+    }
+    const src = resolve(repoRoot, entry);
+    const dst = resolve(worktreePath, entry);
+    // realpath 正規化後の prefix check で escape 防止
+    let srcNorm: string;
+    let dstNorm: string;
+    try {
+      srcNorm = normalizePath(src);
+      dstNorm = dst; // dst は未作成かもしれないので normalize できない
+    } catch {
+      notes.push(
+        `[worktreeinclude-skipped] failed to resolve src: ${sanitizeForContext(entry)}`,
+      );
+      continue;
+    }
+    const repoNorm = normalizePath(repoRoot);
+    const wtNorm = normalizePath(worktreePath);
+    if (!srcNorm.startsWith(repoNorm + sep) && srcNorm !== repoNorm) {
+      notes.push(
+        `[worktreeinclude-skipped] src escaped repo root: ${sanitizeForContext(entry)}`,
+      );
+      continue;
+    }
+    if (!dstNorm.startsWith(wtNorm + sep) && dstNorm !== wtNorm) {
+      notes.push(
+        `[worktreeinclude-skipped] dst escaped worktree: ${sanitizeForContext(entry)}`,
+      );
+      continue;
+    }
+    if (!existsSync(src)) {
+      notes.push(
+        `[worktreeinclude-skipped] src missing: ${sanitizeForContext(entry)}`,
+      );
+      continue;
+    }
+    try {
+      const dstDir = dirname(dst);
+      mkdirSync(dstDir, { recursive: true });
+      cpSync(src, dst, { recursive: true, errorOnExist: false, force: false });
+      notes.push(`[worktreeinclude-copied] ${sanitizeForContext(entry)}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      notes.push(
+        `[worktreeinclude-failed] ${sanitizeForContext(entry)}: ${sanitizeForContext(msg)}`,
+      );
+    }
+  }
+  return notes;
+}
 
 export async function handleWorktreeCreate(
   input: WorktreeCreateInput,
 ): Promise<WorktreeCreateResult> {
+  // projectRoot は entry で realpath 正規化する (macOS の `/var` → `/private/var`
+  // symlink 差を以降の path 計算に波及させない)。worktreePath も結果的にこの
+  // 正規化 root を起点にした sibling となるため、1st call / 2nd call / idempotent
+  // case で同一文字列を保証できる。
+  const projectRoot = normalizePath(input.cwd ?? process.cwd());
   const sections: string[] = [];
+  sections.push("=== Harness WorktreeCreate: blocking protocol ===");
 
-  sections.push(
-    "=== Harness WorktreeCreate: scaffold (Phase κ-2 deferred) ===",
-  );
-
-  if (input.name) {
-    sections.push(`[name] ${sanitizeForContext(input.name)}`);
+  // -------------------------
+  // (1) name validation
+  // -------------------------
+  const rawName = input.name;
+  if (typeof rawName !== "string") {
+    const reason = "name is required (input.name missing)";
+    sections.push(`[error] ${reason}`);
+    sections.push("=== WorktreeCreate failed ===");
+    return {
+      decision: "approve",
+      reason,
+      additionalContext: sections.join("\n"),
+    };
   }
+  const validation = validateWorktreeName(rawName);
+  if (!validation.ok) {
+    const reason = `invalid name: ${validation.reason ?? "rejected"}`;
+    // name 自体は NG だが sanitize して observability のためだけに記録する
+    sections.push(`[error] ${reason}`);
+    sections.push(`[name-raw] ${sanitizeForContext(rawName)}`);
+    sections.push("=== WorktreeCreate failed ===");
+    return {
+      decision: "approve",
+      reason,
+      additionalContext: sections.join("\n"),
+    };
+  }
+
+  // -------------------------
+  // (2) projectRoot newline/CR 早期 reject (stdout contract 保護)
+  //
+  // projectRoot に改行/CR が含まれると、派生 worktreePath/branchName が
+  // stdout raw-path contract / stderr log / additionalContext section 境界を
+  // 破壊する可能性がある。git 呼出前に reject して blocking protocol の失敗に回す。
+  // -------------------------
+  if (/[\n\r]/.test(projectRoot)) {
+    const reason =
+      "projectRoot contains newline/CR characters; refusing to invoke git worktree";
+    sections.push(`[error] ${reason}`);
+    sections.push(`[project-root-sanitized] ${sanitizeForContext(projectRoot)}`);
+    sections.push("=== WorktreeCreate failed (unsafe projectRoot) ===");
+    return {
+      decision: "approve",
+      reason,
+      additionalContext: sections.join("\n"),
+    };
+  }
+
+  // -------------------------
+  // (3) Repo / Unborn HEAD 事前チェック (2 段階)
+  //
+  // `git worktree add` は non-git / unborn HEAD いずれの場合も汎用 git エラーを
+  // 吐くだけで user 視点の診断性が低い。2 段階に切り分けて診断的な reason に
+  // 変換する:
+  //   (a) 非 git ディレクトリ: "not a git repository"
+  //   (b) unborn HEAD (init 直後、commit 前): "repository has no commits"
+  // -------------------------
+  if (!isGitRepository(projectRoot)) {
+    const reason = `cwd is not a git repository: ${sanitizeForContext(projectRoot)}`;
+    sections.push(`[error] ${reason}`);
+    sections.push("=== WorktreeCreate failed (non-git cwd) ===");
+    return {
+      decision: "approve",
+      reason,
+      additionalContext: sections.join("\n"),
+    };
+  }
+  if (!gitHasCommit(projectRoot)) {
+    const reason =
+      "repository has no commits (unborn HEAD); WorktreeCreate requires at least one commit";
+    sections.push(`[error] ${reason}`);
+    sections.push("=== WorktreeCreate failed (unborn HEAD) ===");
+    return {
+      decision: "approve",
+      reason,
+      additionalContext: sections.join("\n"),
+    };
+  }
+
+  // -------------------------
+  // (4) subdirectory-safe repo root 解決 + sibling path 計算
+  //
+  // Claude Code hook の `cwd` は current working directory (CWD) であり、
+  // subdirectory で発火した場合 `projectRoot` は repo 内部の path になる。
+  // sibling 規約 `<parent>/<basename>-wt-<name>` を素朴に CWD 基点で適用すると
+  // 新 worktree path が repo tree 内に侵入し得る (例: `/repo/a/b/sub` →
+  // `/repo/a/b/sub-wt-foo`)。`git rev-parse --show-toplevel` で実 repo root を
+  // 取得して sibling 算定の基点にする。これにより subdirectory 呼出と top-level
+  // 呼出で同じ worktree path を再利用する idempotency が成立する。
+  // -------------------------
+  const repoRoot = resolveRepoRoot(projectRoot);
+  if (repoRoot === null) {
+    // isGitRepository が true なら repoRoot は通常取れるはず。失敗時は安全側に fail。
+    const reason =
+      "failed to resolve repo top-level (git rev-parse --show-toplevel)";
+    sections.push(`[error] ${reason}`);
+    sections.push("=== WorktreeCreate failed (repo-root unresolved) ===");
+    return {
+      decision: "approve",
+      reason,
+      additionalContext: sections.join("\n"),
+    };
+  }
+  const parent = dirname(repoRoot);
+  const base = basename(repoRoot);
+  const worktreePath = resolve(parent, `${base}-wt-${rawName}`);
+  const branchName = `harness-wt/${rawName}`;
+
+  // additionalContext 全 payload 値に newline sanitize を適用 (fake section
+  // 注入対策)。worktreePath/branchName は repoRoot 由来なので改行混入リスクは
+  // 低いが、二重防御で sanitize する。
+  sections.push(`[name] ${sanitizeForContext(rawName)}`);
+  sections.push(`[project-root] ${sanitizeForContext(projectRoot)}`);
+  sections.push(`[repo-root] ${sanitizeForContext(repoRoot)}`);
+  sections.push(`[worktree-path] ${sanitizeForContext(worktreePath)}`);
+  sections.push(`[branch] ${sanitizeForContext(branchName)}`);
 
   if (input.agent_type) {
     sections.push(`[agent-type] ${sanitizeForContext(input.agent_type)}`);
   }
 
-  // 本 scaffold は hooks.json 未登録のため実運用で発火しない。
-  // Phase κ-2 で worktreePath 返却 protocol に差し替えるまでの足場。
-  // hooks.json に登録すると JSON response が absolute path として解釈できず
-  // worktree 作成が失敗する (詳細は handleWorktreeCreate コメントブロック § 失敗モード)。
-  sections.push(
-    "[note] Phase κ-2 まで hooks.json 未登録 / scaffold 実装 (blocking protocol 準拠は Phase κ-2 で追加)",
-  );
+  // -------------------------
+  // (5) idempotency: 既存 worktree を検出したら再利用
+  //
+  // findExistingWorktree は path AND branch の両方一致で match 判定し、
+  // 戻り値は realpath 経由で正規化 (macOS /var ↔ /private/var、Windows 8.3
+  // 短縮名の差を排除)。prunable worktree は skip される。
+  // -------------------------
+  const existing = findExistingWorktree(repoRoot, worktreePath, branchName);
+  if (existing !== null) {
+    sections.push("[idempotent] already exists, reused existing worktree");
+    sections.push("=== WorktreeCreate reused existing ===");
+    return {
+      decision: "approve",
+      worktreePath: normalizePath(existing),
+      additionalContext: sections.join("\n"),
+    };
+  }
 
-  sections.push("=== WorktreeCreate end (scaffold) ===");
+  // -------------------------
+  // (6) git worktree add を実行
+  //
+  // `-b <branch>` で新 branch を作成し HEAD から分岐。既に branch が存在する場合は
+  // `git worktree add` が失敗するため、エラー内容を reason にして fail する。
+  //
+  // 意図的に「既存 branch への attach」 fallback は提供しない。orphan branch
+  // (別 path にあった worktree の残骸、または別用途の手動 branch) を誤って
+  // 再利用すると user が期待していない commit 状態で作業を開始してしまう
+  // 危険があるため、失敗経路に回し user が branch を手動整理してから再試行
+  // する運用とする (cleanup: `git branch -D harness-wt/<name>`)。
+  //
+  // 成功時の戻り値は realpath 正規化した path (idempotent case と揃える)。
+  // -------------------------
 
+  // execFileSync を使い shell interpolation を排除 (shell injection 防止)。
+  // name は validateWorktreeName で制限済みだが二重防御。
+  // git コマンドは repoRoot で実行 (subdirectory で呼ばれた場合の正規化)。
+  const addResult = tryGitWorktreeAdd(repoRoot, worktreePath, branchName);
+  if (addResult.ok) {
+    // -------------------------
+    // (6.5) .worktreeinclude replication
+    //
+    // Claude Code 既定の worktree 作成は `.worktreeinclude` に記された追加の
+    // local 設定ファイル (例: .env) を新 worktree に copy する挙動を持つ。
+    // WorktreeCreate hook を登録すると既定挙動を完全置換するため、手動で
+    // この copy step を replication しないと silent regression となる。
+    // replicateWorktreeInclude は list が無ければ no-op、失敗は debug-only
+    // (worktree 作成自体は既に成功しているため fail-open)。
+    // -------------------------
+    const replicationNotes = replicateWorktreeInclude(repoRoot, worktreePath);
+    for (const note of replicationNotes) {
+      sections.push(sanitizeForContext(note));
+    }
+    sections.push("[created] new worktree + branch");
+    sections.push("=== WorktreeCreate success ===");
+    return {
+      decision: "approve",
+      worktreePath: normalizePath(worktreePath),
+      additionalContext: sections.join("\n"),
+    };
+  }
+
+  // -------------------------
+  // (7) Race condition recheck
+  //
+  // add 失敗後、`findExistingWorktree` の初回判定と `git worktree add` の
+  // 間に並行 WorktreeCreate 呼出で worktree が作られた可能性がある。ここで
+  // もう一度 list を引いて path + branch match で既存 worktree があれば
+  // idempotent 再利用として扱う。
+  // -------------------------
+  const racedExisting = findExistingWorktree(repoRoot, worktreePath, branchName);
+  if (racedExisting !== null) {
+    sections.push(
+      "[idempotent] concurrent create detected after add attempt, reused existing worktree",
+    );
+    sections.push("=== WorktreeCreate reused existing (post-race) ===");
+    return {
+      decision: "approve",
+      worktreePath: normalizePath(racedExisting),
+      additionalContext: sections.join("\n"),
+    };
+  }
+
+  // -------------------------
+  // (7) 最終失敗: git stderr を sanitize して返す
+  //
+  // git stderr は改行を含み得るため、reason に生コピーすると stderr ログで擬似
+  // セクションヘッダが作られる余地がある。sanitizeForContext で改行を `\n`
+  // literal に畳み、trim して返す。
+  // -------------------------
+  const rawStderr = (addResult.stderr || "unknown error").trim();
+  const reason = `git worktree add failed: ${sanitizeForContext(rawStderr)}`;
+  sections.push(`[error] ${reason}`);
+  sections.push("=== WorktreeCreate failed ===");
   return {
     decision: "approve",
+    reason,
     additionalContext: sections.join("\n"),
   };
 }
+
+/**
+ * `cwd` が git リポジトリ (通常の worktree / bare repo / linked worktree のいずれか)
+ * にあるかを `git rev-parse --git-dir` で確認。非 git ディレクトリなら false。
+ *
+ * unborn HEAD (= git init 直後 commit 前) でも true を返す (`git-dir` は存在するため)。
+ */
+function isGitRepository(repo: string): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--git-dir"], {
+      cwd: repo,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `cwd` から git リポジトリの top-level path を解決する。
+ * Claude Code の hook `cwd` payload は current working directory であり、
+ * subdirectory で hook が呼ばれた場合に raw `cwd` を基点とすると sibling
+ * worktree path が repo の内部に侵入する (例: `/repo/subdir` → `/repo/subdir-wt-foo`)。
+ * `git rev-parse --show-toplevel` で実 repo root を取得して sibling path 算定に使う。
+ *
+ * 非 git ディレクトリなら null。戻り値は realpath 正規化済 (normalizePath 経由)。
+ */
+function resolveRepoRoot(cwd: string): string | null {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    const top = out.trim();
+    if (top.length === 0) return null;
+    return normalizePath(top);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * repository に少なくとも 1 個 commit があるかを `git rev-parse HEAD` で確認。
+ *
+ * 呼び出し前提: `cwd` は `isGitRepository(cwd) === true` が確認済の repo。
+ * unborn HEAD (= git init 直後、commit 前) では false、commit があれば true。
+ * bare / non-git のケースは `isGitRepository` で先に除外する運用のため、ここでは
+ * 「unborn HEAD かどうか」だけを判定できる前提になる。
+ */
+function gitHasCommit(repo: string): boolean {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
+      cwd: repo,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface GitExecResult {
+  ok: boolean;
+  stderr?: string;
+}
+
+function tryGitWorktreeAdd(
+  repo: string,
+  path: string,
+  branch: string,
+): GitExecResult {
+  try {
+    execFileSync("git", ["worktree", "add", path, "-b", branch], {
+      cwd: repo,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return { ok: true };
+  } catch (err) {
+    const stderr =
+      err && typeof err === "object" && "stderr" in err
+        ? (err as { stderr?: Buffer | string }).stderr?.toString() ?? ""
+        : String(err);
+    return { ok: false, stderr };
+  }
+}
+

@@ -13,9 +13,9 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { spawnSync } from "node:child_process";
+import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { route, errorToResult } from "../index.js";
@@ -294,7 +294,7 @@ describe("route() dispatcher — hook integration", () => {
     });
   });
 
-  describe("worktree-remove (Phase η P0-κ, non-blocking observability)", () => {
+  describe("worktree-remove (non-blocking observability)", () => {
     it("maps handler.additionalContext into HookResult.reason", async () => {
       const result = await route("worktree-remove", {
         hook_event_name: "WorktreeRemove",
@@ -320,21 +320,83 @@ describe("route() dispatcher — hook integration", () => {
     });
   });
 
-  describe("worktree-create (Phase η P0-κ scaffold, hooks.json 未登録)", () => {
-    // route() から呼び出し可能であることを確認する足場テスト。
-    // hooks.json 未登録のため実運用では発火しないが、Phase κ-2 実装時に
-    // route() 経路が既に通っている状態を前提にできるよう先行整備する。
-    it("returns approve with scaffold notice in reason", async () => {
+  describe("worktree-create (blocking protocol)", () => {
+    // production 実装: `git worktree add` を実行し worktreePath を返す。
+    // tmpRoot は git repo ではないので handler は失敗を fail-open で返し
+    // (decision=approve, worktreePath=undefined)、main() が exit 1 に変換する
+    // (blocking semantics)。
+    //
+    // 実 git worktree add 経由の成功ケースは worktree-lifecycle.test.ts で
+    // カバーされる。本テストは route() dispatcher が worktreePath を
+    // HookResult 経由で適切に伝搬することの guard。
+    it("tmpRoot (非 git) では fail-open: decision=approve, worktreePath=undefined", async () => {
       const result = await route("worktree-create", {
         hook_event_name: "WorktreeCreate",
         cwd: tmpRoot,
-        name: "scaffold-slug",
+        name: "not-git-slug",
       });
       expect(result.decision).toBe("approve");
-      expect(result.reason).toBeDefined();
-      expect(result.reason).toContain("scaffold-slug");
-      // scaffold / Phase κ-2 / deferred のいずれかを明示していること
-      expect(result.reason ?? "").toMatch(/Phase κ-2|scaffold|deferred/i);
+      // 失敗時は worktreePath 未設定 (index.ts main() で exit 1)
+      expect(result.worktreePath).toBeUndefined();
+      // reason に失敗理由 (git / worktree / not a ... のいずれかの文字列) を含む
+      expect(result.reason ?? "").toMatch(/git|worktree|not a|name/i);
+    });
+
+    it("route() は handler の worktreePath を HookResult に伝搬する (blocking 成功経路)", async () => {
+      // 成功経路の検証: tmpRoot を git init して initial commit を置く。
+      // `-b main` は git >= 2.28 のみ対応のため、古い runner では `git init`
+      // + `git branch -M main` に fallback する (try/catch で段階的 trial)。
+      try {
+        execFileSync("git", ["init", "-b", "main"], {
+          cwd: tmpRoot,
+          stdio: "pipe",
+        });
+      } catch {
+        execFileSync("git", ["init"], { cwd: tmpRoot, stdio: "pipe" });
+      }
+      execFileSync("git", ["config", "user.email", "test@example.com"], {
+        cwd: tmpRoot,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "harness-test"], {
+        cwd: tmpRoot,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "commit.gpgsign", "false"], {
+        cwd: tmpRoot,
+        stdio: "pipe",
+      });
+      writeFileSync(join(tmpRoot, "README.md"), "test\n", "utf-8");
+      execFileSync("git", ["add", "README.md"], {
+        cwd: tmpRoot,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["commit", "-m", "init"], {
+        cwd: tmpRoot,
+        stdio: "pipe",
+      });
+
+      const result = await route("worktree-create", {
+        hook_event_name: "WorktreeCreate",
+        cwd: tmpRoot,
+        name: "route-slug",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.worktreePath).toBeDefined();
+      // isAbsolute で OS 中立判定 (Windows 互換)。
+      expect(isAbsolute(result.worktreePath!)).toBe(true);
+
+      // 後始末: 作成された worktree を除去 (tempDirs cleanup で broken worktree 扱いを防止)。
+      // shell injection 排除のため execFileSync + args array を使う。
+      try {
+        execFileSync(
+          "git",
+          ["worktree", "remove", result.worktreePath!, "--force"],
+          { cwd: tmpRoot, stdio: "pipe" },
+        );
+      } catch {
+        // ignore — afterEach が tmpRoot 自体を rm する
+      }
     });
   });
 
@@ -472,6 +534,109 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
         decision: string;
       };
       expect(parsed.decision).toBe("approve");
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "worktree-create: 成功時 stdout に raw absolute path、NOT JSON、exit 0",
+    () => {
+      // 公式仕様 (code.claude.com/docs/en/hooks):
+      //   Command hook は worktreePath を raw stdout に書き出す (JSON ではなく生パス)
+      //   exit 0 = 成功、worktree 作成成功
+      // main() は worktree-create の HookResult.worktreePath を JSON 化せず
+      // そのまま stdout に出す分岐を持つ必要がある。
+      const gitRepo = mkTmp("harness-wtc-e2e");
+      try {
+        // git init -b main with fallback (git < 2.28 compatibility)
+        try {
+          execFileSync("git", ["init", "-b", "main"], {
+            cwd: gitRepo,
+            stdio: "pipe",
+          });
+        } catch {
+          execFileSync("git", ["init"], { cwd: gitRepo, stdio: "pipe" });
+        }
+        execFileSync("git", ["config", "user.email", "e2e@example.com"], {
+          cwd: gitRepo,
+          stdio: "pipe",
+        });
+        execFileSync("git", ["config", "user.name", "e2e"], {
+          cwd: gitRepo,
+          stdio: "pipe",
+        });
+        execFileSync("git", ["config", "commit.gpgsign", "false"], {
+          cwd: gitRepo,
+          stdio: "pipe",
+        });
+        writeFileSync(join(gitRepo, "hello.txt"), "hi\n", "utf-8");
+        execFileSync("git", ["add", "hello.txt"], {
+          cwd: gitRepo,
+          stdio: "pipe",
+        });
+        execFileSync("git", ["commit", "-m", "init"], {
+          cwd: gitRepo,
+          stdio: "pipe",
+        });
+
+        const result = spawnSync(
+          process.execPath,
+          [distPath, "worktree-create"],
+          {
+            input: JSON.stringify({
+              hook_event_name: "WorktreeCreate",
+              cwd: gitRepo,
+              name: "e2e-slug",
+            }),
+            encoding: "utf-8",
+            timeout: 15_000,
+          },
+        );
+        expect(result.status).toBe(0);
+        const stdout = result.stdout.trim();
+        // Raw absolute path であり JSON ではない (isAbsolute で OS 中立判定)。
+        expect(isAbsolute(stdout)).toBe(true);
+        expect(stdout).not.toMatch(/^\{/);
+        expect(existsSync(stdout)).toBe(true);
+
+        // 生成 worktree の cleanup (shell injection 排除のため execFileSync + args array)
+        try {
+          execFileSync("git", ["worktree", "remove", stdout, "--force"], {
+            cwd: gitRepo,
+            stdio: "pipe",
+          });
+        } catch {
+          // ignore
+        }
+      } finally {
+        rmSync(gitRepo, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "worktree-create: 失敗時 exit 非 0 (blocking protocol — 公式: any non-zero exit causes creation to fail)",
+    () => {
+      // non-git dir → handler は worktreePath を返せない
+      // → main() は exit 1 で blocking 失敗を通知
+      const nonGit = mkTmp("harness-wtc-nogit-e2e");
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [distPath, "worktree-create"],
+          {
+            input: JSON.stringify({
+              hook_event_name: "WorktreeCreate",
+              cwd: nonGit,
+              name: "e2e-fail",
+            }),
+            encoding: "utf-8",
+            timeout: 5_000,
+          },
+        );
+        expect(result.status).not.toBe(0);
+      } finally {
+        rmSync(nonGit, { recursive: true, force: true });
+      }
     },
   );
 

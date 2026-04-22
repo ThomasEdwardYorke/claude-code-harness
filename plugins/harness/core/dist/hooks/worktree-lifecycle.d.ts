@@ -1,33 +1,45 @@
 /**
  * hooks/worktree-lifecycle.ts
  *
- * WorktreeCreate / WorktreeRemove hook handlers — Phase η P0-κ (2026-04-22).
+ * WorktreeCreate / WorktreeRemove hook handlers.
  *
- * ## 公式仕様 (research-anthropic-official-2026-04-22.md § 3 フック)
+ * ## 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23)
  *
- * - **WorktreeCreate**: Claude Code 既定の `git worktree` 作成処理を **完全置換** する
- *   blocking hook。`command` stdout に absolute path を書き出すプロトコル必須。
- *   matcher 非対応、毎回発火。observability 用途だけで登録すると作成自体が失敗する。
+ * - **WorktreeCreate (blocking)**: Claude Code 既定の `git worktree` 作成処理を
+ *   **完全置換**する blocking hook。command hook の場合は raw absolute path を
+ *   stdout に書き出す (HTTP hook は `hookSpecificOutput.worktreePath`)。
+ *   exit 0 = 成功、any non-zero exit = worktree 作成失敗。
+ *   matcher 非対応、毎回発火。
  *
- * - **WorktreeRemove**: non-blocking observability hook。失敗は debug-only で
+ * - **WorktreeRemove (non-blocking)**: observability hook。失敗は debug-only で
  *   本体処理に影響しない。matcher 非対応、毎回発火。
  *
- * ## 本 Phase の設計判断
+ * ## 本 handler の責務
  *
- * 1. **WorktreeRemove**: `hooks.json` に登録し、`/parallel-worktree` 運用や
- *    `isolation: worktree` agent 終了時に coordinator への同期リマインダーを出す。
- *    既存の `pre-compact.ts` と同じく `loadConfigSafe` で fail-open を担保。
+ * 1. **WorktreeRemove**: `/parallel-worktree` 運用や `isolation: worktree` agent
+ *    終了時に coordinator への同期リマインダー (Plans.md 担当表) を出す。
+ *    `loadConfigSafe` で fail-open を担保。
  *
- * 2. **WorktreeCreate**: **hooks.json には登録しない**。既定挙動を置換する blocking
- *    protocol 準拠実装は Phase κ-2 (`isolation: worktree` + `WorktreeCreate/Remove`
- *    hook 協調設計) で行う。本 Phase では `route()` / `HookType` union の scaffold
- *    のみ整備し、追加実装の前進路を確保する。handler は呼ばれれば approve + scaffold
- *    notice を返すだけ (副作用なし)。
+ * 2. **WorktreeCreate (blocking protocol production)**: 実 `git worktree add` を
+ *    実行し、作成した worktree の absolute path を HookResult.worktreePath に
+ *    載せる。index.ts main() の worktree-create 分岐が worktreePath を raw stdout
+ *    に書き出す。失敗時 (name invalid / non-git cwd / git failure) は worktreePath
+ *    未設定で返し、main() が exit 1 に変換して公式 blocking protocol に従う。
  *
- * ## 関連 doc
+ * ## `isolation: worktree` 協調設計の扱い
+ *
+ * 現行: agent frontmatter `isolation: worktree` は未付与 (regression guard 済)。
+ * `/parallel-worktree` の手動 `git worktree add` 運用と二重 worktree 作成干渉
+ * リスクがあるため。WorktreeCreate hook の infrastructure は整備完了し、将来
+ * 特定 agent で `isolation: worktree` を有効化する際には `/parallel-worktree` と
+ * の共存ロジック (env marker / cwd 判定 / handler 側 idempotent 再利用) を
+ * 組み合わせて二重作成を防ぐ設計に移行する。
+ *
+ * ## 関連 doc (設計経緯)
  * - docs/maintainer/research-anthropic-official-2026-04-22.md
  * - docs/maintainer/research-subagent-isolation-2026-04-22.md
- * - docs/maintainer/ROADMAP-model-b.md (Phase 1 hook events、Phase κ-2)
+ * - docs/maintainer/ROADMAP-model-b.md
+ * - CHANGELOG.md (feature history)
  */
 export interface WorktreeRemoveInput {
     hook_event_name: string;
@@ -59,7 +71,19 @@ export interface WorktreeCreateInput {
 }
 export interface WorktreeCreateResult {
     decision: "approve";
+    /** 人間可読の diagnostic (成功/失敗両方に含まれる、observability 用)。 */
     additionalContext?: string;
+    /**
+     * 失敗時の理由 (blocking protocol で worktreePath 未設定になった原因)。
+     * main() が exit 1 で stderr に書き出す候補文字列として使われる。
+     */
+    reason?: string;
+    /**
+     * 成功時のみ設定される、作成された worktree の absolute path。
+     * index.ts main() の worktree-create 分岐が raw stdout に書き出す。
+     * 未設定 (failure) だと main() は exit 1 で blocking 失敗を通知。
+     */
+    worktreePath?: string;
 }
 export declare function handleWorktreeRemove(input: WorktreeRemoveInput): Promise<WorktreeRemoveResult>;
 export declare function handleWorktreeCreate(input: WorktreeCreateInput): Promise<WorktreeCreateResult>;
