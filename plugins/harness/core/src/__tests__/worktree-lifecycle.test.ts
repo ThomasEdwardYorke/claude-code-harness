@@ -3,21 +3,20 @@
  *
  * WorktreeCreate / WorktreeRemove hook handler のテスト。
  *
- * ## 設計方針 (Phase κ-2 production、2026-04-23 更新)
+ * ## 設計方針
  *
  * - **WorktreeRemove**: non-blocking observability として完全実装。Plans.md の
  *   担当表リマインダーを additionalContext に乗せ、`/parallel-worktree` 運用や
  *   `isolation: worktree` agent 終了時に coordinator の同期漏れを防ぐ。
  *
- * - **WorktreeCreate (Phase κ-2)**: blocking protocol production 実装。
- *   hooks.json 登録済、公式仕様 (https://code.claude.com/docs/en/hooks) に
- *   従い command hook として実 `git worktree add` を実行し、
- *   worktreePath (absolute sibling path) を HookResult に載せて返す。
- *   index.ts main() が raw stdout path を書き出し、exit 0 / 非 0 で blocking
- *   semantics (any non-zero causes worktree creation to fail) を実装。
+ * - **WorktreeCreate**: blocking protocol production 実装。hooks.json 登録済、
+ *   公式仕様 (https://code.claude.com/docs/en/hooks) に従い command hook として
+ *   実 `git worktree add` を実行し、worktreePath (absolute sibling path) を
+ *   HookResult に載せて返す。index.ts main() が raw stdout path を書き出し、
+ *   exit 0 / 非 0 で blocking semantics (any non-zero causes worktree creation
+ *   to fail) を実装。
  *
- * 関連研究: docs/maintainer/research-anthropic-official-2026-04-22.md
- *           docs/maintainer/research-subagent-isolation-2026-04-22.md
+ * 設計経緯は CHANGELOG.md と docs/maintainer/ROADMAP-model-b.md を参照。
  */
 
 import { describe, it, expect, afterEach } from "vitest";
@@ -310,7 +309,7 @@ describe("handleWorktreeRemove", () => {
 });
 
 // ============================================================
-// handleWorktreeCreate (Phase κ-2 blocking protocol production 実装)
+// handleWorktreeCreate (blocking protocol production)
 //
 // 公式仕様 (https://code.claude.com/docs/en/hooks):
 //   - Command hook: raw absolute path を stdout に書き出す
@@ -334,8 +333,9 @@ describe("handleWorktreeRemove", () => {
 /**
  * git init with branch name portability fallback.
  *
- * Codex review #19 (minor portability): `git init -b main` は git >= 2.28 のみ。
- * 古い CI では `git init` + `git branch -M main` に fallback。
+ * `git init -b main` は git >= 2.28 のみ。古い CI 環境では `git init` +
+ * `git branch -M main` に fallback し、後続の worktree add が HEAD から分岐
+ * できる状態にする。
  */
 function initRepoOnMain(cwd: string): void {
   try {
@@ -381,9 +381,8 @@ function setupTempGitRepo(): string {
  * `.git/worktrees/<slug>/` メタ情報は残ってしまう。vitest が順次並列実行される
  * 場合に不要なエラー出力を防ぐため個別撤去する。
  *
- * pseudo-CodeRabbit review (wtc-shell-inject-test-cleanup-f3a2) 対応:
- * execSync + template literal を execFileSync + args array に変更し、shell
- * interpolation を排除 (production コード worktree-lifecycle.ts と同方針)。
+ * shell injection 排除: execFileSync + args array で shell interpolation を
+ * 回避 (production コード worktree-lifecycle.ts と同方針)。
  */
 function cleanupWorktree(parentRepo: string, worktreePath: string): void {
   try {
@@ -396,7 +395,7 @@ function cleanupWorktree(parentRepo: string, worktreePath: string): void {
   }
 }
 
-describe("handleWorktreeCreate (Phase κ-2 blocking protocol)", () => {
+describe("handleWorktreeCreate (blocking protocol)", () => {
   it("関数が export されており呼び出し可能", () => {
     expect(typeof handleWorktreeCreate).toBe("function");
   });
@@ -410,17 +409,19 @@ describe("handleWorktreeCreate (Phase κ-2 blocking protocol)", () => {
     });
     expect(result.decision).toBe("approve");
     expect(result.worktreePath).toBeDefined();
-    // Codex review #8 対応: POSIX 限定の `/^\//` regex を Windows 互換の
-    // isAbsolute() に置換 (path.isAbsolute は OS 別の絶対 path 形式に追随)。
+    // isAbsolute で OS 中立判定 (Windows の "C:\\..." / POSIX "/..." 両対応)。
     expect(isAbsolute(result.worktreePath!)).toBe(true);
     expect(existsSync(result.worktreePath!)).toBe(true);
 
-    // git worktree list に登録されていること
+    // git worktree list に登録されていること。Windows では git が forward
+    // slash で出力するため、両側 forward slash に畳んで比較する。
     const listing = execFileSync("git", ["worktree", "list"], {
       cwd: repo,
       stdio: "pipe",
     }).toString();
-    expect(listing).toContain(result.worktreePath!);
+    const normalizedListing = listing.replace(/\\/g, "/");
+    const normalizedPath = result.worktreePath!.replace(/\\/g, "/");
+    expect(normalizedListing).toContain(normalizedPath);
 
     cleanupWorktree(repo, result.worktreePath!);
   });
@@ -508,7 +509,7 @@ describe("handleWorktreeCreate (Phase κ-2 blocking protocol)", () => {
     expect(result.reason ?? "").toMatch(/git|worktree|not a/i);
   });
 
-  it("unborn HEAD (git init 直後、commit 前) で明示的 reason を返す (Codex review #6)", async () => {
+  it("unborn HEAD (git init 直後、commit 前) で明示的 reason を返す", async () => {
     // git init のみで commit が無い repo は `git worktree add` が汎用エラーを吐く。
     // handler 側で unborn HEAD を先検出し診断性の高い reason を返すこと。
     const dir = mkdtempSync(join(tmpdir(), "harness-wtc-unborn-"));
@@ -527,7 +528,7 @@ describe("handleWorktreeCreate (Phase κ-2 blocking protocol)", () => {
     expect(result.additionalContext ?? "").toMatch(/unborn HEAD/);
   });
 
-  it("race case: 手動で worktree を作ってから handler を呼ぶと post-race recheck で既存 path を返す (Codex review #2)", async () => {
+  it("race case: 手動で worktree を作ってから handler を呼ぶと post-race recheck で既存 path を返す", async () => {
     // `findExistingWorktree` の初回判定 → `git worktree add` の間に別プロセスが
     // 同 path を作った状況をシミュレート: 手動で `git worktree add` してから
     // handler を呼ぶ。handler 内部の add は失敗するが、post-race recheck で

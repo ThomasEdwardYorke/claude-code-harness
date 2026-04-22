@@ -1298,25 +1298,27 @@ describe("Phase κ: subagent frontmatter の isolation 設定", () => {
 });
 
 // ============================================================
-// Phase κ-2 (2026-04-23): WorktreeCreate / WorktreeRemove hook 登録 invariant
+// WorktreeCreate / WorktreeRemove hook 登録 invariant
 //
-// 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
+// 公式仕様 (https://code.claude.com/docs/en/hooks):
 //  - WorktreeRemove: non-blocking observability。失敗は debug-only。
 //  - WorktreeCreate: 既定 git worktree 作成処理を「完全置換」する blocking hook。
 //                    Command hook は raw absolute path を stdout に書き出す。
 //                    HTTP hook は `hookSpecificOutput.worktreePath` で JSON return。
 //                    exit 0 = 成功、any non-zero = worktree 作成失敗 (blocking)。
 //
-// 本 Phase の判断 (Phase η P0-κ → Phase κ-2 進化):
+// 現行の判断:
 //  - WorktreeRemove は hooks.json に登録 (観測 + coordinator リマインダー)。
 //  - WorktreeCreate は blocking protocol 準拠 production 実装として hooks.json 登録:
 //    * handler が実 `git worktree add` を実行し worktreePath を返す
 //    * main() は worktree-create 分岐で worktreePath を raw stdout に書く
 //    * timeout 120s (git worktree add + fetch まで余裕を持たせる)
-//  - agent frontmatter `isolation: worktree` 付与は Phase κ-3 以降 deferred
-//    (`/parallel-worktree` 手動管理と二重 worktree 干渉リスク回避、現在は別 describe で guard)
+//  - agent frontmatter `isolation: worktree` 付与は保留中
+//    (`/parallel-worktree` 手動管理と二重 worktree 干渉リスク回避、別 describe で guard)
+//
+// 設計経緯と版数追跡は CHANGELOG.md および docs/maintainer/ROADMAP-model-b.md を参照。
 // ============================================================
-describe("Phase κ-2: WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
+describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const worktreeLifecyclePath = resolve(
     PLUGIN_ROOT,
@@ -1341,7 +1343,7 @@ describe("Phase κ-2: WorktreeCreate / WorktreeRemove hook 登録 invariant", ()
     expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
   });
 
-  it("hooks.json は WorktreeCreate を登録する (Phase κ-2 blocking protocol, timeout 120s)", () => {
+  it("hooks.json は WorktreeCreate を登録する (blocking protocol, timeout 120s)", () => {
     // 公式仕様準拠の blocking hook として登録。timeout 120s の根拠:
     //   - 大規模 repo (10GB+ / 数十万 object) の local `git worktree add` は
     //     チェックアウト自体に数十秒かかることがある (filesystem copy + index 展開)。
@@ -1384,10 +1386,12 @@ describe("Phase κ-2: WorktreeCreate / WorktreeRemove hook 登録 invariant", ()
     // production 実装であることを明示する guard:
     //   (a) blocking / exit / non-zero の意図説明があること (公式仕様準拠の理由付け)
     //   (b) `git worktree add` (実コマンド) / worktreePath (公式 output 名) の参照があること
-    // 旧 scaffold 時代の `Phase κ-2 deferred` notice が残っていないこと (mutually exclusive)。
+    //   (c) `scaffold ... deferred` や `deferred ... scaffold` の組が復活しないこと
+    //       (production 化後に scaffold 状態に退行するのを防ぐ regression guard)
     //
-    // Codex review 対応 (R2-T2 踏襲): ファイル全体ではなく `handleWorktreeCreate` 周辺
-    // (関数の上コメントブロック + 関数本体) に限定して regex を適用する。
+    // ファイル全体ではなく `handleWorktreeCreate` 周辺 (関数の上コメントブロック +
+    // 関数本体) に限定して regex を適用し、将来同ファイルで別 scaffold handler が
+    // 追加されても false positive を招かないようにする。
     const src = readFileSync(worktreeLifecyclePath, "utf-8");
     const handleWorktreeCreateIdx = src.indexOf(
       "export async function handleWorktreeCreate",
@@ -1409,11 +1413,11 @@ describe("Phase κ-2: WorktreeCreate / WorktreeRemove hook 登録 invariant", ()
     // (b) 実 git worktree add を呼ぶ記述があること
     expect(scopedSrc).toMatch(/git\s+worktree\s+add/i);
 
-    // (c) 旧 scaffold notice は残っていないこと (production 化の明示)
-    // 単語片 "deferred" 自体は agent isolation 繰延べ文脈で再利用可能だが、
-    // 旧 scaffold 特有の「Phase κ-2 deferred」という組は production では成立しない。
+    // (c) `scaffold ... deferred` の組 (production 退行の典型パターン) が残って
+    //     いないこと。個別の "deferred" 単語は isolation 繰延べ文脈で再利用可能なので
+    //     近傍 80 文字以内で "scaffold" と "deferred" が組で現れるケースのみ red。
     expect(scopedSrc).not.toMatch(
-      /Phase κ-2[\s\S]{0,80}?deferred|deferred[\s\S]{0,80}?Phase κ-2/,
+      /scaffold[\s\S]{0,80}?deferred|deferred[\s\S]{0,80}?scaffold/i,
     );
   });
 });

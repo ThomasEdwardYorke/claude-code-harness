@@ -20,26 +20,26 @@
  *    終了時に coordinator への同期リマインダー (Plans.md 担当表) を出す。
  *    `loadConfigSafe` で fail-open を担保。
  *
- * 2. **WorktreeCreate (Phase κ-2 production)**: 実 `git worktree add` を実行し、
- *    作成した worktree の absolute path を HookResult.worktreePath に載せる。
- *    index.ts main() の worktree-create 分岐が worktreePath を raw stdout に書き出す。
- *    失敗時 (name invalid / non-git cwd / git failure) は worktreePath 未設定で返し、
- *    main() が exit 1 に変換して公式 blocking protocol に従う。
+ * 2. **WorktreeCreate (blocking protocol production)**: 実 `git worktree add` を
+ *    実行し、作成した worktree の absolute path を HookResult.worktreePath に
+ *    載せる。index.ts main() の worktree-create 分岐が worktreePath を raw stdout
+ *    に書き出す。失敗時 (name invalid / non-git cwd / git failure) は worktreePath
+ *    未設定で返し、main() が exit 1 に変換して公式 blocking protocol に従う。
  *
  * ## `isolation: worktree` 協調設計の扱い
  *
- * 現状 (Phase κ-2): agent frontmatter `isolation: worktree` は未付与
- * (content-integrity.test.ts Phase κ guard で強制)。`/parallel-worktree` の
- * 手動 `git worktree add` 運用と二重 worktree 作成干渉リスクがあるため。
+ * 現行: agent frontmatter `isolation: worktree` は未付与 (regression guard 済)。
+ * `/parallel-worktree` の手動 `git worktree add` 運用と二重 worktree 作成干渉
+ * リスクがあるため。WorktreeCreate hook の infrastructure は整備完了し、将来
+ * 特定 agent で `isolation: worktree` を有効化する際には `/parallel-worktree` と
+ * の共存ロジック (env marker / cwd 判定 / handler 側 idempotent 再利用) を
+ * 組み合わせて二重作成を防ぐ設計に移行する。
  *
- * WorktreeCreate hook の infrastructure は本 Phase で整備完了。将来 Phase κ-3
- * 以降で agent 個別の `isolation: worktree` 付与 + `/parallel-worktree` との
- * 共存ロジック (env marker / cwd 判定) を追加する予定。
- *
- * ## 関連 doc
+ * ## 関連 doc (設計経緯)
  * - docs/maintainer/research-anthropic-official-2026-04-22.md
  * - docs/maintainer/research-subagent-isolation-2026-04-22.md
- * - docs/maintainer/ROADMAP-model-b.md (Phase κ series)
+ * - docs/maintainer/ROADMAP-model-b.md
+ * - CHANGELOG.md (feature history)
  */
 
 import { execFileSync } from "node:child_process";
@@ -108,7 +108,7 @@ export interface WorktreeCreateResult {
 }
 
 // ------------------------------------------------------------
-// name validation (Phase κ-2)
+// name validation
 // ------------------------------------------------------------
 //
 // WorktreeCreate input の `name` は Claude Code が生成する slug 名だが、
@@ -124,9 +124,9 @@ export interface WorktreeCreateResult {
 
 /**
  * 長さ上限 64 文字は NAME_ALLOWED_PATTERN の trailing quantifier `{0,63}` が
- * 先頭 1 文字と合わせて enforce する (1 + 63 = 64)。pseudo-CodeRabbit review
- * (wtc-name-len-check-unreachable) 対応: 別途の length ガードは regex に届く前に
- * fire しない dead code になっていたため廃止し、regex と「最大長」の契約を一本化。
+ * 先頭 1 文字と合わせて enforce する (1 + 63 = 64)。別途の length ガードは
+ * regex に届く前に fire しない dead code となるため置かず、regex と「最大長」
+ * の契約を一本化している。
  */
 const NAME_ALLOWED_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
 
@@ -262,7 +262,7 @@ export async function handleWorktreeRemove(
 }
 
 // ============================================================
-// handleWorktreeCreate (Phase κ-2 blocking protocol production)
+// handleWorktreeCreate (blocking protocol production)
 //
 // ## Protocol
 //
@@ -317,6 +317,17 @@ function normalizePath(p: string): string {
 }
 
 /**
+ * Windows 互換の slash 統一: backslash を forward slash に畳む。
+ *
+ * Git は `git worktree list --porcelain` で常に forward slash を出力するが、
+ * Node.js の `realpathSync` / `resolve` は Windows で backslash を返すため、
+ * path 比較を行う際に両者を同一 slash 形式に揃える必要がある。
+ */
+function toForwardSlash(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/**
  * git worktree list --porcelain の出力をパースして、指定 path 配下 (absolute match)
  * の worktree が既に存在するかを判定する。存在するなら同 path (正規化後) を返す。
  *
@@ -339,11 +350,13 @@ function findExistingWorktree(repo: string, targetPath: string): string | null {
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
-    const normalizedTarget = normalizePath(targetPath);
+    // Windows 互換のため、比較は forward slash 統一形式で行う。
+    // git worktree list は forward slash 固定、realpathSync は OS 依存 (Windows は backslash)。
+    const normalizedTarget = toForwardSlash(normalizePath(targetPath));
     for (const line of out.split("\n")) {
       if (line.startsWith("worktree ")) {
         const path = line.slice("worktree ".length).trim();
-        if (normalizePath(path) === normalizedTarget) {
+        if (toForwardSlash(normalizePath(path)) === normalizedTarget) {
           return path;
         }
       }
@@ -430,9 +443,8 @@ export async function handleWorktreeCreate(
   // -------------------------
   // (4) Unborn HEAD (初 commit 前) 事前チェック
   //
-  // Codex review #6 対応: `git worktree add` は unborn HEAD の repo で汎用
-  // エラーを吐くだけで user 視点の診断性が低い。明示的に検出して分かりやすい
-  // reason に変換する。
+  // `git worktree add` は unborn HEAD の repo で汎用エラーを吐くだけで user
+  // 視点の診断性が低い。明示的に検出して分かりやすい reason に変換する。
   // -------------------------
   if (!gitHasCommit(projectRoot)) {
     const reason =
@@ -490,10 +502,9 @@ export async function handleWorktreeCreate(
   // -------------------------
   // (6) Race condition recheck
   //
-  // Codex review #2 対応 (major): 2 回 add 失敗後、`findExistingWorktree` の
-  // 初回判定と `git worktree add` の間に並行 WorktreeCreate 呼出で worktree
-  // が作られた可能性がある。ここでもう一度 list を引いて既存 worktree があれば
-  // idempotent 再利用として扱う。
+  // 2 回 add 失敗後、`findExistingWorktree` の初回判定と `git worktree add` の
+  // 間に並行 WorktreeCreate 呼出で worktree が作られた可能性がある。ここで
+  // もう一度 list を引いて既存 worktree があれば idempotent 再利用として扱う。
   // -------------------------
   const racedExisting = findExistingWorktree(projectRoot, worktreePath);
   if (racedExisting !== null) {
@@ -511,9 +522,9 @@ export async function handleWorktreeCreate(
   // -------------------------
   // (7) 最終失敗: git stderr を sanitize して返す
   //
-  // Codex review #5 対応 (minor): git stderr は改行を含み得るため、reason に
-  // 生コピーすると stderr ログで擬似セクションヘッダが作られる余地がある。
-  // sanitizeForContext で改行を `\n` literal に畳み、trim して返す。
+  // git stderr は改行を含み得るため、reason に生コピーすると stderr ログで擬似
+  // セクションヘッダが作られる余地がある。sanitizeForContext で改行を `\n`
+  // literal に畳み、trim して返す。
   // -------------------------
   const rawStderr = (retryResult.stderr || addResult.stderr || "unknown error")
     .trim();

@@ -205,7 +205,7 @@ export async function route(
       return wrHR;
     }
     case "worktree-create": {
-      // Phase κ-2 blocking protocol: 公式仕様
+      // WorktreeCreate blocking protocol: 公式仕様
       // (https://code.claude.com/docs/en/hooks) に従い、command hook として
       // 実 `git worktree add` を実行し absolute path を返す。
       //
@@ -311,7 +311,7 @@ async function main(): Promise<void> {
   if (hookType === "permission" && result.systemMessage !== undefined) {
     process.stdout.write(result.systemMessage + "\n");
   } else if (hookType === "worktree-create") {
-    // Phase κ-2 blocking protocol:
+    // WorktreeCreate blocking protocol:
     //   公式仕様 (https://code.claude.com/docs/en/hooks) により、command hook は
     //   raw absolute path を stdout に書き出す。exit 0 = 成功、any non-zero = 失敗。
     //

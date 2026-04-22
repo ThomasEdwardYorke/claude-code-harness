@@ -294,7 +294,7 @@ describe("route() dispatcher — hook integration", () => {
     });
   });
 
-  describe("worktree-remove (Phase η P0-κ, non-blocking observability)", () => {
+  describe("worktree-remove (non-blocking observability)", () => {
     it("maps handler.additionalContext into HookResult.reason", async () => {
       const result = await route("worktree-remove", {
         hook_event_name: "WorktreeRemove",
@@ -320,11 +320,11 @@ describe("route() dispatcher — hook integration", () => {
     });
   });
 
-  describe("worktree-create (Phase κ-2 blocking protocol)", () => {
-    // Phase κ-2 以降: `git worktree add` を実行し worktreePath を返す
-    // production 実装。tmpRoot は git repo ではないので handler は失敗を
-    // fail-open で返し (decision=approve, worktreePath=undefined)、
-    // main() が exit 1 に変換する (blocking semantics)。
+  describe("worktree-create (blocking protocol)", () => {
+    // production 実装: `git worktree add` を実行し worktreePath を返す。
+    // tmpRoot は git repo ではないので handler は失敗を fail-open で返し
+    // (decision=approve, worktreePath=undefined)、main() が exit 1 に変換する
+    // (blocking semantics)。
     //
     // 実 git worktree add 経由の成功ケースは worktree-lifecycle.test.ts で
     // カバーされる。本テストは route() dispatcher が worktreePath を
@@ -344,8 +344,8 @@ describe("route() dispatcher — hook integration", () => {
 
     it("route() は handler の worktreePath を HookResult に伝搬する (blocking 成功経路)", async () => {
       // 成功経路の検証: tmpRoot を git init して initial commit を置く。
-      // Codex review #19 対応: `-b main` は git >= 2.28 のみ、古い runner で
-      // fallback するため try/catch で段階的に trial する。
+      // `-b main` は git >= 2.28 のみ対応のため、古い runner では `git init`
+      // + `git branch -M main` に fallback する (try/catch で段階的 trial)。
       try {
         execFileSync("git", ["init", "-b", "main"], {
           cwd: tmpRoot,
@@ -383,11 +383,11 @@ describe("route() dispatcher — hook integration", () => {
       });
       expect(result.decision).toBe("approve");
       expect(result.worktreePath).toBeDefined();
-      // Codex review #8 対応: isAbsolute で OS 中立判定 (Windows 互換)。
+      // isAbsolute で OS 中立判定 (Windows 互換)。
       expect(isAbsolute(result.worktreePath!)).toBe(true);
 
       // 後始末: 作成された worktree を除去 (tempDirs cleanup で broken worktree 扱いを防止)。
-      // pseudo-CodeRabbit review 対応: execSync + template literal は使わない。
+      // shell injection 排除のため execFileSync + args array を使う。
       try {
         execFileSync(
           "git",
@@ -538,7 +538,7 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   );
 
   it.skipIf(!distExists)(
-    "worktree-create: 成功時 stdout に raw absolute path、NOT JSON、exit 0 (Phase κ-2)",
+    "worktree-create: 成功時 stdout に raw absolute path、NOT JSON、exit 0",
     () => {
       // 公式仕様 (code.claude.com/docs/en/hooks):
       //   Command hook は worktreePath を raw stdout に書き出す (JSON ではなく生パス)
@@ -547,7 +547,7 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
       // そのまま stdout に出す分岐を持つ必要がある。
       const gitRepo = mkTmp("harness-wtc-e2e");
       try {
-        // git init -b main with fallback (Codex #19: git < 2.28 compatibility)
+        // git init -b main with fallback (git < 2.28 compatibility)
         try {
           execFileSync("git", ["init", "-b", "main"], {
             cwd: gitRepo,
@@ -593,12 +593,12 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
         );
         expect(result.status).toBe(0);
         const stdout = result.stdout.trim();
-        // Raw absolute path であり JSON ではない (Codex #8: isAbsolute で OS 中立)
+        // Raw absolute path であり JSON ではない (isAbsolute で OS 中立判定)。
         expect(isAbsolute(stdout)).toBe(true);
         expect(stdout).not.toMatch(/^\{/);
         expect(existsSync(stdout)).toBe(true);
 
-        // 生成 worktree の cleanup (pseudo-CodeRabbit review: execFileSync で shell 排除)
+        // 生成 worktree の cleanup (shell injection 排除のため execFileSync + args array)
         try {
           execFileSync("git", ["worktree", "remove", stdout, "--force"], {
             cwd: gitRepo,
@@ -614,7 +614,7 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   );
 
   it.skipIf(!distExists)(
-    "worktree-create: 失敗時 exit 非 0 (blocking protocol — 公式: any non-zero exit causes worktree creation to fail)",
+    "worktree-create: 失敗時 exit 非 0 (blocking protocol — 公式: any non-zero exit causes creation to fail)",
     () => {
       // non-git dir → handler は worktreePath を返せない
       // → main() は exit 1 で blocking 失敗を通知

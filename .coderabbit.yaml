@@ -147,19 +147,20 @@ reviews:
           必ず `future release` or `a future version` で記述)
 
     # ------------------------------------------------------------------
-    # hooks.json (11 lifecycle events)
+    # hooks.json (12 lifecycle events)
     # ------------------------------------------------------------------
     - path: "plugins/harness/hooks/hooks.json"
       instructions: |
-        - 現在登録済 11 events: `PreToolUse` / `PostToolUse` / `PermissionRequest` /
+        - 現在登録済 12 events: `PreToolUse` / `PostToolUse` / `PermissionRequest` /
           `SessionStart` / `SessionEnd` / `PreCompact` / `SubagentStop` / `TaskCreated` /
-          `Stop` / `WorktreeRemove` / `TaskCompleted`
-        - **blocking hook** (`WorktreeCreate` 等) は protocol-compliant 実装 (stdout absolute-path
-          contract + real `git worktree` 生成) が揃うまで **登録禁止**。observability-only 登録は
-          Claude Code 既定処理を壊す (調査で判明済)
+          `Stop` / `WorktreeCreate` / `WorktreeRemove` / `TaskCompleted`
+        - **blocking hook** (例: `WorktreeCreate`) は protocol-compliant 実装 (stdout
+          absolute-path contract + real `git worktree` 生成 + exit 0/non-zero で
+          成功/失敗を通知) が揃っている場合のみ hooks.json 登録を行う。observability-only
+          での blocking hook 登録は Claude Code 既定処理を壊すので禁止
         - `timeout` 値は test で `.toBe(X)` 固定 (後続 PR でのドリフト防止)
           - `WorktreeRemove` = 10s (non-blocking observability)
-          - 将来の `WorktreeCreate` = 120s (blocking、実装時に protocol-compliant)
+          - `WorktreeCreate` = 120s (blocking、protocol-compliant production 実装)
         - event count は `.claude-plugin/marketplace.json.description` の `N lifecycle hook events`
           数字と一致 (content-integrity の description drift guard あり)
 

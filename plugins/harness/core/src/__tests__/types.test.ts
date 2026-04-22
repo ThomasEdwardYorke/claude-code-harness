@@ -62,7 +62,7 @@ describe("HookResult", () => {
     expect(result.decision).toBe("ask");
   });
 
-  it("Phase κ-2 / θ optional fields (worktreePath / continue / stopReason / suppressOutput) を表現できる", () => {
+  it("optional / control fields (worktreePath / continue / stopReason / suppressOutput) を表現できる", () => {
     // 後方互換維持のための compile-time coverage:
     //   optional field 追加が引き続き optional のまま保たれ (required 化せず)、
     //   既存 consumer が decision のみで HookResult を構築できることを保証する。
@@ -79,7 +79,7 @@ describe("HookResult", () => {
     };
     expect(worktreeSuccess.worktreePath).toBe("/abs/path/to/wt");
 
-    // Universal control fields (Phase θ 最小 subset、公式 hooks-reference 準拠)
+    // Universal control fields (Claude Code hooks protocol 準拠)
     const universal: HookResult = {
       decision: "approve",
       continue: false,

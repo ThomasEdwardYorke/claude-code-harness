@@ -47,7 +47,7 @@ export interface HookResult {
     suppressOutput?: boolean;
     /**
      * WorktreeCreate hook の出力 — 作成された worktree の absolute path。
-     * Phase κ-2 blocking protocol で設定。
+     * blocking protocol 準拠 handler が設定する。
      *
      * - 設定あり: index.ts main() が raw path を stdout に書き出し、exit 0
      * - 設定なし: main() は exit 1 (公式仕様: any non-zero exit causes

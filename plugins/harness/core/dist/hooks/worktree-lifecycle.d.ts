@@ -20,26 +20,26 @@
  *    終了時に coordinator への同期リマインダー (Plans.md 担当表) を出す。
  *    `loadConfigSafe` で fail-open を担保。
  *
- * 2. **WorktreeCreate (Phase κ-2 production)**: 実 `git worktree add` を実行し、
- *    作成した worktree の absolute path を HookResult.worktreePath に載せる。
- *    index.ts main() の worktree-create 分岐が worktreePath を raw stdout に書き出す。
- *    失敗時 (name invalid / non-git cwd / git failure) は worktreePath 未設定で返し、
- *    main() が exit 1 に変換して公式 blocking protocol に従う。
+ * 2. **WorktreeCreate (blocking protocol production)**: 実 `git worktree add` を
+ *    実行し、作成した worktree の absolute path を HookResult.worktreePath に
+ *    載せる。index.ts main() の worktree-create 分岐が worktreePath を raw stdout
+ *    に書き出す。失敗時 (name invalid / non-git cwd / git failure) は worktreePath
+ *    未設定で返し、main() が exit 1 に変換して公式 blocking protocol に従う。
  *
  * ## `isolation: worktree` 協調設計の扱い
  *
- * 現状 (Phase κ-2): agent frontmatter `isolation: worktree` は未付与
- * (content-integrity.test.ts Phase κ guard で強制)。`/parallel-worktree` の
- * 手動 `git worktree add` 運用と二重 worktree 作成干渉リスクがあるため。
+ * 現行: agent frontmatter `isolation: worktree` は未付与 (regression guard 済)。
+ * `/parallel-worktree` の手動 `git worktree add` 運用と二重 worktree 作成干渉
+ * リスクがあるため。WorktreeCreate hook の infrastructure は整備完了し、将来
+ * 特定 agent で `isolation: worktree` を有効化する際には `/parallel-worktree` と
+ * の共存ロジック (env marker / cwd 判定 / handler 側 idempotent 再利用) を
+ * 組み合わせて二重作成を防ぐ設計に移行する。
  *
- * WorktreeCreate hook の infrastructure は本 Phase で整備完了。将来 Phase κ-3
- * 以降で agent 個別の `isolation: worktree` 付与 + `/parallel-worktree` との
- * 共存ロジック (env marker / cwd 判定) を追加する予定。
- *
- * ## 関連 doc
+ * ## 関連 doc (設計経緯)
  * - docs/maintainer/research-anthropic-official-2026-04-22.md
  * - docs/maintainer/research-subagent-isolation-2026-04-22.md
- * - docs/maintainer/ROADMAP-model-b.md (Phase κ series)
+ * - docs/maintainer/ROADMAP-model-b.md
+ * - CHANGELOG.md (feature history)
  */
 export interface WorktreeRemoveInput {
     hook_event_name: string;

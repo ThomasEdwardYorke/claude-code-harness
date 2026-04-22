@@ -39,14 +39,14 @@ export interface HookResult {
   systemMessage?: string;
 
   // ----------------------------------------------------------
-  // Universal control fields (Phase κ-2 / θ minimal set)
+  // Universal control fields (Claude Code hooks protocol)
   //
   // 公式仕様: https://code.claude.com/docs/en/hooks
   // これらは全 hook event で top-level に置ける汎用 field。event-specific な
   // field (updatedInput / updatedPermissions / updatedMCPToolOutput /
   // retry / action / content 等) は `hookSpecificOutput` nested object の
-  // 下に入る規約だが、本 Phase では command hook の raw stdout 運用に
-  // 集中し、必要になった event から段階的に追加する。
+  // 下に入る規約だが、現実装は command hook の raw stdout 運用に集中し、
+  // 必要になった event から段階的に追加する。
   // ----------------------------------------------------------
 
   /**
@@ -79,7 +79,7 @@ export interface HookResult {
 
   /**
    * WorktreeCreate hook の出力 — 作成された worktree の absolute path。
-   * Phase κ-2 blocking protocol で設定。
+   * blocking protocol 準拠 handler が設定する。
    *
    * - 設定あり: index.ts main() が raw path を stdout に書き出し、exit 0
    * - 設定なし: main() は exit 1 (公式仕様: any non-zero exit causes
