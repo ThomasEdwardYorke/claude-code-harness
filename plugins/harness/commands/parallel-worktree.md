@@ -102,10 +102,21 @@ worktree を作成する。本スキル (`/parallel-worktree`) の手動 `git wo
 - **将来特定 agent で `isolation: worktree` を有効化する場合**: 本スキルの Phase 1
   worktree 生成と協調するロジックが必要。二重作成を避けるには以下いずれかを選択:
   - (a) 該当 agent を使う時は coordinator 側 `git worktree add` を skip する
-  - (b) `WorktreeCreate` hook 内で既存 worktree を検出して再利用する
-  (b) は `git worktree list --porcelain` ベースの idempotent 再利用として handler 側で
-  既に実装されているため、通常は追加実装なしで (b) が効く。本スキルから dispatch する
-  場合の推奨経路は (b)。
+    (isolation hook に任せる)
+  - (b) coordinator 手動 worktree の path / branch 命名を hook 側と整合させ、hook の
+    idempotent 再利用経路で吸収する
+
+  **(b) の制約 (重要)**: handler の `findExistingWorktree` は **path + branch の完全
+  一致**で reuse 判定する (path は `<basename-of-cwd>-wt-<name>` sibling 規約、branch
+  は `harness-wt/<name>`)。既存 `/parallel-worktree` の default (path =
+  `worktree_prefix<slug>`、branch = `${feature_branch}-${slug}`) とは命名体系が異なる
+  ため、**そのまま (b) は効かない**。(b) を選ぶなら (1) handler 側を拡張して両命名を
+  normalize しつつ検出する、または (2) coordinator 側の `worktree_prefix` / branch 名
+  を handler 期待形式 (`<basename>-wt-` / `harness-wt/`) に揃える、のどちらかが必要。
+
+  追加実装が不要な現行推奨は **(a)** — coordinator 側で事前に作成し、isolation を
+  有効にした agent では WorktreeCreate hook の実作業 (git worktree add) を skip させる
+  (例: 環境変数で coordinator 管理下フラグを伝え、hook 側で早期 return)。
 
 ---
 
