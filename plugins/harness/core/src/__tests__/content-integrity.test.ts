@@ -1463,8 +1463,9 @@ describe("session-handoff skill (shipped plugin 汎用 handoff skill)", () => {
 // ============================================================
 // session-handoff check v2: structural + content comprehension + synthesis
 // の 3 gate アーキテクチャを regression guard 化する。
-// Codex Worker A (Anthropic 公式 orient-phase 調査) + Worker B (3 機能設計) の
-// 合意仕様に準拠。ユーザー指摘「check は把握 / 理解もかねていますか」への応答。
+// Anthropic 公式 orient-phase 調査 + 3 機能設計 review の合意仕様に準拠。
+// 契機: skill 利用者から「check は把握 / 理解もかねていますか」の指摘、
+// これを受けて check v1 (structural のみ) → v2 (3-gate) に拡張した。
 // ============================================================
 describe("session-handoff skill — check v2 3 機能 (Structural / Content / Synthesis) 拡張", () => {
   const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
@@ -1548,7 +1549,7 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 });
 
 
-// harness-setup check が session-handoff を認識する (Phase 0 P0.8 の延長)
+// harness-setup check が session-handoff を認識する (harness setup check 統合 invariant)
 describe("session-handoff skill — harness-setup check 統合", () => {
   it("harness-setup.md の check 対象 command list に commands/session-handoff.md パス形式で含まれる", () => {
     // Codex review 対応 (A-05): 単なる文字列一致ではなく file path 形式で検証。

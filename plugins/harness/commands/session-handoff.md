@@ -1,7 +1,7 @@
 ---
 name: session-handoff
-description: "Session handoff document structuring skill for multi-session long-running project work. Invoke to initialize a new handoff directory, update the bird's-eye index, archive a completed session, or verify the handoff structure is healthy. Use when user mentions: handoff, bird's-eye index, session archive, compaction survival, context preservation, /session-handoff, /handoff."
-description-ja: "複数セッションにまたがる長期プロジェクト作業の引き継ぎドキュメントを構造化するスキル。次セッション Claude が鳥瞰図ファイルだけ読めば即着手できる状態を維持する。以下のフレーズで起動: 引き継ぎを作る、鳥瞰図、セッションアーカイブ、圧縮耐性、コンテキスト保持、/session-handoff、/handoff。"
+description: "Session handoff document structuring skill for multi-session long-running project work. Provides init / update / archive for doc lifecycle, plus a read-only 3-gate check (structural integrity + content comprehension + rehydration synthesis) that comprehends the handoff and assesses next-session readiness at session start. Use when user mentions: handoff, bird's-eye index, session archive, compaction survival, context preservation, orient-phase, rehydration check, session-start readiness, /session-handoff, /handoff."
+description-ja: "複数セッションにまたがる長期プロジェクト作業の引き継ぎドキュメントを構造化し、セッション開始時に 3-gate (構造整合性 + 内容把握 + rehydration 判定) で把握・理解・陳腐化判定まで行う skill。次セッション Claude が鳥瞰図ファイルだけ読めば即着手できる状態を維持する。以下のフレーズで起動: 引き継ぎを作る、鳥瞰図、セッションアーカイブ、把握、理解、開始前チェック、rehydration、圧縮耐性、コンテキスト保持、/session-handoff、/handoff。"
 allowed-tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
 argument-hint: "[init|update|archive|check]"
 ---
@@ -43,7 +43,7 @@ argument-hint: "[init|update|archive|check]"
 | `init` | 新規プロジェクトで handoff ディレクトリ構造を作成 | プロジェクト開始時、1 回だけ |
 | `update` | セッション終了時に current / backlog を最新化 | 毎セッション終了前 (必須) |
 | `archive` | 現セッションの詳細ログを `archive/` に切り出し | セッションが完了した時点 |
-| `check` | 構造整合性 / 陳腐化の検出 | セッション開始時 / 定期 |
+| `check` | **3-gate 判定** (構造検証 + 内容把握 + rehydration 可否)、read-only | **セッション開始時**: `PASS/WARN/FAIL` または `INIT_REQUIRED` に応じて `update` / `archive` / `init` を案内 |
 
 ---
 
@@ -158,7 +158,7 @@ session-<YYYY-MM-DD>-<phase-slug>.md
 
 | タイミング | 更新する file | 操作 |
 |---|---|---|
-| セッション開始前 | `current.md` | 内容を確認、古ければ一旦 archive へ退避 |
+| セッション開始前 | `current.md` + `check` 実行 | **まず `/session-handoff check` を実行**し、verdict に応じて案内: `PASS` → そのまま着手 / `WARN` → 内容確認し必要なら `update` / `FAIL` → `update` or `archive` を先に実行 / `INIT_REQUIRED` → `/session-handoff init` |
 | **Phase 完了時** | `current.md` + `backlog.md` | 完了項目を backlog から削除、current に反映 |
 | **重大な設計判断が固まった時** | `design-decisions.md` | append (不変、削除禁止) |
 | **セッション終了時 (必須)** | `current.md` + `archive/session-<date>-<slug>.md` | 本セッションログを archive、current を最新化 |
@@ -203,6 +203,13 @@ session-<YYYY-MM-DD>-<phase-slug>.md
    `CLAUDE.md` は 200 行未満の always-on facts 用。日々変動する
    current state は handoff file 側に分離する。
 
+9. **`check` を受動的な構造 lint としか見なさない / セッション開始時にスキップする**
+   `check` は orient-phase の補助機能であり、3-gate (構造 + 把握 + 再開可否判定)
+   を実行する。セッション開始時に必ず走らせ、出力の verdict (`PASS` / `WARN` /
+   `FAIL` / `INIT_REQUIRED`) に応じて次アクションを決める。また `check` を実行
+   しても `current.md` / `backlog.md` の更新忘れは自動修正されない — `check` は
+   報告役であり、人間 / Claude が `update` / `archive` で修正責務を負う。
+
 ---
 
 ## Subcommand Details (サブコマンド詳細)
@@ -246,7 +253,8 @@ comprehension) と理解 (understanding synthesis)** まで一貫して確認す
 
 #### Gate 1 — Structural Integrity (構造検証、継続)
 
-ファイルシステム上の構造が規約通りか確認 (内容を読まない、存在 / 形式 / 命名のみ):
+ファイルシステム上の構造が規約通りか確認 (存在 / 形式 / 命名 + 最低限のラベル
+形式 regex チェックのみ。深い content 解析や意味抽出は Gate 2 に委ねる):
 
 - `current.md` が 120 行を超えていないか
 - 各 detail file (`backlog.md` / `design-decisions.md`) が存在するか
@@ -281,6 +289,10 @@ comprehension) と理解 (understanding synthesis)** まで一貫して確認す
 | **WARN (Partial)** | FAIL 0 / WARN 1+ — 着手は可能だが推奨対応あり |
 | **FAIL (Stale)** | FAIL 1+ — update / archive を先に実行する必要あり |
 
+**INFO severity の扱い**: INFO は verdict に影響しない。report の Staleness
+signals に `ℹ️` アイコンで並記するが、PASS / WARN / FAIL 判定ロジックの
+カウント対象外。補足情報として maintainer の気づきを促す役割のみ。
+
 陳腐化 signal 一覧 (S-01 〜 S-12、severity 付き):
 
 | ID | Signal | 検出方法 | Severity |
@@ -289,10 +301,10 @@ comprehension) と理解 (understanding synthesis)** まで一貫して確認す
 | S-02 | current.md 内の branch が存在しない | `git rev-parse --verify <branch>` | FAIL |
 | S-03 | current.md 内の commit hash が存在しない | `git cat-file -e <hash>` | FAIL |
 | S-04 | backlog `[High]` 項目が参照する PR が既に merged | `gh pr view <num> --json state` (gh 未導入なら skip) | WARN |
-| S-05 | current.md Latest state が `git log -1 --oneline` と不一致 | 文字列突合 | FAIL |
+| S-05 | current.md Latest state が **current.md 記載 branch の** `git log -1 --oneline <branch>` と不一致 (S-02 が先行 FAIL なら SKIP) | 文字列突合 | FAIL |
 | S-06 | current.md が参照する archive file が存在しない | `Glob` 確認 | FAIL |
 | S-07 | 他 handoff-pointer docs (project memory / legacy pointer docs) 内の handoff path が無効 | `Glob` 解決 | WARN |
-| S-08 | archive/ 最新ファイルより current.md が古い | git mtime 比較 | WARN |
+| S-08 | archive/ 最新ファイルより current.md が古い | 両 file の `git log --follow -1 --format='%aI' -- <file>` (commit date、ISO-8601) を比較 | WARN |
 | S-09 | backlog の `archive:` 参照 file が存在しない | `Glob` 確認 | WARN |
 | S-10 | current.md pointer link が 4 件超過 (anti-pattern #7) | link count | WARN |
 | S-11 | design-decisions.md が 30 日以上 commit なし + backlog に設計項目あり | `git log -1` | INFO |
@@ -307,7 +319,7 @@ document の regex-based scanner が誤検知しないため):
 **session-handoff check** — <YYYY-MM-DD HH:MM>
 
 **Summary**
-<PASS|WARN|FAIL> — Structural: {P}/{W}/{F} | Content: {P}/{W}/{F} | Synthesis: <Ready|Partial|Stale>
+<PASS|WARN|FAIL> — Structural: {P}/{W}/{F} | Content: {Extracted|Partial|Missing} | Synthesis: <Ready|Partial|Stale>
 
 ---
 
@@ -316,7 +328,7 @@ document の regex-based scanner が誤検知しないため):
 | 項目 | 結果 | 詳細 |
 | --- | --- | --- |
 | current.md 行数 | ✅ N 行 / 120 上限 | — |
-| detail files 存在 | ✅ 全 3 件 | — |
+| detail files 存在 | ✅ 全 N 件 (必須 2 件 + optional M 件) | — |
 | backlog ラベル | ⚠️ M 件ラベルなし | 行 X, Y |
 | design-decisions append-only | ✅ | — |
 | archive 命名規約 | ✅ 全 N 件 | — |
@@ -383,14 +395,35 @@ document の regex-based scanner が誤検知しないため):
 
 ## Self-Validation Checklist (実装時の自己検証)
 
-起動時に以下を確認:
+### 共通 (全 subcommand)
 
 - [ ] プロジェクトルート (CLAUDE.md 所在ディレクトリ) を特定
 - [ ] `.docs/handoff/` が存在するか (なければ `init` 提案)
+
+### `init` / `update` / `archive` (mutating subcommand)
+
 - [ ] 既存 file に壊さない変更を適用 (`backup → edit → verify` の順)
 - [ ] `design-decisions.md` は append 以外の操作を拒否
 - [ ] archive 書き出し時に元 session record を `grep -c "Session"` 等で
       検証し、情報欠損がないこと
+
+### `check` (read-only 3-gate subcommand)
+
+- [ ] **Gate 1-3 を全て実行**し、Structural → Content → Synthesis の順で
+      accumulate する (途中 gate で内部 FAIL があっても、後段 gate は可能な
+      限り情報取得を継続する)
+- [ ] **read-only 制約を守る** — Read / Glob / Grep / 読み取り専用 Bash のみ
+      使用、ファイル書き換え / commit / push / edit 一切禁止
+- [ ] **required section (current.md 4 section) 未検出**なら `Content
+      Comprehension` を停止し、Structural のみ報告 + `required_section_missing`
+      FAIL を Gate 3 に持ち越し
+- [ ] **git / gh unavailable** の場合は該当 signal を SKIP し、output に明示
+      列挙 (`signals skipped: S-02, S-03, ...`)
+- [ ] **verdict と Recommended Remediation が整合**している — FAIL があれば
+      必ず具体的な remediation command を提示、PASS なら「次タスク着手可能」
+      のみ
+- [ ] **INFO signal は verdict に影響させない** (PASS/WARN/FAIL 判定の
+      カウント対象外、report には ℹ️ で併記のみ)
 
 ---
 
@@ -408,6 +441,11 @@ document の regex-based scanner が誤検知しないため):
   directory 名を規定せず。pattern 自体は公式整合)
 - **per-session archive** 運用 (公式は archive の自動化を skill or hook
   で実装することを許容している)
+- **check が orient-phase 判定を兼ねる** (公式 [SessionStart hook][anthropic-hooks]
+  は `startup` / `resume` / `clear` / `compact` source を区別する。本 skill
+  の `check` は v2 で 3-gate 化しており、SessionStart hook 配線時の
+  orient-phase 判定として wire できる。auto-invoke する場合は read-only
+  契約 + 短時間実行を守り、`FAIL` でも hard block しない運用を推奨)
 
 ---
 
