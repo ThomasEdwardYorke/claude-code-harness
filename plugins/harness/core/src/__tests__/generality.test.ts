@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 — HARNESS-generality-self, detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 — HARNESS-generality-self, detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -133,6 +133,32 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     message:
       "前身プロジェクト名 `script_generate` が shipped spec に含まれています。" +
       "case study は docs/maintainer/ に移管してください。",
+    appliesToTests: true,
+  },
+  {
+    // Phase λ 対応: 前身プロジェクト固有の pipeline 検証サブフローを除去。
+    // `--test-pipeline` は business-specific flag (前身 project の CSV schema 検証 +
+    // `scripts/check-pipeline.sh` を前提) で、汎用 plugin から除去する。project-local
+    // な pipeline 検証は `.claude/skills/<project-name>-local-rules/references/pipeline-check.md`
+    // 経由で実施する (test-bed 側は Phase ε で移管済み)。
+    //
+    // Codex [A-N-1] 対応: 旧 regex `/--test-pipeline\b/` は `\b` が `\w\W` 境界で成立するため
+    // `--test-pipeline-foo` にも false positive でヒットした。`(?![\w-])` で
+    // 後続が word char / hyphen で **ない** 場合のみ match (suffix 境界のみ厳格化)。
+    //
+    // Codex 最終 review (m-2) 対応: prefix 側には制約がないため `----test-pipeline` や
+    // `foo--test-pipeline` にも match する。本ファイル自身がこれらの例示を含むが、
+    // ファイル冒頭の `generality-exemption: ...,B-2f,...` (HARNESS-generality-self) で
+    // 自己 hit が無害化されている。case-sensitive (`--Test-Pipeline` は hit しない)。
+    // 将来 case-insensitive 化 or prefix 境界強化が必要なら追加検討。
+    id: "B-2f",
+    category: "legacy-api",
+    pattern: /--test-pipeline(?![\w-])/g,
+    message:
+      "前身プロジェクトの pipeline 検証サブフロー `--test-pipeline` が shipped spec に含まれています。" +
+      "汎用 plugin から除去し、project-local skill (例: `.claude/skills/<project>-local-rules/references/pipeline-check.md`) " +
+      "経由で受ける設計にしてください。" +
+      "参照: docs/maintainer/leak-audit-2026-04-22.md の Phase λ 項目 (`--test-pipeline` DELETE 決定)。",
     appliesToTests: true,
   },
 

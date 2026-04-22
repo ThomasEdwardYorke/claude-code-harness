@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfigSafe } from "../config.js";
 function plansReminder(projectRoot, verb) {
-    // Codex [M-1A] fail-open: shape-invalid config でも throw しないよう defensive narrow。
+    // fail-open: shape-invalid config でも throw しないよう defensive narrow。
     // loadConfigSafe は JSON parse エラーを抑えるが、型検証は行わないため明示 narrow が必要。
     try {
         const config = loadConfigSafe(projectRoot);

@@ -1232,3 +1232,56 @@ describe("harness doctor — Global vs Local overlays visibility (Phase ζ)", ()
     expect(src).toMatch(/project skill dir:/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Phase κ: subagent frontmatter の isolation 設定
+// ─────────────────────────────────────────────────────────────
+// 公式 docs 調査結果 (docs/maintainer/research-subagent-isolation-2026-04-22.md):
+// - 公式仕様 (plugins-reference): isolation の値は "worktree" のみ (他は invalid)
+// - 省略時: メイン会話のカレントワーキングディレクトリで動作
+// - Plugin 同梱 subagent で isolation はサポート (ignored は hooks / mcpServers / permissionMode のみ)
+//
+// 現状方針 (2026-04-22): 全 agent に isolation を付けない
+// 根拠:
+//  1. `/parallel-worktree` が手動で git worktree を作成する既存設計
+//  2. worker 等に isolation: worktree を付けると、`/parallel-worktree` の worktree 内で
+//     さらに子 worktree が作られ、二重 worktree 干渉リスクがある
+//  3. 安全に isolation: worktree へ移行するには WorktreeCreate / WorktreeRemove hook との
+//     協調設計が必要 (Phase κ-2 残件、Phase 2-3 スコープ)
+//
+// 本 describe は 2 層の regression guard:
+//  - (a) 現状方針 (全 agent に isolation 未設定) から逸脱しようとしたら red → 設計判断を強制
+//  - (b) isolation が将来追加された際、値が公式仕様外 ("none" / "disabled" 等) なら red
+//
+// Codex [A-N-2 / B-m-3] 対応: `ALL_AGENTS` hardcode → `AGENT_NAMES` (動的) に統一。
+// 既存 `it.each(AGENT_NAMES)` パターンに合わせ、新規 agent 追加時の False Negative 回避。
+describe("Phase κ: subagent frontmatter の isolation 設定", () => {
+  it.each(AGENT_NAMES)(
+    "%s agent: isolation フィールドが現在設定されていない (現状方針)",
+    (name) => {
+      // 将来 isolation: worktree を付ける場合は /parallel-worktree との整合確認が必須。
+      // 詳細: docs/maintainer/research-subagent-isolation-2026-04-22.md
+      const fm = extractFrontmatter(readAgent(name));
+      expect(fm).not.toMatch(/^isolation\s*:/m);
+    },
+  );
+
+  it.each(AGENT_NAMES)(
+    '%s agent: isolation 設定があれば値は "worktree" のみ (公式仕様: plugins-reference)',
+    (name) => {
+      // 公式仕様外の値 ("none" / "disabled" / "never" 等) は invalid。
+      // これは deferred guard: 第 1 test (isolation 未設定) が pass している間は
+      // `match` が null となり assert は no-op (実行されない)。将来 isolation が
+      // 追加された時点で (Phase κ-2 実装時など)、第 1 test が red に転じると同時に
+      // 本 guard が値 validation として effective になる設計。
+      // Codex 最終 review (i-1) 対応: 「常時有効な safety net」という誤読を避ける表現に。
+      // Codex 最終 review (t-1) 対応: YAML inline comment `isolation: worktree # note`
+      // 形式にも対応するよう末尾 `(?:\s+#.*)?` を追加 (値 scalar のみ capture)。
+      const fm = extractFrontmatter(readAgent(name));
+      const match = /^isolation\s*:\s*["']?([\w-]+)["']?(?:\s+#.*)?\s*$/m.exec(fm);
+      if (match) {
+        expect(match[1]).toBe("worktree");
+      }
+    },
+  );
+});

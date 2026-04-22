@@ -1,6 +1,6 @@
 # Claude Code プラグイン ベストプラクティス調査レポート — 2026-04-22
 
-**調査担当**: Codex Worker B (Synchronous Foreground Mode)
+**調査者**: Codex Worker B (Synchronous Foreground Mode)
 **調査日**: 2026-04-22
 **対象プラグイン**: `~/.claude/plugins/marketplaces/claude-code-harness/` (branch: `feature/model-b-evolution`)
 **調査目的**: 公式仕様との差分を特定し、Harness を最強のプラグインへ進化させるための具体的改善案を提示する。
