@@ -23,7 +23,9 @@ type HookType =
   | "subagent-stop"
   | "task-created"
   | "task-completed"
-  | "stop";
+  | "stop"
+  | "worktree-remove"
+  | "worktree-create";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -182,6 +184,48 @@ export async function route(
       }
       return stopHR;
     }
+    case "worktree-remove": {
+      const { handleWorktreeRemove } = await import(
+        "./hooks/worktree-lifecycle.js"
+      );
+      const raw = input as Record<string, unknown>;
+      const wrRes = await handleWorktreeRemove({
+        hook_event_name: String(raw["hook_event_name"] ?? "WorktreeRemove"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        worktree_path: extractString(raw, "worktree_path"),
+        agent_type: extractString(raw, "agent_type"),
+        agent_id: extractString(raw, "agent_id"),
+        transcript_path: extractString(raw, "transcript_path"),
+      });
+      const wrHR: HookResult = { decision: wrRes.decision };
+      if (wrRes.additionalContext !== undefined) {
+        wrHR.reason = wrRes.additionalContext;
+      }
+      return wrHR;
+    }
+    case "worktree-create": {
+      // Phase η P0-κ scaffold: hooks.json 未登録のため実運用では発火しないが、
+      // Phase κ-2 で protocol-compliant 実装に差し替える前提で route() 経路は先行整備。
+      const { handleWorktreeCreate } = await import(
+        "./hooks/worktree-lifecycle.js"
+      );
+      const raw = input as Record<string, unknown>;
+      const wcRes = await handleWorktreeCreate({
+        hook_event_name: String(raw["hook_event_name"] ?? "WorktreeCreate"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        name: extractString(raw, "name"),
+        agent_type: extractString(raw, "agent_type"),
+        agent_id: extractString(raw, "agent_id"),
+        transcript_path: extractString(raw, "transcript_path"),
+      });
+      const wcHR: HookResult = { decision: wcRes.decision };
+      if (wcRes.additionalContext !== undefined) {
+        wcHR.reason = wcRes.additionalContext;
+      }
+      return wcHR;
+    }
     case "session-start":
     case "session-end": {
       return { decision: "approve" };
@@ -235,7 +279,9 @@ async function main(): Promise<void> {
       hookType === "subagent-stop" ||
       hookType === "task-created" ||
       hookType === "task-completed" ||
-      hookType === "stop"
+      hookType === "stop" ||
+      hookType === "worktree-remove" ||
+      hookType === "worktree-create"
     ) {
       const parsed = parseSessionInput(raw);
       result = await route(hookType, parsed);

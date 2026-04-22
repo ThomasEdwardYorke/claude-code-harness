@@ -294,6 +294,50 @@ describe("route() dispatcher — hook integration", () => {
     });
   });
 
+  describe("worktree-remove (Phase η P0-κ, non-blocking observability)", () => {
+    it("maps handler.additionalContext into HookResult.reason", async () => {
+      const result = await route("worktree-remove", {
+        hook_event_name: "WorktreeRemove",
+        cwd: tmpRoot,
+        worktree_path: "/tmp/sample-wt/slug",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.reason).toBeDefined();
+      expect(result.reason).toContain("WorktreeRemove");
+      expect(result.reason).toContain("/tmp/sample-wt/slug");
+    });
+
+    it("passes through agent_type / agent_id extraction from raw input", async () => {
+      const result = await route("worktree-remove", {
+        hook_event_name: "WorktreeRemove",
+        cwd: tmpRoot,
+        worktree_path: "/tmp/sample-wt/slug",
+        agent_type: "harness:worker",
+        agent_id: "agent-xyz123",
+      });
+      expect(result.reason).toContain("harness:worker");
+      expect(result.reason).toContain("agent-xyz123");
+    });
+  });
+
+  describe("worktree-create (Phase η P0-κ scaffold, hooks.json 未登録)", () => {
+    // route() から呼び出し可能であることを確認する足場テスト。
+    // hooks.json 未登録のため実運用では発火しないが、Phase κ-2 実装時に
+    // route() 経路が既に通っている状態を前提にできるよう先行整備する。
+    it("returns approve with scaffold notice in reason", async () => {
+      const result = await route("worktree-create", {
+        hook_event_name: "WorktreeCreate",
+        cwd: tmpRoot,
+        name: "scaffold-slug",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.reason).toBeDefined();
+      expect(result.reason).toContain("scaffold-slug");
+      // scaffold / Phase κ-2 / deferred のいずれかを明示していること
+      expect(result.reason ?? "").toMatch(/Phase κ-2|scaffold|deferred/i);
+    });
+  });
+
   describe("unknown hook type (safety net)", () => {
     it("returns approve with diagnostic reason for unrecognised hookType", async () => {
       // Force-cast through `unknown` because the signature of `route()`

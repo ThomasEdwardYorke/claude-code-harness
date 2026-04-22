@@ -1285,3 +1285,66 @@ describe("Phase κ: subagent frontmatter の isolation 設定", () => {
     },
   );
 });
+
+// ============================================================
+// Phase η P0-κ (2026-04-22): WorktreeCreate / WorktreeRemove hook 登録 invariant
+//
+// 公式仕様 (research-anthropic-official-2026-04-22.md):
+//  - WorktreeRemove: non-blocking observability。失敗は debug-only。
+//  - WorktreeCreate: 既定 git worktree 作成処理を「完全置換」する blocking hook。
+//                    stdout に絶対 path を書き出すプロトコル準拠が必須。
+//                    observability だけの実装を hooks.json 登録すると作成が失敗する。
+//
+// 本 Phase の判断:
+//  - WorktreeRemove は hooks.json に登録 (観測 + coordinator リマインダー)。
+//  - WorktreeCreate は handler / route 足場のみ用意し、hooks.json 登録は
+//    Phase κ-2 (isolation: worktree 協調設計) まで deferred。
+// ============================================================
+describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
+  const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
+  const worktreeLifecyclePath = resolve(
+    PLUGIN_ROOT,
+    "core/src/hooks/worktree-lifecycle.ts",
+  );
+
+  it("hooks.json は WorktreeRemove を登録する (non-blocking observability)", () => {
+    const raw = readFileSync(hooksJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<string, Array<{ hooks: Array<{ command?: string }> }>>;
+    };
+    expect(parsed.hooks).toHaveProperty("WorktreeRemove");
+    const entry = parsed.hooks["WorktreeRemove"];
+    expect(Array.isArray(entry)).toBe(true);
+    expect(entry?.length).toBeGreaterThan(0);
+    expect(entry?.[0]?.hooks?.[0]?.command).toContain("worktree-remove");
+  });
+
+  it("hooks.json は WorktreeCreate を登録しない (Phase κ-2 まで deferred)", () => {
+    // 既定 git worktree 作成を置換する blocking hook を observability だけで登録すると
+    // worktree 作成自体が失敗する。`isolation: worktree` 協調設計 (Phase κ-2) まで
+    // 意図的に登録を遅延する。詳細: research-anthropic-official-2026-04-22.md § 4-5
+    const raw = readFileSync(hooksJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as { hooks: Record<string, unknown> };
+    expect(parsed.hooks).not.toHaveProperty("WorktreeCreate");
+  });
+
+  it("worktree-lifecycle.ts が handleWorktreeRemove / handleWorktreeCreate を export する", () => {
+    const src = readFileSync(worktreeLifecyclePath, "utf-8");
+    expect(src).toMatch(/export\s+async\s+function\s+handleWorktreeRemove/);
+    expect(src).toMatch(/export\s+async\s+function\s+handleWorktreeCreate/);
+  });
+
+  it("worktree-lifecycle.ts は context 注入に additionalContext を使う", () => {
+    const src = readFileSync(worktreeLifecyclePath, "utf-8");
+    expect(src).toMatch(/additionalContext/);
+    expect(src).not.toMatch(/systemMessage\s*:\s*sections/);
+    expect(src).not.toMatch(/systemMessage\s*:\s*context/);
+  });
+
+  it("worktree-lifecycle.ts の WorktreeCreate は scaffold であると明示する", () => {
+    // 将来実装者が「なぜ hooks.json に登録しないのか」を誤解しないよう、
+    // scaffold / Phase κ-2 deferred のいずれかを comment or string で明示する。
+    const src = readFileSync(worktreeLifecyclePath, "utf-8");
+    expect(src).toMatch(/Phase κ-2|scaffold|deferred/);
+  });
+});
