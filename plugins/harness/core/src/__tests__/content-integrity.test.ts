@@ -1384,7 +1384,7 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
 // session-handoff skill: 引き継ぎ doc 構造化ベストプラクティスを
 // shipped plugin として提供する skill の existence + structure guard
 //
-// 公式推奨 (research-anthropic-official-2026-04-22.md § 2 / Codex Worker A 追補):
+// 公式推奨 (research-anthropic-official 調査 § 2 + 追補):
 //  - SKILL-style overview + topic files pattern (MEMORY.md index + detail files)
 //  - Skill 本体は 500 lines 未満
 //  - @import は lazy load ではなく展開される → 鳥瞰図に大量 import は NG
@@ -1460,7 +1460,99 @@ describe("session-handoff skill (shipped plugin 汎用 handoff skill)", () => {
   });
 });
 
-// harness-setup check が session-handoff を認識する (Phase 0 P0.8 の延長)
+// ============================================================
+// session-handoff check v2: structural + content comprehension + synthesis
+// の 3 gate アーキテクチャを regression guard 化する。
+// Anthropic 公式 orient-phase 調査 + 3 機能設計 review の合意仕様に準拠。
+// 契機: skill 利用者から「check は把握 / 理解もかねていますか」の指摘、
+// これを受けて check v1 (structural のみ) → v2 (3-gate) に拡張した。
+// ============================================================
+describe("session-handoff skill — check v2 3 機能 (Structural / Content / Synthesis) 拡張", () => {
+  const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
+  const readSkill = (): string => readFileSync(skillPath, "utf-8");
+  const checkSection = (): string => {
+    const body = readSkill();
+    // `### \`check\`` から次の H3 (`^### ` + 非 `#` の文字) または H2 (`^## `) まで。
+    // H4 (`#### `) は `###` の prefix を持つため、次の char が `#` の場合は H4/H5 と判断し
+    // 停止しない (lookahead 内で `[^#]` を要求)。
+    const m = body.match(/### `check`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+
+  it("check セクションが存在し 3 機能を明示している (Structural / Content / Synthesis 相当のキーワードを含む)", () => {
+    const sec = checkSection();
+    expect(sec.length).toBeGreaterThan(200); // 旧 5 項目だけでなく拡張済
+    // 3 gate 明示 (英語 or 日本語いずれか許容)
+    expect(sec).toMatch(/structural|構造/i);
+    expect(sec).toMatch(/content|comprehension|把握|理解|内容/i);
+    expect(sec).toMatch(/synthesis|rehydration|再現|再水和|起動判定|再着手/i);
+  });
+
+  it("check セクションが Read tool 使用を明示する (content comprehension で handoff file を読む)", () => {
+    const sec = checkSection();
+    // skill が実行時に current.md / backlog.md を Read することを明示
+    expect(sec).toMatch(/Read|読み込/i);
+    expect(sec).toMatch(/current\.md/);
+    expect(sec).toMatch(/backlog\.md/);
+  });
+
+  it("check セクションが陳腐化 signal を明示列挙する (S-01 形式 or 同等の staleness indicator)", () => {
+    const sec = checkSection();
+    // 少なくとも 6 種以上の staleness signal を明示
+    const stalenessKeywords =
+      sec.match(/(?:stale|陳腐|drift|outdated|signal|S-\d+|staleness)/gi) ?? [];
+    expect(stalenessKeywords.length).toBeGreaterThanOrEqual(6);
+    // 具体的 signal topic をカバー (branch / commit / date / backlog / pointer のいずれか複数)
+    const topicCoverage = [
+      /branch/i,
+      /commit|hash/i,
+      /date|日付|更新/i,
+      /backlog|pending/i,
+      /pointer|link|参照|path/i,
+    ].filter((re) => re.test(sec)).length;
+    expect(topicCoverage).toBeGreaterThanOrEqual(4);
+  });
+
+  it("check セクションが rehydration verdict の 3 段階評価 (PASS/WARN/FAIL or Ready/Partial/Stale) を示す", () => {
+    const sec = checkSection();
+    // 3-level verdict: PASS/WARN/FAIL or Ready/Partial/Stale 等
+    const hasThreeLevel =
+      /PASS[\s\S]{0,100}WARN[\s\S]{0,100}FAIL/i.test(sec) ||
+      /Ready[\s\S]{0,100}Partial[\s\S]{0,100}Stale/i.test(sec) ||
+      /合格[\s\S]{0,100}警告[\s\S]{0,100}失敗/.test(sec);
+    expect(hasThreeLevel).toBe(true);
+  });
+
+  it("check セクションが output template (code block) を提示する", () => {
+    const sec = checkSection();
+    // markdown code fence within the section
+    expect(sec).toMatch(/```[\s\S]{50,}?```/);
+  });
+
+  it("check セクションが禁止事項 (read-only、write 禁止) を明示する", () => {
+    const sec = checkSection();
+    // 破壊的操作禁止を明示 (edit/commit/push/delete いずれかに該当する禁止表現)
+    expect(sec).toMatch(
+      /read[-\s]?only|書き換え|破壊|禁止|forbidden|must not|not modify|must NOT|delete|commit/i,
+    );
+  });
+
+  it("check セクションが edge case (初回使用 と git 不可 の両方) を明示する", () => {
+    const sec = checkSection();
+    // CodeRabbit review 対応: 旧 OR 条件は片側欠落で誤通過するため AND に強化。
+    // first-time use (未初期化) と git unavailable (CI/shallow clone) は独立した
+    // edge case で、両方の対応記述が必要。
+    const hasFirstTime =
+      /first[-\s]?time|初回|未初期化|init[- ]?required|not yet/i.test(sec);
+    const hasGitUnavailable =
+      /git[\s\S]{0,30}(unavailable|not available|なし|不可|shallow)/i.test(sec);
+    expect(hasFirstTime).toBe(true);
+    expect(hasGitUnavailable).toBe(true);
+  });
+});
+
+
+// harness-setup check が session-handoff を認識する (harness setup check 統合 invariant)
 describe("session-handoff skill — harness-setup check 統合", () => {
   it("harness-setup.md の check 対象 command list に commands/session-handoff.md パス形式で含まれる", () => {
     // Codex review 対応 (A-05): 単なる文字列一致ではなく file path 形式で検証。
