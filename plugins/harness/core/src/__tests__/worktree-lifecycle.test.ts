@@ -515,6 +515,52 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     expect(result.reason ?? "").not.toMatch(/unborn HEAD|no commits/i);
   });
 
+  it("projectRoot に改行/CR が含まれる場合は worktreePath 未設定で reject (stdout contract 保護)", async () => {
+    // cwd に改行が混入した場合、sibling sub-path が stdout / stderr / section
+    // 境界を壊す可能性がある。git を呼ぶ前に reject して blocking 失敗に回す。
+    for (const badCwd of ["/tmp/bad\npath", "/tmp/bad\rpath", "/tmp/bad\r\npath"]) {
+      const result = await handleWorktreeCreate({
+        hook_event_name: "WorktreeCreate",
+        cwd: badCwd,
+        name: "valid-slug",
+      });
+      expect(result.decision).toBe("approve");
+      expect(result.worktreePath).toBeUndefined();
+      expect(result.reason ?? "").toMatch(/newline|CR/i);
+    }
+  });
+
+  it("同 path に別 branch が checkout されている場合は reuse しない (branch ref 強制 match)", async () => {
+    // 既存 worktree の path が一致しても branch が別なら idempotent reuse の
+    // 対象外。handler は branch 一致も確認すること。
+    const repo = setupTempGitRepo();
+    const realRepo = realpathIfExists(repo);
+    const samePath = resolve(
+      dirname(realRepo),
+      `${basename(realRepo)}-wt-diff-branch-slug`,
+    );
+    // 別 branch (handler が期待する `harness-wt/diff-branch-slug` とは別) で事前に worktree 作成
+    execFileSync(
+      "git",
+      ["worktree", "add", samePath, "-b", "some-other-branch"],
+      { cwd: repo, stdio: "pipe" },
+    );
+
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "diff-branch-slug",
+    });
+    // findExistingWorktree は branch mismatch で null を返す。
+    // 続く `git worktree add <same-path>` は path 既存で失敗、
+    // post-race recheck も branch mismatch で null。最終的に最終失敗経路。
+    expect(result.decision).toBe("approve");
+    expect(result.worktreePath).toBeUndefined();
+    expect(result.reason ?? "").toMatch(/git worktree add failed/i);
+
+    cleanupWorktree(repo, samePath);
+  });
+
   it("unborn HEAD (git init 直後、commit 前) で明示的 reason を返す", async () => {
     // git init のみで commit が無い repo は `git worktree add` が汎用エラーを吐く。
     // handler 側で unborn HEAD を先検出し診断性の高い reason を返すこと。
@@ -534,34 +580,35 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     expect(result.additionalContext ?? "").toMatch(/unborn HEAD/);
   });
 
-  it("race case: 手動で worktree を作ってから handler を呼ぶと post-race recheck で既存 path を返す", async () => {
-    // `findExistingWorktree` の初回判定 → `git worktree add` の間に別プロセスが
-    // 同 path を作った状況をシミュレート: 手動で `git worktree add` してから
-    // handler を呼ぶ。handler 内部の add は失敗するが、post-race recheck で
-    // 既存を検出し worktreePath を返すこと。
+  it("既存 worktree の reuse: 事前に同 path が作られていれば idempotent に同 path を返す", async () => {
+    // handler 側で 2 つの recheck 経路 (初回 findExistingWorktree / 失敗後の
+    // post-race recheck) いずれでも既存 worktree が検出されれば再利用される。
+    // 本 test は初回判定側 (idempotent reuse 経路) の end-to-end 動作を検証する。
+    //
+    // 注記: post-race recheck 経路は list cache / git worktree add timing の制御が
+    // 必要で実プロセスでの test 化が困難なため、ここでは idempotent reuse 側を
+    // guard する。post-race recheck 経路自体はコードレビューと race-case
+    // 保守コメントで担保する設計。
     const repo = setupTempGitRepo();
-    // handler が計算する path と同一 path を手動で作る
     const realRepo = realpathIfExists(repo);
     const expectedPath = resolve(
       dirname(realRepo),
-      `${basename(realRepo)}-wt-raced-slug`,
+      `${basename(realRepo)}-wt-reuse-slug`,
     );
     execFileSync(
       "git",
-      ["worktree", "add", expectedPath, "-b", "harness-wt/raced-slug"],
+      ["worktree", "add", expectedPath, "-b", "harness-wt/reuse-slug"],
       { cwd: repo, stdio: "pipe" },
     );
 
-    // handler 呼出: 初回 list は既存を検出するので idempotent パスに入る。
-    // (post-race recheck 経路を test するには list cache / timing を制御する
-    // 必要があり困難だが、少なくとも結果として同 path が返ることを guard。)
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
       cwd: repo,
-      name: "raced-slug",
+      name: "reuse-slug",
     });
     expect(result.decision).toBe("approve");
     expect(result.worktreePath).toBe(expectedPath);
+    expect(result.additionalContext ?? "").toMatch(/already|reused|idempotent/i);
 
     cleanupWorktree(repo, expectedPath);
   });

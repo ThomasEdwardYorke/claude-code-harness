@@ -269,8 +269,10 @@ function toForwardSlash(p) {
     return p.replace(/\\/g, "/");
 }
 /**
- * git worktree list --porcelain の出力をパースして、指定 path 配下 (absolute match)
- * の worktree が既に存在するかを判定する。存在するなら同 path (正規化後) を返す。
+ * git worktree list --porcelain の出力をパースして、指定 path AND 指定 branch 両方
+ * が一致する worktree が既に存在するかを判定する。存在するなら path (正規化後) を
+ * 返す。path だけ一致して branch が異なる worktree (別目的で checkout 済) は
+ * idempotent reuse の対象としない (誤って別 branch の worktree を再利用しない)。
  *
  * --porcelain 形式サンプル:
  *   worktree /main/repo
@@ -281,28 +283,58 @@ function toForwardSlash(p) {
  *   HEAD def456...
  *   branch refs/heads/foo
  *
- * macOS では `/var/folders/...` と `/private/var/folders/...` の symlink 差を
- * realpathSync で吸収 (同一 worktree が別文字列として見えないように)。
+ * macOS では `/var/folders/...` と `/private/var/folders/...` の symlink 差、
+ * Windows では `RUNNER~1` / `runneradmin` の 8.3 短縮名差を `realpathSync.native`
+ * で吸収し、forward slash 統一形式で比較する。
  */
-function findExistingWorktree(repo, targetPath) {
+function findExistingWorktree(repo, targetPath, expectedBranch) {
     try {
         const out = execFileSync("git", ["worktree", "list", "--porcelain"], {
             cwd: repo,
             stdio: ["pipe", "pipe", "pipe"],
             encoding: "utf-8",
         });
-        // Windows 互換のため、比較は forward slash 統一形式で行う。
-        // git worktree list は forward slash 固定、realpathSync は OS 依存 (Windows は backslash)。
         const normalizedTarget = toForwardSlash(normalizePath(targetPath));
-        for (const line of out.split("\n")) {
-            if (line.startsWith("worktree ")) {
-                const path = line.slice("worktree ".length).trim();
-                if (toForwardSlash(normalizePath(path)) === normalizedTarget) {
-                    return path;
-                }
+        const expectedRef = `refs/heads/${expectedBranch}`;
+        // porcelain 形式は空行で stanza 区切り。各 stanza 内で `worktree` / `branch`
+        // 行を個別に拾って、終端 (空行 or EOF or 次 `worktree` 行) で両者 match を
+        // 判定する。
+        const lines = out.split("\n");
+        let currentPath = null;
+        let currentBranch = null;
+        const tryMatch = () => {
+            if (currentPath === null)
+                return null;
+            const normalizedPath = toForwardSlash(normalizePath(currentPath));
+            if (normalizedPath === normalizedTarget && currentBranch === expectedRef) {
+                return currentPath;
             }
+            return null;
+        };
+        for (const line of lines) {
+            if (line.startsWith("worktree ")) {
+                // 新 stanza 開始 — 直前 stanza を flush して判定
+                const matched = tryMatch();
+                if (matched)
+                    return matched;
+                currentPath = line.slice("worktree ".length).trim();
+                currentBranch = null;
+            }
+            else if (line.startsWith("branch ")) {
+                currentBranch = line.slice("branch ".length).trim();
+            }
+            else if (line.trim() === "") {
+                // stanza 終了 — flush
+                const matched = tryMatch();
+                if (matched)
+                    return matched;
+                currentPath = null;
+                currentBranch = null;
+            }
+            // HEAD / bare 等のそれ以外の行は無視
         }
-        return null;
+        // EOF — 最後の stanza を flush
+        return tryMatch();
     }
     catch {
         return null;
@@ -345,7 +377,22 @@ export async function handleWorktreeCreate(input) {
     }
     // -------------------------
     // (2) compute sibling worktree path
+    //
+    // projectRoot に改行/CR が含まれると、派生 worktreePath/branchName が
+    // stdout raw-path contract / stderr log / additionalContext section 境界を
+    // 破壊する可能性がある。早期に reject して blocking protocol の失敗に回す。
     // -------------------------
+    if (/[\n\r]/.test(projectRoot)) {
+        const reason = "projectRoot contains newline/CR characters; refusing to invoke git worktree";
+        sections.push(`[error] ${reason}`);
+        sections.push(`[project-root-sanitized] ${sanitizeForContext(projectRoot)}`);
+        sections.push("=== WorktreeCreate failed (unsafe projectRoot) ===");
+        return {
+            decision: "approve",
+            reason,
+            additionalContext: sections.join("\n"),
+        };
+    }
     const parent = dirname(resolve(projectRoot));
     const base = basename(resolve(projectRoot));
     const worktreePath = resolve(parent, `${base}-wt-${rawName}`);
@@ -366,7 +413,7 @@ export async function handleWorktreeCreate(input) {
     // 戻り値は realpath 経由で正規化 (macOS の /var ↔ /private/var 差を排除、1st
     // call と 2nd call で同一文字列を保証)。
     // -------------------------
-    const existing = findExistingWorktree(projectRoot, worktreePath);
+    const existing = findExistingWorktree(projectRoot, worktreePath, branchName);
     if (existing !== null) {
         sections.push("[idempotent] already exists, reused existing worktree");
         sections.push("=== WorktreeCreate reused existing ===");
@@ -446,7 +493,7 @@ export async function handleWorktreeCreate(input) {
     // 間に並行 WorktreeCreate 呼出で worktree が作られた可能性がある。ここで
     // もう一度 list を引いて既存 worktree があれば idempotent 再利用として扱う。
     // -------------------------
-    const racedExisting = findExistingWorktree(projectRoot, worktreePath);
+    const racedExisting = findExistingWorktree(projectRoot, worktreePath, branchName);
     if (racedExisting !== null) {
         sections.push("[idempotent] concurrent create detected after add attempt, reused existing worktree");
         sections.push("=== WorktreeCreate reused existing (post-race) ===");
