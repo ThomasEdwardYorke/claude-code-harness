@@ -1537,14 +1537,17 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
     );
   });
 
-  it("check セクションが edge case (初回使用 / git 不可) を明示する", () => {
+  it("check セクションが edge case (初回使用 と git 不可 の両方) を明示する", () => {
     const sec = checkSection();
-    // first-time use (未初期化) と git unavailable の少なくとも 1 つに対応記述あり
+    // CodeRabbit review 対応: 旧 OR 条件は片側欠落で誤通過するため AND に強化。
+    // first-time use (未初期化) と git unavailable (CI/shallow clone) は独立した
+    // edge case で、両方の対応記述が必要。
     const hasFirstTime =
       /first[-\s]?time|初回|未初期化|init[- ]?required|not yet/i.test(sec);
     const hasGitUnavailable =
       /git[\s\S]{0,30}(unavailable|not available|なし|不可|shallow)/i.test(sec);
-    expect(hasFirstTime || hasGitUnavailable).toBe(true);
+    expect(hasFirstTime).toBe(true);
+    expect(hasGitUnavailable).toBe(true);
   });
 });
 

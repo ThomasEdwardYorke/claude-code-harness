@@ -385,9 +385,12 @@ document の regex-based scanner が誤検知しないため):
 - **First-time use (未初期化)**: `Glob` で `.docs/handoff/` が空なら `FAIL` では
   なく `INIT_REQUIRED` を返し、`/session-handoff init` の実行を案内
 - **Git unavailable (CI / shallow clone)**: `Bash: git ...` が exit ≠ 0 なら
-  git 依存 signal (S-02 / S-03 / S-05 / S-08 / S-11) を SKIP し、
-  output に "git unavailable — signals skipped: S-02, S-03, ..." と記載。
-  Structural と Content は継続実行 (hard fail しない)
+  以下全てを SKIP し、output に "git unavailable — skipped: S-02, S-03,
+  S-05, S-08, S-11, design-decisions append-only 判定" と記載:
+  - Gate 3 の git 依存 signal (S-02 / S-03 / S-05 / S-08 / S-11)
+  - Gate 1 の `design-decisions.md` append-only 判定 (`git diff` 依存、
+    git 不可環境では非決定的なため WARN `append_only_unverified` に格下げ)
+  Structural (git 非依存分) と Content は継続実行 (hard fail しない)
 - **Large archive (> 20 files)**: `Glob` 一覧取得 → 日付ソートで最新 10 件のみ
   命名規約チェック。残りは件数カウントのみ。output に「archive: N 件中最新 10
   件サンプリング」と明記
