@@ -1307,16 +1307,22 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
     "core/src/hooks/worktree-lifecycle.ts",
   );
 
-  it("hooks.json は WorktreeRemove を登録する (non-blocking observability)", () => {
+  it("hooks.json は WorktreeRemove を登録する (non-blocking observability, timeout 10s)", () => {
     const raw = readFileSync(hooksJsonPath, "utf-8");
     const parsed = JSON.parse(raw) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command?: string }> }>>;
+      hooks: Record<
+        string,
+        Array<{ hooks: Array<{ command?: string; timeout?: number }> }>
+      >;
     };
     expect(parsed.hooks).toHaveProperty("WorktreeRemove");
     const entry = parsed.hooks["WorktreeRemove"];
     expect(Array.isArray(entry)).toBe(true);
     expect(entry?.length).toBeGreaterThan(0);
     expect(entry?.[0]?.hooks?.[0]?.command).toContain("worktree-remove");
+    // CodeRabbit PR #3 nitpick: `timeout: 10` は設計の一部 (non-blocking observability で
+    // 長時間 block させない意図)。30 / 120 等にドリフトしたら fail させる。
+    expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
   });
 
   it("hooks.json は WorktreeCreate を登録しない (Phase κ-2 まで deferred)", () => {
