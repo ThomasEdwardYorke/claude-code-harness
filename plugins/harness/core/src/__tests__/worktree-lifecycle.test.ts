@@ -21,6 +21,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  mkdirSync,
   mkdtempSync,
   writeFileSync,
   rmSync,
@@ -728,7 +729,7 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     // top-level 基点で sibling を算定すること (idempotency も top-level 基点で成立)。
     const repo = setupTempGitRepo();
     const subdir = join(repo, "nested", "deep");
-    execFileSync("mkdir", ["-p", subdir], { stdio: "pipe" });
+    mkdirSync(subdir, { recursive: true });
 
     // subdirectory 経由で呼ぶ
     const fromSubdir = await handleWorktreeCreate({
