@@ -720,4 +720,95 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
 
     cleanupWorktree(repo, result.worktreePath!);
   });
+
+  it("subdirectory から呼ばれても sibling path は repo top-level 基点で算定される", async () => {
+    // Claude Code hook の `cwd` は current working directory で、subdirectory で
+    // 呼ばれた場合に `<cwd>-wt-<name>` 素朴算定だと worktree が repo 内部に
+    // 侵入する。handler は `git rev-parse --show-toplevel` で repo root に正規化し、
+    // top-level 基点で sibling を算定すること (idempotency も top-level 基点で成立)。
+    const repo = setupTempGitRepo();
+    const subdir = join(repo, "nested", "deep");
+    execFileSync("mkdir", ["-p", subdir], { stdio: "pipe" });
+
+    // subdirectory 経由で呼ぶ
+    const fromSubdir = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: subdir,
+      name: "subdir-top-level",
+    });
+    expect(fromSubdir.worktreePath).toBeDefined();
+
+    // 期待: `<parent-of-repo>/<basename-of-repo>-wt-subdir-top-level`
+    const realRepo = realpathIfExists(repo);
+    const expectedPath = resolve(
+      dirname(realRepo),
+      `${basename(realRepo)}-wt-subdir-top-level`,
+    );
+    expect(fromSubdir.worktreePath).toBe(expectedPath);
+
+    // top-level から同 name で再呼出 → idempotent に同 path を返す
+    const fromTopLevel = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "subdir-top-level",
+    });
+    expect(fromTopLevel.worktreePath).toBe(fromSubdir.worktreePath);
+
+    cleanupWorktree(repo, fromSubdir.worktreePath!);
+  });
+
+  it(".worktreeinclude が存在する repo で記載ファイルが worktree に copy される", async () => {
+    const repo = setupTempGitRepo();
+    // `.env` と `notes.txt` を作成
+    writeFileSync(join(repo, ".env"), "SECRET=xxx\n", "utf-8");
+    writeFileSync(join(repo, "notes.txt"), "keep this\n", "utf-8");
+    // `.worktreeinclude` に列挙
+    writeFileSync(
+      join(repo, ".worktreeinclude"),
+      "# ローカル設定ファイル\n.env\nnotes.txt\n",
+      "utf-8",
+    );
+
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "wt-include",
+    });
+    expect(result.worktreePath).toBeDefined();
+
+    // 新 worktree 側に copy されていること
+    expect(existsSync(join(result.worktreePath!, ".env"))).toBe(true);
+    expect(existsSync(join(result.worktreePath!, "notes.txt"))).toBe(true);
+
+    // additionalContext に replication note が残る (observability)
+    expect(result.additionalContext ?? "").toMatch(/worktreeinclude-copied/);
+
+    cleanupWorktree(repo, result.worktreePath!);
+  });
+
+  it(".worktreeinclude の unsafe entry (path traversal) は reject される", async () => {
+    const repo = setupTempGitRepo();
+    writeFileSync(
+      join(repo, ".worktreeinclude"),
+      "# traversal attempt\n../etc/passwd\n/absolute/root\n",
+      "utf-8",
+    );
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "wt-include-unsafe",
+    });
+    expect(result.worktreePath).toBeDefined();
+    // 2 エントリ共に reject note が出る
+    expect(result.additionalContext ?? "").toMatch(
+      /worktreeinclude-skipped[\s\S]*?unsafe path rejected[\s\S]*?\.\.\/etc\/passwd/,
+    );
+    expect(result.additionalContext ?? "").toMatch(
+      /worktreeinclude-skipped[\s\S]*?unsafe path rejected[\s\S]*?\/absolute\/root/,
+    );
+    // 実際に path traversal 先にファイルが作られていないこと
+    expect(existsSync("/etc/passwd-wt")).toBe(false);
+
+    cleanupWorktree(repo, result.worktreePath!);
+  });
 });
