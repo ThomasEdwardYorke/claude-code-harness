@@ -19,7 +19,7 @@ argument-hint: "[init|update|archive|check]"
 
 長期プロジェクトで 1 ファイルに session log を追記し続けると以下が起きる:
 
-- **コンテキスト圧迫**: 1347 行の prompt は毎セッションの context window を食い潰す
+- **コンテキスト圧迫**: 1000+ 行級の prompt は毎セッションの context window を食い潰す
 - **設計判断の埋没**: セッション詳細ログの海に恒久的方針が沈んで発見不能になる
 - **陳腐化の検出失敗**: 古い情報と最新情報が同居し、読み手が迷う
 - **次セッションの立ち上がり遅延**: どこから読めば良いかが不明
@@ -64,7 +64,7 @@ argument-hint: "[init|update|archive|check]"
     └── ...
 ```
 
-### current.md の必須 section (この順番で)
+### Required Sections in `current.md` (この順番で)
 
 1. **Latest state** — current branch / commit hash / last merged PR
 2. **Top priority next task** — 5 行以内、即着手レベルの具体性
@@ -73,7 +73,7 @@ argument-hint: "[init|update|archive|check]"
 
 これら 4 つ以外は current.md から排除する。詳細はすべて detail file へ逃がす。
 
-### backlog.md の必須構造
+### Required Structure of `backlog.md` (必須構造)
 
 ```markdown
 - [High|Med|Low] <Phase 名>: <1 行説明> (archive: session-YYYY-MM-DD-<slug>.md)
@@ -82,13 +82,13 @@ argument-hint: "[init|update|archive|check]"
 優先度ラベルと phase 番号を必ず付ける。archive への逆参照で「なぜこの申送が発生したか」
 を辿れるようにする。
 
-### design-decisions.md は append-only
+### `design-decisions.md` is Append-Only (追記専用)
 
 新しい恒久方針は末尾に追記。**既存エントリの編集・削除禁止**
 (履歴を破壊するため)。古い方針を廃止する場合は
 "Superseded by <date>: <理由>" を追記で示す。
 
-### archive/ の命名規約
+### Archive File Naming Convention (archive/ の命名規約)
 
 主規約:
 
@@ -112,7 +112,7 @@ session-<YYYY-MM-DD>-<phase-slug>.md
 - `summary-<slug>.md` — Phase 完了時の Phase-level summary archive。
   個別セッションを跨いだ Phase 全体の結果を記録する用途。
 
-### archive ファイルの推奨構造
+### Recommended Archive File Structure (archive ファイルの推奨構造)
 
 **最小テンプレート** (必須 — すべての archive に含める):
 
