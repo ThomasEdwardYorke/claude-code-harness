@@ -52,7 +52,7 @@ argument-hint: "[init|update|archive|check]"
 プロジェクト固有の slug を `<project>` と表記。実プロジェクトでは
 例えば `<project>` → `my-app` / `new-feature` などに置換して使用する。
 
-```
+```text
 .docs/handoff/
 ├── <project>-current.md          # 鳥瞰図 (< 120 行、次セッション起動専用)
 ├── <project>-backlog.md          # 優先度付き pending list
@@ -92,7 +92,7 @@ argument-hint: "[init|update|archive|check]"
 
 主規約:
 
-```
+```text
 session-<YYYY-MM-DD>-<phase-slug>.md
 ```
 
