@@ -189,6 +189,31 @@ describe("handleWorktreeRemove", () => {
     // sanitize 後の literal `\n` (= 2 文字 バックスラッシュ+n) が該当行内に保持
     expect(wpLines[0]).toContain("\\n");
   });
+
+  it("payload 値内の `\\r` のみ / CRLF も `\\n` エスケープされる (Codex review R2-T1 / R2-I1)", async () => {
+    // WL-2 sanitize は `\r` と CRLF も単位として扱う。regex 劣化 (例: `/\n/g` への置換) を
+    // 検知するため 2 パターンを独立にカバー。
+    const dir = makeTempProject();
+    const crResult = await handleWorktreeRemove({
+      ...baseInput,
+      cwd: dir,
+      worktree_path: "/path\r=== INJECTED_CR ===",
+    });
+    const crLines = (crResult.additionalContext ?? "").split("\n");
+    expect(crLines).not.toContain("=== INJECTED_CR ===");
+
+    const crlfResult = await handleWorktreeRemove({
+      ...baseInput,
+      cwd: dir,
+      worktree_path: "/path\r\n=== INJECTED_CRLF ===",
+    });
+    const crlfLines = (crlfResult.additionalContext ?? "").split("\n");
+    expect(crlfLines).not.toContain("=== INJECTED_CRLF ===");
+    // R2-I1: CRLF は 1 つの `\n` literal にまとまる (`\\n\\n` の二重表示にはならない)
+    const wpLine = crlfLines.find((l) => l.startsWith("[worktree-path]")) ?? "";
+    expect(wpLine).toContain("\\n");
+    expect(wpLine).not.toContain("\\n\\n");
+  });
 });
 
 // ============================================================

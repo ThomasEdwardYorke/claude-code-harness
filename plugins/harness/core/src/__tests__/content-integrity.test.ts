@@ -1348,10 +1348,27 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
     // を組み合わせで明示していること (Codex review 対応 WL-3: 単語 OR では false
     // positive を許容するため、「Phase κ-2 と deferred の組」または「scaffold と
     // hooks.json 未登録の組」のいずれかを強制)。
+    // Codex review 対応 (R2-T2): ファイル全体ではなく `handleWorktreeCreate` 周辺
+    // (関数の上コメントブロック + 関数本体) に限定して regex を適用する。将来 Phase κ-2
+    // で別 scaffold handler が同じファイルに追加されても、その notice 文が false
+    // positive としてこの test を pass させてしまわないようにする。
     const src = readFileSync(worktreeLifecyclePath, "utf-8");
+    const handleWorktreeCreateIdx = src.indexOf(
+      "export async function handleWorktreeCreate",
+    );
+    expect(handleWorktreeCreateIdx).toBeGreaterThan(-1);
+    // handleWorktreeCreate の上コメントブロック起点 (概ね 1500 文字前) から
+    // 関数末尾 (次 export もしくは EOF) までに対象を絞る。
+    const scopeStart = Math.max(0, handleWorktreeCreateIdx - 1500);
+    const nextExportIdx = src.indexOf(
+      "export async function",
+      handleWorktreeCreateIdx + 10,
+    );
+    const scopeEnd = nextExportIdx === -1 ? src.length : nextExportIdx;
+    const scopedSrc = src.slice(scopeStart, scopeEnd);
     const phaseκ2Block = /Phase κ-2[\s\S]{0,200}?deferred|deferred[\s\S]{0,200}?Phase κ-2/;
     const scaffoldBlock =
       /scaffold[\s\S]{0,200}?hooks\.json[^\n]{0,50}(未登録|not registered|deferred)|hooks\.json[^\n]{0,50}(未登録|not registered)[\s\S]{0,200}?scaffold/;
-    expect(phaseκ2Block.test(src) || scaffoldBlock.test(src)).toBe(true);
+    expect(phaseκ2Block.test(scopedSrc) || scaffoldBlock.test(scopedSrc)).toBe(true);
   });
 });

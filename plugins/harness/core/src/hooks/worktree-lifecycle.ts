@@ -135,11 +135,13 @@ function hasAssignmentTable(projectRoot: string): boolean {
 // handleWorktreeRemove (fully implemented, registered in hooks.json)
 // ============================================================
 
-// Codex review 対応 (WL-2): Claude Code は payload を JSON で渡すため payload field に
-// 改行文字を含ませる経路は限定的だが、additionalContext が Claude の読むコンテキストに
-// 注入されることを踏まえ、`\n` / `\r` を可視化しておくことで偽 section 注入を防ぐ。
+// Codex review 対応 (WL-2 / R2-I1): Claude Code は payload を JSON で渡すため
+// payload field に改行文字を含ませる経路は限定的だが、additionalContext が Claude の
+// 読むコンテキストに注入されることを踏まえ、`\n` / `\r` を可視化しておくことで偽
+// section 注入を防ぐ。CRLF (`\r\n`) は 1 つの改行境界として `\\n` に折り畳む
+// (`[\n\r]` で 1 文字ずつ置換すると `\\n\\n` の二重表示になり cosmetic に冗長なため)。
 function sanitizeForContext(value: string): string {
-  return value.replace(/[\n\r]/g, "\\n");
+  return value.replace(/\r\n|[\n\r]/g, "\\n");
 }
 
 export async function handleWorktreeRemove(
