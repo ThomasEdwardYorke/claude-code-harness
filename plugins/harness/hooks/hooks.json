@@ -164,23 +164,23 @@
         ]
       }
     ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" task-completed",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "WorktreeRemove": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" worktree-remove",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" task-completed",
             "timeout": 10
           }
         ]

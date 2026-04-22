@@ -3,7 +3,7 @@
  *
  * WorktreeCreate / WorktreeRemove hook handlers — Phase η P0-κ (2026-04-22).
  *
- * ## 公式仕様 (research-anthropic-official-2026-04-22.md § 1-4)
+ * ## 公式仕様 (research-anthropic-official-2026-04-22.md § 3 フック)
  *
  * - **WorktreeCreate**: Claude Code 既定の `git worktree` 作成処理を **完全置換** する
  *   blocking hook。`command` stdout に absolute path を書き出すプロトコル必須。

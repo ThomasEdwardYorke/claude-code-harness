@@ -3,7 +3,7 @@
  *
  * WorktreeCreate / WorktreeRemove hook handlers — Phase η P0-κ (2026-04-22).
  *
- * ## 公式仕様 (research-anthropic-official-2026-04-22.md § 1-4)
+ * ## 公式仕様 (research-anthropic-official-2026-04-22.md § 3 フック)
  *
  * - **WorktreeCreate**: Claude Code 既定の `git worktree` 作成処理を **完全置換** する
  *   blocking hook。`command` stdout に absolute path を書き出すプロトコル必須。
@@ -44,6 +44,18 @@ const MAX_PLANS_SIZE = 512 * 1024;
  * coordinator にリマインドするため使用。pre-compact.ts の readAssignmentTable を
  * 踏襲するが、本 hook では「存在有無」だけを見る (内容の抜粋は PreCompact 側が既に
  * context 注入しているため、重複を避ける目的)。
+ *
+ * ## Known shared tech debt (Codex review 指摘 WL-1)
+ *
+ * `plansFile` は `harness.config.json` の `work.plansFile` をそのまま使用しており、
+ * `../../etc/passwd` 相当の相対パスが書かれた config を読み込ませれば projectRoot
+ * 外のファイルに `readFileSync` を呼ばせる boolean oracle attack が理論上可能。
+ * ただし (1) 戻り値は boolean (marker 含有有無) のみでデータ漏洩なし、(2) 同じ
+ * パターンは `pre-compact.ts:52 readAssignmentTable` にも存在する既存コード慣行、
+ * (3) `harness.config.json` 自体への書き込み権が前提で現実的脅威は低い、の 3 点
+ * から本 PR のスコープ外とする。pre-compact.ts と同時に別 PR で path traversal
+ * guard (`plansPath.startsWith(resolve(projectRoot) + path.sep)` 検査) を入れる
+ * のが恒久対応。
  */
 function hasAssignmentTable(projectRoot) {
     try {
@@ -73,18 +85,24 @@ function hasAssignmentTable(projectRoot) {
 // ============================================================
 // handleWorktreeRemove (fully implemented, registered in hooks.json)
 // ============================================================
+// Codex review 対応 (WL-2): Claude Code は payload を JSON で渡すため payload field に
+// 改行文字を含ませる経路は限定的だが、additionalContext が Claude の読むコンテキストに
+// 注入されることを踏まえ、`\n` / `\r` を可視化しておくことで偽 section 注入を防ぐ。
+function sanitizeForContext(value) {
+    return value.replace(/[\n\r]/g, "\\n");
+}
 export async function handleWorktreeRemove(input) {
     const projectRoot = input.cwd ?? process.cwd();
     const sections = [];
     sections.push("=== Harness WorktreeRemove: worktree 終了を検知 ===");
     if (input.worktree_path) {
-        sections.push(`[worktree-path] ${input.worktree_path}`);
+        sections.push(`[worktree-path] ${sanitizeForContext(input.worktree_path)}`);
     }
     if (input.agent_type) {
-        sections.push(`[agent-type] ${input.agent_type}`);
+        sections.push(`[agent-type] ${sanitizeForContext(input.agent_type)}`);
     }
     if (input.agent_id) {
-        sections.push(`[agent-id] ${input.agent_id}`);
+        sections.push(`[agent-id] ${sanitizeForContext(input.agent_id)}`);
     }
     if (hasAssignmentTable(projectRoot)) {
         sections.push("[reminder] 担当表 (Plans.md) の該当行を coordinator で削除し、完了セクションに移動してください");
@@ -103,24 +121,38 @@ export async function handleWorktreeRemove(input) {
 // WorktreeCreate は既定 git worktree 作成を「完全置換」する blocking hook で、
 // observability だけを目的に登録すると Claude Code 側が期待する
 // `worktreePath` が返らず、worktree 作成自体が失敗する。詳細は研究レポート
-// `docs/maintainer/research-anthropic-official-2026-04-22.md § 1` を参照。
+// `docs/maintainer/research-anthropic-official-2026-04-22.md § 3` (フック) を参照。
 //
 // Phase κ-2 (isolation: worktree 協調設計) で protocol-compliant 実装
 // (stdout に path を出す serializer 分岐 + git worktree 作成ロジック) を
 // 追加する時に本 handler を本登録する前提で、現時点では route() 経路だけ
 // 整えた scaffold とする。
+//
+// ## 失敗モードの明示 (Codex review 対応 WL-6)
+//
+// 本 scaffold を誤って hooks.json に登録すると以下が起きる:
+//   (1) Claude Code が WorktreeCreate を発火し、本 handler を invoke
+//   (2) 現 index.ts main() が `{decision, reason}` JSON を stdout に出力
+//   (3) 公式プロトコルは stdout に絶対 path を期待しているため、JSON 文字列は
+//       有効な path としてパースできず worktree 作成が失敗
+//   (4) ユーザー視点では `claude --worktree` / isolation: worktree agent 起動が
+//       不能になる (エラー: worktreePath 未設定 or 空)
+// Phase κ-2 で stdout serializer + git worktree コマンドを追加するまで
+// hooks.json への登録を禁止する。
 // ============================================================
 export async function handleWorktreeCreate(input) {
     const sections = [];
     sections.push("=== Harness WorktreeCreate: scaffold (Phase κ-2 deferred) ===");
     if (input.name) {
-        sections.push(`[name] ${input.name}`);
+        sections.push(`[name] ${sanitizeForContext(input.name)}`);
     }
     if (input.agent_type) {
-        sections.push(`[agent-type] ${input.agent_type}`);
+        sections.push(`[agent-type] ${sanitizeForContext(input.agent_type)}`);
     }
     // 本 scaffold は hooks.json 未登録のため実運用で発火しない。
     // Phase κ-2 で worktreePath 返却 protocol に差し替えるまでの足場。
+    // hooks.json に登録すると JSON response が absolute path として解釈できず
+    // worktree 作成が失敗する (詳細は handleWorktreeCreate コメントブロック § 失敗モード)。
     sections.push("[note] Phase κ-2 まで hooks.json 未登録 / scaffold 実装 (blocking protocol 準拠は Phase κ-2 で追加)");
     sections.push("=== WorktreeCreate end (scaffold) ===");
     return {

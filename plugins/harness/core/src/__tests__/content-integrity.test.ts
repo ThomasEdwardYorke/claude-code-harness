@@ -1322,7 +1322,9 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
   it("hooks.json は WorktreeCreate を登録しない (Phase κ-2 まで deferred)", () => {
     // 既定 git worktree 作成を置換する blocking hook を observability だけで登録すると
     // worktree 作成自体が失敗する。`isolation: worktree` 協調設計 (Phase κ-2) まで
-    // 意図的に登録を遅延する。詳細: research-anthropic-official-2026-04-22.md § 4-5
+    // 意図的に登録を遅延する。
+    // 詳細: research-anthropic-official-2026-04-22.md § 3 (フック) — § 3.1 公式仕様 /
+    //       § 3.3 ギャップ分析 で WorktreeCreate の blocking 特性と既定置換を記載。
     const raw = readFileSync(hooksJsonPath, "utf-8");
     const parsed = JSON.parse(raw) as { hooks: Record<string, unknown> };
     expect(parsed.hooks).not.toHaveProperty("WorktreeCreate");
@@ -1341,10 +1343,15 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
     expect(src).not.toMatch(/systemMessage\s*:\s*context/);
   });
 
-  it("worktree-lifecycle.ts の WorktreeCreate は scaffold であると明示する", () => {
-    // 将来実装者が「なぜ hooks.json に登録しないのか」を誤解しないよう、
-    // scaffold / Phase κ-2 deferred のいずれかを comment or string で明示する。
+  it("worktree-lifecycle.ts の WorktreeCreate は scaffold + hooks.json 未登録であることを明示する", () => {
+    // 将来実装者が「なぜ hooks.json に登録しないのか」を誤解しないよう、以下 2 要件
+    // を組み合わせで明示していること (Codex review 対応 WL-3: 単語 OR では false
+    // positive を許容するため、「Phase κ-2 と deferred の組」または「scaffold と
+    // hooks.json 未登録の組」のいずれかを強制)。
     const src = readFileSync(worktreeLifecyclePath, "utf-8");
-    expect(src).toMatch(/Phase κ-2|scaffold|deferred/);
+    const phaseκ2Block = /Phase κ-2[\s\S]{0,200}?deferred|deferred[\s\S]{0,200}?Phase κ-2/;
+    const scaffoldBlock =
+      /scaffold[\s\S]{0,200}?hooks\.json[^\n]{0,50}(未登録|not registered|deferred)|hooks\.json[^\n]{0,50}(未登録|not registered)[\s\S]{0,200}?scaffold/;
+    expect(phaseκ2Block.test(src) || scaffoldBlock.test(src)).toBe(true);
   });
 });
