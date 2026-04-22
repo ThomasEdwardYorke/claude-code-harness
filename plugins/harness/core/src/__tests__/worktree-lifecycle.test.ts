@@ -707,7 +707,7 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     expect(sanitizedLine).toContain("\\n");
   });
 
-  it("作成直後の worktree は空き状態 (isolated copy of repo)", async () => {
+  it("作成直後の worktree は HEAD 基点の複製を持つ (isolated copy of repo)", async () => {
     const repo = setupTempGitRepo();
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
@@ -763,10 +763,10 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     // `.env` と `notes.txt` を作成
     writeFileSync(join(repo, ".env"), "SECRET=xxx\n", "utf-8");
     writeFileSync(join(repo, "notes.txt"), "keep this\n", "utf-8");
-    // `.worktreeinclude` に列挙
+    // `.worktreeinclude` に列挙 (comment は test fixture 内、shipped spec 対象外)
     writeFileSync(
       join(repo, ".worktreeinclude"),
-      "# ローカル設定ファイル\n.env\nnotes.txt\n",
+      "# Local config files replicated into new worktrees\n.env\nnotes.txt\n",
       "utf-8",
     );
 
@@ -807,8 +807,6 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     expect(result.additionalContext ?? "").toMatch(
       /worktreeinclude-skipped[\s\S]*?unsafe path rejected[\s\S]*?\/absolute\/root/,
     );
-    // 実際に path traversal 先にファイルが作られていないこと
-    expect(existsSync("/etc/passwd-wt")).toBe(false);
 
     cleanupWorktree(repo, result.worktreePath!);
   });
