@@ -76,11 +76,11 @@ argument-hint: "[init|update|archive|check]"
 ### Required Structure of `backlog.md` (必須構造)
 
 ```markdown
-- [High|Med|Low] <Phase 名>: <1 行説明> (archive: session-YYYY-MM-DD-<slug>.md)
+- [High|Med|Low] <Phase 識別子>: <1 行説明> (archive: session-YYYY-MM-DD-<slug>.md)
 ```
 
-優先度ラベルと phase 番号を必ず付ける。archive への逆参照で「なぜこの申送が発生したか」
-を辿れるようにする。
+優先度ラベル (High/Med/Low) と Phase 識別子 (番号または名称、どちらも可) を必ず
+付ける。archive への逆参照で「なぜこの申送が発生したか」を辿れるようにする。
 
 ### `design-decisions.md` is Append-Only (追記専用)
 
@@ -232,7 +232,10 @@ touch .docs/handoff/<project>-design-decisions.md
 1. セッション成果を `archive/session-<YYYY-MM-DD>-<phase-slug>.md` に書き出し
 2. 上記「archive ファイルの推奨構造」テンプレートに従って構造化
    (Session summary / Commits / レビュー統計 / Design decisions / Open issues)
-3. `current.md` を backup → archive の最新情報で上書き
+3. `current.md` を backup (例: `<project>-current.prev.md`) した後、今セッションの
+   成果を反映した最新状態で `current.md` を更新する (archive ファイルの内容を
+   current.md に流し込むのではなく、current.md は「今の状態」の新しい snapshot に
+   書き換える)
 
 ### `check`
 
