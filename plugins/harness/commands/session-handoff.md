@@ -319,7 +319,11 @@ document の regex-based scanner が誤検知しないため):
 **session-handoff check** — <YYYY-MM-DD HH:MM>
 
 **Summary**
-<PASS|WARN|FAIL> — Structural: {P}/{W}/{F} | Content: {Extracted|Partial|Missing} | Synthesis: <Ready|Partial|Stale>
+<PASS|WARN|FAIL|INIT_REQUIRED> — Structural: {P}/{W}/{F} | Content: {Extracted|Partial|Missing} | Synthesis: <Ready|Partial|Stale|N/A>
+
+(**INIT_REQUIRED** は `.docs/handoff/` が空/未作成の時に返す独立 verdict。
+他 3 verdict とは orthogonal で、Structural / Content / Synthesis の実行前に
+判定される。`/session-handoff init` の実行を案内)
 
 ---
 

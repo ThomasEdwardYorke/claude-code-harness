@@ -1384,7 +1384,7 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
 // session-handoff skill: 引き継ぎ doc 構造化ベストプラクティスを
 // shipped plugin として提供する skill の existence + structure guard
 //
-// 公式推奨 (research-anthropic-official-2026-04-22.md § 2 / Codex Worker A 追補):
+// 公式推奨 (research-anthropic-official 調査 § 2 + 追補):
 //  - SKILL-style overview + topic files pattern (MEMORY.md index + detail files)
 //  - Skill 本体は 500 lines 未満
 //  - @import は lazy load ではなく展開される → 鳥瞰図に大量 import は NG
