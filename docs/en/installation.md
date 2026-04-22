@@ -5,7 +5,7 @@
 - Claude Code CLI
 - Node.js >= 18
 
-No native toolchain is required. v0.1.0 has zero native dependencies.
+No native toolchain is required. This plugin has zero native dependencies.
 
 ## Install from the marketplace
 

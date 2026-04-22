@@ -58,7 +58,7 @@ Each migration: keep behavior identical, replace Japanese prose with English. Ja
 
 ### Phase 4 — CI enforcement (after Phase 2-3 mostly complete)
 
-Once the critical path is migrated, add `generality.test.ts` series B-10 (locale check) to enforce English-only in shipped spec going forward. Files that are deliberately Japanese (like `docs/ja/`) would be under ALLOWLIST; files with pending migration get a time-bound exemption (`generality-exemption: B-10 — HARNESS-english-migration, until v0.2.0`).
+Once the critical path is migrated, add `generality.test.ts` series B-10 (locale check) to enforce English-only in shipped spec going forward. Files that are deliberately Japanese (like `docs/ja/`) would be under ALLOWLIST; files with pending migration get a time-bound exemption (`generality-exemption: B-10 — HARNESS-english-migration, until v0.4.0`).
 
 ## Exemption Handling During Migration
 
@@ -88,7 +88,7 @@ While migration is incomplete:
 ## Open Questions
 
 1. Should `docs/ja/` be auto-updated when `commands/*.md` English migration completes? → Decision needed: mirror manually vs. generate from canonical English via a docs pipeline.
-2. What's the migration cutoff version? → Proposed: complete Phase 1-2 by v0.2.0, Phase 3 by v0.3.0, Phase 4 CI-enforced from v0.3.0.
+2. What's the migration cutoff version? → Revised (as of v0.2.0 release, 2026-04-23): complete Phase 1 by v0.2.0 (DONE), Phase 2 by v0.3.0, Phase 3 by v0.4.0, Phase 4 CI-enforced from v0.4.0. Phase 1 compliance applies in v0.2.0; Phase 2 critical-path migration (harness-work / tdd-implement / parallel-worktree / worker / reviewer) is deferred to v0.3.0.
 3. How to handle comments in `core/src/hooks/*.ts`? → Proposed: code comments that only maintainers read may remain bilingual; doc-strings that surface in LSP / editor tooltips should be English.
 
 ## References

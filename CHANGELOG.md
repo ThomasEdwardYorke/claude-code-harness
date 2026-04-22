@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-23
+
+> **⚠️ Breaking change for v3/v4.1 users**: The `--test-pipeline` subflow has been fully removed from `harness-work.md`. If you relied on it, migrate to a project-local skill under `.claude/skills/<project>-local-rules/references/pipeline-check.md`. See `### Removed` below.
+
 ### Added
 
 - **`session-handoff` skill `check` v2 follow-up (PR #6)** — explicit **full-context ingestion** in Gate 2 description (`Read` loads `current.md` + `backlog.md` in full to Claude context, report is summary-only but content is query-able), new **Anti-pattern #10** (re-reading after `check` is redundant, exception is compaction), new staleness signal **S-13** (backlog.md 150+ lines WARN / 200+ lines FAIL, using Gate 2 Context loaded rather than separate `wc -l`, classified under Gate 1 Structural), Output Template adds `Context loaded: <N> lines (current: {X}, backlog: {Y})` Summary field for re-bloat visibility, and `Forbidden` section compressed from 8 bullets to 3 categories (no information loss). S-01〜S-13 total, Anti-patterns total 10. 5 new regression guards in `content-integrity.test.ts` (full-context wording / Context-loaded line / re-read forbidden / S-13 threshold / 10th anti-pattern existence). Skill size kept under 500 lines per Anthropic SKILL.md guideline.
@@ -59,7 +63,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.1.0
 
 [anthropic-memory]: https://code.claude.com/docs/en/memory

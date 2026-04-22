@@ -717,7 +717,7 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 
 5. **SessionMode 拡張**: `core/src/types.ts` の `SessionMode` に `"tdd"` / `"parallel-worktree"` を追加するかは設計判断待ち。既存の `"work"` / `"breezing"` を継続利用で運用上問題ないなら変更不要。
 
-6. **State store の並行書込競合**: v0.2.0 で file locking 予定とのこと。現状は Plans.md coordinator 専任運用で回避済み。
+6. **State store の並行書込競合**: 将来のバージョンで file locking (`proper-lockfile` 等) 導入を予定。現状は Plans.md coordinator 専任運用で回避済み。
 
 これらの事項は Phase 2+ 以降で検証・修正する。現状の設計で動かない場合は **フォールバック戦略** (下記) で品質ゲートを維持する。
 
