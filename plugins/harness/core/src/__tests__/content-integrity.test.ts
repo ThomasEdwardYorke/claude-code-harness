@@ -1298,20 +1298,25 @@ describe("Phase κ: subagent frontmatter の isolation 設定", () => {
 });
 
 // ============================================================
-// Phase η P0-κ (2026-04-22): WorktreeCreate / WorktreeRemove hook 登録 invariant
+// Phase κ-2 (2026-04-23): WorktreeCreate / WorktreeRemove hook 登録 invariant
 //
-// 公式仕様 (research-anthropic-official-2026-04-22.md):
+// 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
 //  - WorktreeRemove: non-blocking observability。失敗は debug-only。
 //  - WorktreeCreate: 既定 git worktree 作成処理を「完全置換」する blocking hook。
-//                    stdout に絶対 path を書き出すプロトコル準拠が必須。
-//                    observability だけの実装を hooks.json 登録すると作成が失敗する。
+//                    Command hook は raw absolute path を stdout に書き出す。
+//                    HTTP hook は `hookSpecificOutput.worktreePath` で JSON return。
+//                    exit 0 = 成功、any non-zero = worktree 作成失敗 (blocking)。
 //
-// 本 Phase の判断:
+// 本 Phase の判断 (Phase η P0-κ → Phase κ-2 進化):
 //  - WorktreeRemove は hooks.json に登録 (観測 + coordinator リマインダー)。
-//  - WorktreeCreate は handler / route 足場のみ用意し、hooks.json 登録は
-//    Phase κ-2 (isolation: worktree 協調設計) まで deferred。
+//  - WorktreeCreate は blocking protocol 準拠 production 実装として hooks.json 登録:
+//    * handler が実 `git worktree add` を実行し worktreePath を返す
+//    * main() は worktree-create 分岐で worktreePath を raw stdout に書く
+//    * timeout 120s (git worktree add + fetch まで余裕を持たせる)
+//  - agent frontmatter `isolation: worktree` 付与は Phase κ-3 以降 deferred
+//    (`/parallel-worktree` 手動管理と二重 worktree 干渉リスク回避、現在は別 describe で guard)
 // ============================================================
-describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
+describe("Phase κ-2: WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const worktreeLifecyclePath = resolve(
     PLUGIN_ROOT,
@@ -1336,15 +1341,30 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
     expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
   });
 
-  it("hooks.json は WorktreeCreate を登録しない (Phase κ-2 まで deferred)", () => {
-    // 既定 git worktree 作成を置換する blocking hook を observability だけで登録すると
-    // worktree 作成自体が失敗する。`isolation: worktree` 協調設計 (Phase κ-2) まで
-    // 意図的に登録を遅延する。
-    // 詳細: research-anthropic-official-2026-04-22.md § 3 (フック) — § 3.1 公式仕様 /
-    //       § 3.3 ギャップ分析 で WorktreeCreate の blocking 特性と既定置換を記載。
+  it("hooks.json は WorktreeCreate を登録する (Phase κ-2 blocking protocol, timeout 120s)", () => {
+    // 公式仕様準拠の blocking hook として登録。timeout 120s の根拠:
+    //   - 大規模 repo (10GB+ / 数十万 object) の local `git worktree add` は
+    //     チェックアウト自体に数十秒かかることがある (filesystem copy + index 展開)。
+    //   - `git worktree list --porcelain` の parse + retry 経路で最大 2 回 git 呼出。
+    //   - `realpathSync` / `execFileSync` overhead を含め、worst-case に 60-90s 程度。
+    //   - 公式仕様「any non-zero exit causes creation to fail」の性質上、timeout が
+    //     短すぎると hook が途中停止→worktree 作成が false-fail する。
+    //   - 長すぎると Claude Code session の responsiveness に影響するため、
+    //     SubagentStop (120s) と揃えた 120s を安全上限とする。
+    // 本 hook は **net 操作を行わない** (`fetch`/`push` 未実行)、純粋 local operation。
     const raw = readFileSync(hooksJsonPath, "utf-8");
-    const parsed = JSON.parse(raw) as { hooks: Record<string, unknown> };
-    expect(parsed.hooks).not.toHaveProperty("WorktreeCreate");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ hooks: Array<{ command?: string; timeout?: number }> }>
+      >;
+    };
+    expect(parsed.hooks).toHaveProperty("WorktreeCreate");
+    const entry = parsed.hooks["WorktreeCreate"];
+    expect(Array.isArray(entry)).toBe(true);
+    expect(entry?.length).toBeGreaterThan(0);
+    expect(entry?.[0]?.hooks?.[0]?.command).toContain("worktree-create");
+    expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(120);
   });
 
   it("worktree-lifecycle.ts が handleWorktreeRemove / handleWorktreeCreate を export する", () => {
@@ -1360,33 +1380,41 @@ describe("Phase η P0-κ: WorktreeCreate / WorktreeRemove hook 登録 invariant"
     expect(src).not.toMatch(/systemMessage\s*:\s*context/);
   });
 
-  it("worktree-lifecycle.ts の WorktreeCreate は scaffold + hooks.json 未登録であることを明示する", () => {
-    // 将来実装者が「なぜ hooks.json に登録しないのか」を誤解しないよう、以下 2 要件
-    // を組み合わせで明示していること (Codex review 対応 WL-3: 単語 OR では false
-    // positive を許容するため、「Phase κ-2 と deferred の組」または「scaffold と
-    // hooks.json 未登録の組」のいずれかを強制)。
-    // Codex review 対応 (R2-T2): ファイル全体ではなく `handleWorktreeCreate` 周辺
-    // (関数の上コメントブロック + 関数本体) に限定して regex を適用する。将来 Phase κ-2
-    // で別 scaffold handler が同じファイルに追加されても、その notice 文が false
-    // positive としてこの test を pass させてしまわないようにする。
+  it("worktree-lifecycle.ts の WorktreeCreate は blocking protocol 準拠 production 記述であること", () => {
+    // production 実装であることを明示する guard:
+    //   (a) blocking / exit / non-zero の意図説明があること (公式仕様準拠の理由付け)
+    //   (b) `git worktree add` (実コマンド) / worktreePath (公式 output 名) の参照があること
+    // 旧 scaffold 時代の `Phase κ-2 deferred` notice が残っていないこと (mutually exclusive)。
+    //
+    // Codex review 対応 (R2-T2 踏襲): ファイル全体ではなく `handleWorktreeCreate` 周辺
+    // (関数の上コメントブロック + 関数本体) に限定して regex を適用する。
     const src = readFileSync(worktreeLifecyclePath, "utf-8");
     const handleWorktreeCreateIdx = src.indexOf(
       "export async function handleWorktreeCreate",
     );
     expect(handleWorktreeCreateIdx).toBeGreaterThan(-1);
-    // handleWorktreeCreate の上コメントブロック起点 (概ね 1500 文字前) から
-    // 関数末尾 (次 export もしくは EOF) までに対象を絞る。
-    const scopeStart = Math.max(0, handleWorktreeCreateIdx - 1500);
+    const scopeStart = Math.max(0, handleWorktreeCreateIdx - 2000);
     const nextExportIdx = src.indexOf(
       "export async function",
       handleWorktreeCreateIdx + 10,
     );
     const scopeEnd = nextExportIdx === -1 ? src.length : nextExportIdx;
     const scopedSrc = src.slice(scopeStart, scopeEnd);
-    const phaseκ2Block = /Phase κ-2[\s\S]{0,200}?deferred|deferred[\s\S]{0,200}?Phase κ-2/;
-    const scaffoldBlock =
-      /scaffold[\s\S]{0,200}?hooks\.json[^\n]{0,50}(未登録|not registered|deferred)|hooks\.json[^\n]{0,50}(未登録|not registered)[\s\S]{0,200}?scaffold/;
-    expect(phaseκ2Block.test(scopedSrc) || scaffoldBlock.test(scopedSrc)).toBe(true);
+
+    // (a) blocking protocol の意図説明: blocking / exit / non-zero / worktreePath のいずれか
+    const blockingSignal =
+      /blocking|exit[^\n]{0,40}non-zero|non-zero[^\n]{0,40}exit|worktreePath/i;
+    expect(blockingSignal.test(scopedSrc)).toBe(true);
+
+    // (b) 実 git worktree add を呼ぶ記述があること
+    expect(scopedSrc).toMatch(/git\s+worktree\s+add/i);
+
+    // (c) 旧 scaffold notice は残っていないこと (production 化の明示)
+    // 単語片 "deferred" 自体は agent isolation 繰延べ文脈で再利用可能だが、
+    // 旧 scaffold 特有の「Phase κ-2 deferred」という組は production では成立しない。
+    expect(scopedSrc).not.toMatch(
+      /Phase κ-2[\s\S]{0,80}?deferred|deferred[\s\S]{0,80}?Phase κ-2/,
+    );
   });
 });
 
@@ -1800,7 +1828,7 @@ describe("release guard — version consistency (Phase μ)", () => {
     const harnessPlugin = plugins.find((p) => p["name"] === "harness");
     const description = harnessPlugin?.["description"];
     expect(typeof description).toBe("string");
-    // "11 lifecycle hook events" / "11 hook events" 等のパターンを許容
+    // "12 lifecycle hook events" / "12 hook events" 等のパターンを許容 (hooks.json keys 数に追随)
     const pattern = new RegExp(
       `\\b${eventCount}\\s+(?:lifecycle\\s+)?hook\\s+events?\\b`,
     );

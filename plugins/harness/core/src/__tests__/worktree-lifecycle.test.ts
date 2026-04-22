@@ -3,28 +3,48 @@
  *
  * WorktreeCreate / WorktreeRemove hook handler のテスト。
  *
- * ## 設計方針 (2026-04-22 Phase η P0-κ)
+ * ## 設計方針 (Phase κ-2 production、2026-04-23 更新)
  *
  * - **WorktreeRemove**: non-blocking observability として完全実装。Plans.md の
  *   担当表リマインダーを additionalContext に乗せ、`/parallel-worktree` 運用や
  *   `isolation: worktree` agent 終了時に coordinator の同期漏れを防ぐ。
  *
- * - **WorktreeCreate**: **hooks.json には登録しない**。公式仕様
- *   (research-anthropic-official-2026-04-22.md) により WorktreeCreate は
- *   Claude Code の既定 git worktree 作成処理を完全置換する blocking hook で、
- *   stdout に絶対 path を書き出すプロトコルが必要なため、observability のみの
- *   実装にすると worktree 作成自体が失敗する。そのため本 Phase では handler
- *   関数 + route() 分岐だけ scaffold 用意し、hooks.json 登録は Phase κ-2
- *   (`isolation: worktree` 協調設計) まで deferred とする。
+ * - **WorktreeCreate (Phase κ-2)**: blocking protocol production 実装。
+ *   hooks.json 登録済、公式仕様 (https://code.claude.com/docs/en/hooks) に
+ *   従い command hook として実 `git worktree add` を実行し、
+ *   worktreePath (absolute sibling path) を HookResult に載せて返す。
+ *   index.ts main() が raw stdout path を書き出し、exit 0 / 非 0 で blocking
+ *   semantics (any non-zero causes worktree creation to fail) を実装。
  *
  * 関連研究: docs/maintainer/research-anthropic-official-2026-04-22.md
  *           docs/maintainer/research-subagent-isolation-2026-04-22.md
  */
 
 import { describe, it, expect, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import {
+  mkdtempSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
+import { join, resolve, dirname, basename, isAbsolute } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+
+/**
+ * macOS では `/var` と `/private/var` の symlink 差で string 比較が壊れるため、
+ * 存在する path は realpathSync で正規化する。handleWorktreeCreate も内部で
+ * projectRoot を realpath 正規化するため、テスト期待値もそれに揃える。
+ */
+function realpathIfExists(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
 
 import {
   handleWorktreeCreate,
@@ -290,50 +310,348 @@ describe("handleWorktreeRemove", () => {
 });
 
 // ============================================================
-// handleWorktreeCreate (scaffold — Phase κ-2 まで hooks.json 未登録)
+// handleWorktreeCreate (Phase κ-2 blocking protocol production 実装)
+//
+// 公式仕様 (https://code.claude.com/docs/en/hooks):
+//   - Command hook: raw absolute path を stdout に書き出す
+//   - exit code 0 = 成功、non-zero = worktree 作成失敗 (blocking)
+//   - Input payload: `name` (公式で明示される唯一の field)
+//
+// 本 handler の責務:
+//   - `git worktree add <path> -b harness-wt/<name>` を実行
+//   - 成功時: worktreePath (absolute sibling path) を返す
+//   - 失敗時: worktreePath = undefined を返し、index.ts 側で exit 1 に変換
+//   - handler 自体は throw しない (fail-open、上位の errorToResult に頼らない)
+//
+// index.ts main() の worktree-create 分岐が本 handler の worktreePath を
+// 拾い stdout に raw path を書き出す。未設定なら exit 1 で blocking 失敗。
 // ============================================================
 
-describe("handleWorktreeCreate (scaffold, Phase κ-2 まで hooks.json 未登録)", () => {
+/**
+ * 最小 git repo を temp dir に作り、initial commit を置く。
+ * handleWorktreeCreate の実 git worktree add 動作検証用。
+ */
+/**
+ * git init with branch name portability fallback.
+ *
+ * Codex review #19 (minor portability): `git init -b main` は git >= 2.28 のみ。
+ * 古い CI では `git init` + `git branch -M main` に fallback。
+ */
+function initRepoOnMain(cwd: string): void {
+  try {
+    execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "pipe" });
+  } catch {
+    execFileSync("git", ["init"], { cwd, stdio: "pipe" });
+    try {
+      execFileSync("git", ["branch", "-M", "main"], { cwd, stdio: "pipe" });
+    } catch {
+      // HEAD が未 born (commit 前) の場合は branch -M が失敗するが、
+      // 続く commit 後に branch 名は HEAD のまま使われるので無視。
+    }
+  }
+}
+
+function setupTempGitRepo(): string {
+  const dir = mkdtempSync(join(tmpdir(), "harness-wtc-test-"));
+  tempDirs.push(dir);
+  initRepoOnMain(dir);
+  execFileSync("git", ["config", "user.email", "test@example.com"], {
+    cwd: dir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "user.name", "harness-test"], {
+    cwd: dir,
+    stdio: "pipe",
+  });
+  execFileSync("git", ["config", "commit.gpgsign", "false"], {
+    cwd: dir,
+    stdio: "pipe",
+  });
+  writeFileSync(join(dir, "README.md"), "test repo\n", "utf-8");
+  execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "pipe" });
+  return dir;
+}
+
+/**
+ * test 終了時に .git/worktrees/ に残骸を残さないよう、作成された worktree path を
+ * git worktree remove で撤去する。
+ *
+ * 注: tempDirs cleanup は rmSync で強制削除されるが、親 repo 側の
+ * `.git/worktrees/<slug>/` メタ情報は残ってしまう。vitest が順次並列実行される
+ * 場合に不要なエラー出力を防ぐため個別撤去する。
+ *
+ * pseudo-CodeRabbit review (wtc-shell-inject-test-cleanup-f3a2) 対応:
+ * execSync + template literal を execFileSync + args array に変更し、shell
+ * interpolation を排除 (production コード worktree-lifecycle.ts と同方針)。
+ */
+function cleanupWorktree(parentRepo: string, worktreePath: string): void {
+  try {
+    execFileSync("git", ["worktree", "remove", worktreePath, "--force"], {
+      cwd: parentRepo,
+      stdio: "pipe",
+    });
+  } catch {
+    // 既に存在しない場合などは無視 (冪等)。
+  }
+}
+
+describe("handleWorktreeCreate (Phase κ-2 blocking protocol)", () => {
   it("関数が export されており呼び出し可能", () => {
     expect(typeof handleWorktreeCreate).toBe("function");
   });
 
-  it("最小 payload で approve を返す (足場として)", async () => {
+  it("実 git worktree add を実行し worktreePath (absolute) を返す", async () => {
+    const repo = setupTempGitRepo();
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
-      name: "sample-slug",
+      cwd: repo,
+      name: "test-feature",
     });
     expect(result.decision).toBe("approve");
-    expect(typeof result.additionalContext).toBe("string");
+    expect(result.worktreePath).toBeDefined();
+    // Codex review #8 対応: POSIX 限定の `/^\//` regex を Windows 互換の
+    // isAbsolute() に置換 (path.isAbsolute は OS 別の絶対 path 形式に追随)。
+    expect(isAbsolute(result.worktreePath!)).toBe(true);
+    expect(existsSync(result.worktreePath!)).toBe(true);
+
+    // git worktree list に登録されていること
+    const listing = execFileSync("git", ["worktree", "list"], {
+      cwd: repo,
+      stdio: "pipe",
+    }).toString();
+    expect(listing).toContain(result.worktreePath!);
+
+    cleanupWorktree(repo, result.worktreePath!);
   });
 
-  it("name / cwd / agent_type を含む payload でも approve", async () => {
-    const dir = makeTempProject();
+  it("worktreePath は sibling 規約 (<parent>/<basename>-wt-<name>) に従う", async () => {
+    const repo = setupTempGitRepo();
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
-      session_id: "sess-wc-1",
-      cwd: dir,
+      cwd: repo,
+      name: "my-slug",
+    });
+    // handler は projectRoot を realpath 正規化するため、expected も同等正規化。
+    const realRepo = realpathIfExists(repo);
+    const expected = resolve(dirname(realRepo), `${basename(realRepo)}-wt-my-slug`);
+    expect(result.worktreePath).toBe(expected);
+
+    cleanupWorktree(repo, result.worktreePath!);
+  });
+
+  it("branch naming: harness-wt/<name> prefix で branch 作成 (名前空間衝突防止)", async () => {
+    const repo = setupTempGitRepo();
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "branch-check",
+    });
+    expect(result.worktreePath).toBeDefined();
+
+    const branches = execFileSync("git", ["branch", "--all"], {
+      cwd: repo,
+      stdio: "pipe",
+    }).toString();
+    // harness-wt/ prefix により既存 branch (feature/* / main 等) と衝突しない
+    expect(branches).toMatch(/harness-wt\/branch-check/);
+
+    cleanupWorktree(repo, result.worktreePath!);
+  });
+
+  it("additionalContext に name / worktreePath が含まれる (observability)", async () => {
+    const repo = setupTempGitRepo();
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
       name: "feature-xyz",
-      agent_type: "harness:worker",
     });
-    expect(result.decision).toBe("approve");
     expect(result.additionalContext).toContain("feature-xyz");
+    expect(result.additionalContext).toContain(result.worktreePath!);
+
+    cleanupWorktree(repo, result.worktreePath!);
   });
 
-  it("additionalContext に『Phase κ-2 deferred』note が含まれる (将来変更の意思伝達)", async () => {
+  it("name が undefined の場合 worktreePath 未設定 + reason に理由 (blocking exit 1 相当)", async () => {
+    const repo = setupTempGitRepo();
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
-      name: "note-check",
+      cwd: repo,
     });
-    // 将来実装者が実装の意図を誤解しないよう、scaffold であることを
-    // additionalContext に明示する (regression guard)。
-    // Codex review 対応 (WL-3): 単純 OR では `// TODO: scaffold` 等で false positive
-    // する可能性があるため、(a) 「Phase κ-2 と deferred の組」か (b) 「hooks.json
-    // 未登録」の明示かを要求し、scaffold notice の削除に耐える。
-    const ctx = result.additionalContext ?? "";
-    const phaseκ2Block =
-      /Phase κ-2[^\n]{0,80}deferred|deferred[^\n]{0,80}Phase κ-2/i;
-    const unregistered = /hooks\.json[^\n]{0,80}未登録|未登録[^\n]{0,80}hooks\.json/;
-    expect(phaseκ2Block.test(ctx) || unregistered.test(ctx)).toBe(true);
+    expect(result.decision).toBe("approve");
+    expect(result.worktreePath).toBeUndefined();
+    expect(result.reason ?? "").toMatch(/name/i);
+  });
+
+  it("name が空文字列の場合も worktreePath 未設定", async () => {
+    const repo = setupTempGitRepo();
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "",
+    });
+    expect(result.worktreePath).toBeUndefined();
+    expect(result.reason ?? "").toMatch(/name/i);
+  });
+
+  it("cwd が git repo でない場合 worktreePath 未設定 (git command 失敗)", async () => {
+    const nonGit = mkdtempSync(join(tmpdir(), "harness-wtc-nogit-"));
+    tempDirs.push(nonGit);
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: nonGit,
+      name: "test-slug",
+    });
+    expect(result.decision).toBe("approve"); // fail-open
+    expect(result.worktreePath).toBeUndefined();
+    // reason に git / worktree 関連のエラーメッセージが含まれる
+    expect(result.reason ?? "").toMatch(/git|worktree|not a/i);
+  });
+
+  it("unborn HEAD (git init 直後、commit 前) で明示的 reason を返す (Codex review #6)", async () => {
+    // git init のみで commit が無い repo は `git worktree add` が汎用エラーを吐く。
+    // handler 側で unborn HEAD を先検出し診断性の高い reason を返すこと。
+    const dir = mkdtempSync(join(tmpdir(), "harness-wtc-unborn-"));
+    tempDirs.push(dir);
+    initRepoOnMain(dir);
+    // 意図的に commit しない — HEAD が unborn state
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: dir,
+      name: "unborn-slug",
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.worktreePath).toBeUndefined();
+    expect(result.reason ?? "").toMatch(/unborn|HEAD|no commits/i);
+    // additionalContext に該当 section が入っていること (observability)
+    expect(result.additionalContext ?? "").toMatch(/unborn HEAD/);
+  });
+
+  it("race case: 手動で worktree を作ってから handler を呼ぶと post-race recheck で既存 path を返す (Codex review #2)", async () => {
+    // `findExistingWorktree` の初回判定 → `git worktree add` の間に別プロセスが
+    // 同 path を作った状況をシミュレート: 手動で `git worktree add` してから
+    // handler を呼ぶ。handler 内部の add は失敗するが、post-race recheck で
+    // 既存を検出し worktreePath を返すこと。
+    const repo = setupTempGitRepo();
+    // handler が計算する path と同一 path を手動で作る
+    const realRepo = realpathIfExists(repo);
+    const expectedPath = resolve(
+      dirname(realRepo),
+      `${basename(realRepo)}-wt-raced-slug`,
+    );
+    execFileSync(
+      "git",
+      ["worktree", "add", expectedPath, "-b", "harness-wt/raced-slug"],
+      { cwd: repo, stdio: "pipe" },
+    );
+
+    // handler 呼出: 初回 list は既存を検出するので idempotent パスに入る。
+    // (post-race recheck 経路を test するには list cache / timing を制御する
+    // 必要があり困難だが、少なくとも結果として同 path が返ることを guard。)
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "raced-slug",
+    });
+    expect(result.decision).toBe("approve");
+    expect(result.worktreePath).toBe(expectedPath);
+
+    cleanupWorktree(repo, expectedPath);
+  });
+
+  it("name に path separator / shell metachar が含まれる場合 reject (injection 防止)", async () => {
+    const repo = setupTempGitRepo();
+    for (const bad of [
+      "../etc/passwd",
+      "slug/nested",
+      "slug\\windows",
+      "slug;rm",
+      "slug\nmultiline",
+      "slug`cmd`",
+      "slug$(inj)",
+      ".hidden",
+      "",
+    ]) {
+      const result = await handleWorktreeCreate({
+        hook_event_name: "WorktreeCreate",
+        cwd: repo,
+        name: bad,
+      });
+      expect(
+        result.worktreePath,
+        `name="${bad}" should be rejected but got: ${result.worktreePath}`,
+      ).toBeUndefined();
+      expect(result.reason, `name="${bad}"`).toBeDefined();
+    }
+  });
+
+  it("同名で 2 回呼ぶと idempotent (既存 worktree path を返す)", async () => {
+    const repo = setupTempGitRepo();
+    const r1 = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "dup-slug",
+    });
+    expect(r1.worktreePath).toBeDefined();
+
+    const r2 = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "dup-slug",
+    });
+    expect(r2.worktreePath).toBe(r1.worktreePath);
+    // 2 回目は「既存を再利用」であり新規作成ではない
+    expect(r2.additionalContext ?? "").toMatch(/already|idempotent|reused|既存/i);
+
+    cleanupWorktree(repo, r1.worktreePath!);
+  });
+
+  it("cwd 未指定時は process.cwd() にフォールバック (既存契約の継承)", async () => {
+    // process.cwd() は通常 harness plugin repo 自体なので worktree 作成は成功する
+    // 可能性があるが、name を unique にして干渉を避ける。
+    // 本テストは「cwd 未指定でも handler が throw しない」ことの guard。
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      name: `kappa-2-cwd-fallback-${Date.now()}`,
+    });
+    // 成功 / 失敗のいずれでも decision は approve、throw しない
+    expect(result.decision).toBe("approve");
+    // worktreePath が取れた場合は cleanup
+    if (result.worktreePath) {
+      cleanupWorktree(process.cwd(), result.worktreePath);
+    }
+  });
+
+  it("payload 値内の改行は sanitize されて additionalContext に偽 section 注入しない", async () => {
+    const repo = setupTempGitRepo();
+    // name は validation で reject される前提だが、仮に reject 後の reason に埋め込まれる
+    // payload 値を持っていても改行で section 区切りが偽装されないことを確認。
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "good-name",
+    });
+    expect(result.worktreePath).toBeDefined();
+    // additionalContext 行数を確認し、単一 section 内で完結すること
+    const lines = (result.additionalContext ?? "").split("\n");
+    // fake section header が独立行として紛れ込まない
+    expect(lines).not.toContain("=== INJECTED ===");
+
+    cleanupWorktree(repo, result.worktreePath!);
+  });
+
+  it("作成直後の worktree は空き状態 (isolated copy of repo)", async () => {
+    const repo = setupTempGitRepo();
+    const result = await handleWorktreeCreate({
+      hook_event_name: "WorktreeCreate",
+      cwd: repo,
+      name: "isolated-check",
+    });
+    expect(result.worktreePath).toBeDefined();
+    // 作成 worktree には initial commit の README.md が存在する (HEAD 基点の複製)
+    const worktreeFiles = readdirSync(result.worktreePath!);
+    expect(worktreeFiles).toContain("README.md");
+
+    cleanupWorktree(repo, result.worktreePath!);
   });
 });

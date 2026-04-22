@@ -164,6 +164,17 @@
         ]
       }
     ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" worktree-create",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "WorktreeRemove": [
       {
         "hooks": [

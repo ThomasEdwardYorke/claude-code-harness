@@ -191,7 +191,7 @@ reviews:
         - `metadata.version == plugins[0].version` 必須 (content-integrity.test.ts 既存 test)
         - `plugins[0].description` は:
           - `plugin.json.commands.length` と一致する数字 (e.g. "13 commands")
-          - `hooks.json` keys 数と一致する数字 (e.g. "11 lifecycle hook events")
+          - `hooks.json` keys 数と一致する数字 (e.g. "12 lifecycle hook events")
           の両方を含む必要あり (content-integrity の description drift guards 2 件)
         - `allowCrossMarketplaceDependenciesOn: ["openai-codex"]` 維持
 

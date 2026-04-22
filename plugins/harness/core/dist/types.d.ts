@@ -29,6 +29,31 @@ export interface HookResult {
     reason?: string;
     /** Extra context surfaced to Claude. */
     systemMessage?: string;
+    /**
+     * Default `true`. `false` で Claude Code を完全停止させる。停止時は
+     * `stopReason` を user に表示 (Claude には渡らない)。
+     *
+     * 現 harness 実装は全 hook で fail-open のため通常は未設定 (= true)。
+     */
+    continue?: boolean;
+    /**
+     * `continue: false` 時に user へ見せる停止理由メッセージ。
+     */
+    stopReason?: string;
+    /**
+     * Default `false`。true にすると debug log から stdout を除外する。
+     * 機微情報を含む hook 出力を debug 画面に出したくない場合に使用。
+     */
+    suppressOutput?: boolean;
+    /**
+     * WorktreeCreate hook の出力 — 作成された worktree の absolute path。
+     * Phase κ-2 blocking protocol で設定。
+     *
+     * - 設定あり: index.ts main() が raw path を stdout に書き出し、exit 0
+     * - 設定なし: main() は exit 1 (公式仕様: any non-zero exit causes
+     *   worktree creation to fail — blocking hook の挙動)
+     */
+    worktreePath?: string;
 }
 /** Context passed to each guard rule during evaluation. */
 export interface RuleContext {

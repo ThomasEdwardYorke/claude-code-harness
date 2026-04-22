@@ -89,6 +89,24 @@ coordinator は並列開発着手前に以下を全て検証:
 
 **全項目が通ってから Phase 1 へ。**
 
+### WorktreeCreate hook との共存 (Phase κ-2 以降)
+
+harness plugin は `WorktreeCreate` hook を blocking protocol で実装し、agent frontmatter
+`isolation: worktree` を持つ subagent が起動すると自動的に sibling worktree を作成する。
+本スキル (`/parallel-worktree`) の手動 `git worktree add` 運用と**二重 worktree 作成**が
+発生しないよう、以下の invariant を守る:
+
+- **現状**: `harness:worker` を含む 6 agent 全てに `isolation: worktree` は付与されていない
+  (`content-integrity.test.ts` Phase κ guard で強制)。本スキルから dispatch される
+  subagent は main repo の context で動き、coordinator が事前に作成した
+  `worktree_parent_dir/worktree_prefix<slug>` に `cd` で入るだけ。
+- **将来 (Phase κ-3 以降)**: 特定 agent に `isolation: worktree` を付ける場合、
+  本スキルの Phase 1 worktree 生成と協調するロジック (env marker / cwd 判定) が必要。
+  二重作成を避けるには (a) 該当 agent を使う時は coordinator 側 `git worktree add` を
+  skip する、(b) `WorktreeCreate` hook 内で既存 worktree を検出して再利用する、の
+  いずれかを選択する。本スキルから dispatch する場合の推奨は (b) で、handler 側の
+  idempotent 検出 (`git worktree list --porcelain` マッチ) が既に実装済 (Phase κ-2)。
+
 ---
 
 ## Phase 1: Worktree 生成 + 担当表更新
