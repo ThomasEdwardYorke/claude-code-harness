@@ -89,7 +89,7 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 | P1.4 | `plugins/harness/agents/codex-sync.md` | `model: haiku` 試験 (軽量 wrapper のため) |
 | P1.5 | `plugins/harness/commands/*.md` | 全 skill に `allowed-tools` / `argument-hint` 明示 |
 | P1.6 | `plugins/harness/core/src/hooks/task-lifecycle.ts` (新規) | `TaskCreated` / `TaskCompleted` で Plans.md 担当表を自動同期 (プロジェクトが Plans.md 運用を持つ場合のみ) |
-| P1.7 | `plugins/harness/commands/session-handoff.md` (新規、2026-04-22 完了) | **Completed in PR #4 (`0fc8318`)**: 長期プロジェクトの引き継ぎ doc を 3 層構造 (current + backlog + design-decisions + archive/) で管理する skill。Anthropic 公式 [MEMORY.md][anthropic-memory] / [SKILL.md][anthropic-skills] pattern 準拠。subcommand: `init` / `update` / `archive` / `check`。汎用化厳守 (`<project>` placeholder、特定 project 情報なし)。**2026-04-22 follow-up**: `check` を 3-gate 化 (structural + content comprehension + rehydration synthesis) し、session-start orient-phase での把握 / 理解判定を追加 (12 staleness signals + PASS/WARN/FAIL/INIT_REQUIRED verdict) |
+| P1.7 | `plugins/harness/commands/session-handoff.md` (新規、2026-04-22 完了) | **Completed in PR #4 (`0fc8318`)**: 長期プロジェクトの引き継ぎ doc を 3 層構造 (current + backlog + design-decisions + archive/) で管理する skill。Anthropic 公式 [MEMORY.md][anthropic-memory] / [SKILL.md][anthropic-skills] pattern 準拠。subcommand: `init` / `update` / `archive` / `check`。汎用化厳守 (`<project>` placeholder、特定 project 情報なし)。**2026-04-22 follow-up**: `check` を 3-gate 化 (structural + content comprehension + rehydration synthesis)、orient-phase 把握/理解判定 (S-01〜S-12 + PASS/WARN/FAIL/INIT_REQUIRED)。**PR #6**: Gate 2 full-context ingestion 明示 + S-13 backlog 再肥大化 guard (150/200 行) + Anti-pattern #10 (check 後の再 Read 禁止) + Forbidden 3 カテゴリ圧縮 + Output Template Context loaded 表示 |
 
 ### Phase 1 完了条件
 

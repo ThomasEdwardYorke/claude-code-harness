@@ -1574,11 +1574,12 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 
   it("Output Template に『詳細は Claude context 内、再 Read 不要』注記がある", () => {
     const sec = checkSection();
-    // "Details in context after Gate 2 Read, no need to re-read" 相当の明示。
-    // ユーザー / Claude が check 後に current.md を再度 Read しない運用を skill 契約で強制。
-    expect(sec).toMatch(
-      /re[-\s]?read|再[\s]?Read|再読[込み]|no need|query directly|不要/i,
-    );
+    // Codex review i-1 対応: 旧 regex は `不要` 単独で偽陽性リスクあり (一般名詞)。
+    // 「check 後 / 再 Read / ingest 済」といった前後文脈を要求し、false-pass を防ぐ。
+    // "Details in context after Gate 2 Read, no need to re-read" 相当の明示を強制。
+    const explicitReReadBan =
+      /(check 後|after check|再 Read|re[-\s]?read|再読[込み]|query directly|query\s+directly)/i;
+    expect(sec).toMatch(explicitReReadBan);
   });
 
   it("陳腐化 signal 一覧に S-13 (backlog.md 肥大化 guard) が含まれる", () => {
