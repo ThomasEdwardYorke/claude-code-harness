@@ -79,6 +79,7 @@ And that the skills exist (5 verb skills plus 7 workflow skills):
   - `commands/codex-team.md`
   - `commands/parallel-worktree.md`
   - `commands/pseudo-coderabbit-loop.md`
+  - `commands/session-handoff.md`
   - `commands/tdd-implement.md`
 
 And that the following additional agent exists:
@@ -116,6 +117,7 @@ plugins/harness/
 │   ├── codex-team.md
 │   ├── parallel-worktree.md
 │   ├── pseudo-coderabbit-loop.md
+│   ├── session-handoff.md
 │   └── tdd-implement.md
 └── core/
     ├── package.json
