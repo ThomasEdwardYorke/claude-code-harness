@@ -127,7 +127,7 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
 
 ---
 
-## Known notes (v0.1.0)
+## Known notes
 
 1. **If you fork this repository**, run
    `scripts/set-owner.sh <your-github-user>` to rewrite the owner in
@@ -145,15 +145,15 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
    `plugins/harness/core/src/state/` is safe for single-process use.
    If you run `/breezing`-style parallel sessions against the same
    project, state writes can race. File locking (e.g.
-   `proper-lockfile`) is planned for v0.2.0; until then, avoid
-   simultaneous multi-session writes on the same project.
+   `proper-lockfile`) is planned for a future release; until then,
+   avoid simultaneous multi-session writes on the same project.
 4. **`permission.ts` double-encoding**: the reviewer flagged a
    CRITICAL-tier design concern in
    `plugins/harness/core/src/guardrails/permission.ts` — the
    `PermissionResponse` is packaged via `systemMessage` and then
    unpacked again in `index.ts`. Current behaviour is correct and
    tested, but the layering is fragile. A refactor is scheduled for
-   v0.2.0. Do not add new behaviour to that path until then.
+   a future release. Do not add new behaviour to that path until then.
 
 Maintainer notes and implementation logs are kept under
 `docs/maintainer/` (excluded from marketplace distribution). See

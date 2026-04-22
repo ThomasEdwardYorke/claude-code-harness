@@ -2,7 +2,7 @@
  * core/src/state/schema.ts
  * Harness state store — JSON schema (pure JS implementation).
  *
- * v0.1.0 replaces the previous SQLite layout with a single JSON file at
+ * As of v0.1.0 this module replaces the previous SQLite layout with a single JSON file at
  * `<projectRoot>/.claude/state/harness.json`. This eliminates the native
  * `better-sqlite3` dependency and removes all cross-platform build pain,
  * which was the dominant portability issue for the original harness.

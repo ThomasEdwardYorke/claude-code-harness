@@ -15,6 +15,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const PLUGIN_ROOT = resolve(__dirname, "../../..");
 
+/**
+ * Regex metacharacter escape (MDN RegExp guide 推奨形式).
+ * new RegExp() で文字列を literal match させたい時に使う。
+ * Phase μ release guard を含む future describe で共用するため module scope に置く。
+ */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function readAgent(name: string): string {
   return readFileSync(resolve(PLUGIN_ROOT, "agents", `${name}.md`), "utf-8");
 }
@@ -1645,5 +1654,208 @@ describe("session-handoff skill — harness-setup check 統合", () => {
     const match = /(\d+)\s*workflow\s+skills/.exec(setupContent);
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(expectedWorkflow);
+  });
+});
+
+/**
+ * Phase μ — release guard.
+ *
+ * 設計意図 (hardcode vs dynamic):
+ *   EXPECTED_VERSION を "hardcode" にしているのは意図的。
+ *   plugin.json から動的に読んで比較する dynamic approach では
+ *   「test constants を更新した」という PR 作業が不要になり、
+ *   その forcing function (release 漏れ検知) が失われる。
+ *
+ * Rationale:
+ *   plugin.json の version が "identical" とみなされると Claude Code の
+ *   cache が再生成されない公式仕様 (code.claude.com/docs/en/plugins-reference)
+ *   を根拠に、release PR で必ず連動すべき以下の 6 系統を regression guard で強制する:
+ *
+ *   1. plugin.json / marketplace.json / package.json の version 一致
+ *   2. CHANGELOG.md に [X.Y.Z] - YYYY-MM-DD entry が移行済
+ *   3. CHANGELOG.md 比較 link が compare/v{prev}...v{new} + compare/v{new}...HEAD に rewrite 済
+ *      + 前 release の releases/tag link 形式で残存
+ *   4. docs の `vX.Y.Z (unreleased)` マーカー除去 (prev + current 両方)
+ *   5. marketplace.json plugins[0].description に含まれる commands 数が plugin.json.commands.length と一致
+ *      (marketplace description drift を構造的に遮断 — plugin manifest と一貫性維持)
+ *   6. marketplace.json plugins[0].description に含まれる hook events 数が hooks.json keys 数と一致
+ *      (hooks drift の構造的遮断)
+ *   7. EXPECTED_VERSION / EXPECTED_PREV_VERSION が SemVer X.Y.Z 形状を保つ
+ *      (leading-zero 等の厳密検査は省略、shape validation のみ。canonical 形式とは区別)
+ *
+ * 次 release 時に更新する 3 箇所:
+ *   1. EXPECTED_VERSION
+ *   2. EXPECTED_PREV_VERSION
+ *   3. EXPECTED_RELEASE_DATE
+ * (describe タイトルは Phase μ 固定、バージョン番号を含めないので更新不要)
+ *
+ * false-positive 注意:
+ *   (unreleased) マーカー test はファイル全体を raw 検索する。
+ *   コードブロック内の歴史的言及 (例: 「以前は `v0.1.0 (unreleased)` と呼ばれていた」)
+ *   も検出して false-fail する。歴史的言及を残す場合はバッククォート表現を変更すること。
+ */
+describe("release guard — version consistency (Phase μ)", () => {
+  const EXPECTED_VERSION = "0.2.0";
+  const EXPECTED_PREV_VERSION = "0.1.0";
+  const EXPECTED_RELEASE_DATE = "2026-04-23";
+
+  // SemVer X.Y.Z 形状検証 (shape validation のみ、leading-zero 等の細部検査は省略)
+  // EXPECTED_VERSION = "0.2" / "1.2.3.4" / "abc" 等の malformed を排除することが目的
+  if (!/^\d+\.\d+\.\d+$/.test(EXPECTED_VERSION)) {
+    throw new Error(
+      `EXPECTED_VERSION "${EXPECTED_VERSION}" is not canonical SemVer X.Y.Z`,
+    );
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(EXPECTED_PREV_VERSION)) {
+    throw new Error(
+      `EXPECTED_PREV_VERSION "${EXPECTED_PREV_VERSION}" is not canonical SemVer X.Y.Z`,
+    );
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(EXPECTED_RELEASE_DATE)) {
+    throw new Error(
+      `EXPECTED_RELEASE_DATE "${EXPECTED_RELEASE_DATE}" is not YYYY-MM-DD`,
+    );
+  }
+
+  // describe scope で 1 回だけ read (既存 line 1140 パターンと統一、I/O 削減)
+  // 型は既存 describe と同じ Record<string, unknown> に揃える。narrow type にすると
+  // 将来 plugin.json のフィールド名が変わった場合に型エラーではなく実行時エラーになるため、
+  // dynamic access + 必要箇所のみ local narrow で型安全を確保する方針に統一。
+  const pluginJson = JSON.parse(
+    readFileSync(resolve(PLUGIN_ROOT, ".claude-plugin/plugin.json"), "utf-8"),
+  ) as Record<string, unknown>;
+  const rootPkg = JSON.parse(
+    readFileSync(resolve(PLUGIN_ROOT, "../../package.json"), "utf-8"),
+  ) as Record<string, unknown>;
+  const corePkg = JSON.parse(
+    readFileSync(resolve(PLUGIN_ROOT, "core/package.json"), "utf-8"),
+  ) as Record<string, unknown>;
+  const marketplaceJson = JSON.parse(
+    readFileSync(
+      resolve(PLUGIN_ROOT, "../../.claude-plugin/marketplace.json"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+  const changelog = readFileSync(
+    resolve(PLUGIN_ROOT, "../../CHANGELOG.md"),
+    "utf-8",
+  );
+  const testBedUsage = readFileSync(
+    resolve(PLUGIN_ROOT, "../../docs/maintainer/test-bed-usage.md"),
+    "utf-8",
+  );
+
+  // --- 1-3: package.json / plugin.json バージョン ---
+  it("plugins/harness/.claude-plugin/plugin.json の version が EXPECTED_VERSION", () => {
+    expect(pluginJson["version"]).toBe(EXPECTED_VERSION);
+  });
+
+  it("root package.json の version が EXPECTED_VERSION", () => {
+    expect(rootPkg["version"]).toBe(EXPECTED_VERSION);
+  });
+
+  it("plugins/harness/core/package.json の version が EXPECTED_VERSION", () => {
+    expect(corePkg["version"]).toBe(EXPECTED_VERSION);
+  });
+
+  // --- 4-5: marketplace.json ---
+  it("marketplace.json metadata.version が EXPECTED_VERSION", () => {
+    const metadata = marketplaceJson["metadata"] as Record<string, unknown>;
+    expect(metadata["version"]).toBe(EXPECTED_VERSION);
+  });
+
+  it("marketplace.json plugins[0].version (harness) が EXPECTED_VERSION", () => {
+    const plugins = marketplaceJson["plugins"] as Array<Record<string, unknown>>;
+    const harnessPlugin = plugins.find((p) => p["name"] === "harness");
+    expect(harnessPlugin).toBeDefined();
+    expect(harnessPlugin?.["version"]).toBe(EXPECTED_VERSION);
+  });
+
+  // --- 6-7: marketplace.json description ↔ plugin manifest の drift 遮断 ---
+  it("marketplace.json plugins[0].description の commands 数が plugin.json.commands.length と一致", () => {
+    // Record<string, unknown> から narrow access: plugin.json.commands のフィールド名が
+    // 変わった場合に compile error で落とす意図 (dynamic access + cast なら実行時エラー)。
+    const rawCommands = pluginJson["commands"];
+    expect(Array.isArray(rawCommands)).toBe(true);
+    const commands = rawCommands as string[];
+    const totalCommands = commands.length;
+    const plugins = marketplaceJson["plugins"] as Array<Record<string, unknown>>;
+    const harnessPlugin = plugins.find((p) => p["name"] === "harness");
+    const description = harnessPlugin?.["description"];
+    expect(typeof description).toBe("string");
+    // "13 commands" / "13 verb commands" 等のパターンを許容
+    const pattern = new RegExp(
+      `\\b${totalCommands}\\s+(?:verb\\s+)?commands?\\b`,
+    );
+    expect(description as string).toMatch(pattern);
+  });
+
+  it("marketplace.json plugins[0].description の hook events 数が hooks.json keys 数と一致", () => {
+    const hooksJson = JSON.parse(
+      readFileSync(resolve(PLUGIN_ROOT, "hooks/hooks.json"), "utf-8"),
+    ) as { hooks: Record<string, unknown> };
+    const eventCount = Object.keys(hooksJson.hooks).length;
+    const plugins = marketplaceJson["plugins"] as Array<Record<string, unknown>>;
+    const harnessPlugin = plugins.find((p) => p["name"] === "harness");
+    const description = harnessPlugin?.["description"];
+    expect(typeof description).toBe("string");
+    // "11 lifecycle hook events" / "11 hook events" 等のパターンを許容
+    const pattern = new RegExp(
+      `\\b${eventCount}\\s+(?:lifecycle\\s+)?hook\\s+events?\\b`,
+    );
+    expect(description as string).toMatch(pattern);
+  });
+
+  // --- 8-11: CHANGELOG.md ---
+  it("CHANGELOG.md に [X.Y.Z] - YYYY-MM-DD entry が移行済", () => {
+    const pattern = new RegExp(
+      `^## \\[${escapeRegex(EXPECTED_VERSION)}\\] - ${escapeRegex(EXPECTED_RELEASE_DATE)}$`,
+      "m",
+    );
+    expect(changelog).toMatch(pattern);
+  });
+
+  it("CHANGELOG.md 比較 link [Unreleased] が compare/v{new}...HEAD に rewrite 済", () => {
+    const pattern = new RegExp(
+      `^\\[Unreleased\\]: .*compare/v${escapeRegex(EXPECTED_VERSION)}\\.\\.\\.HEAD$`,
+      "m",
+    );
+    expect(changelog).toMatch(pattern);
+  });
+
+  it("CHANGELOG.md 比較 link [X.Y.Z] が compare/v{prev}...v{new} を指す", () => {
+    const pattern = new RegExp(
+      `^\\[${escapeRegex(EXPECTED_VERSION)}\\]: .*compare/v${escapeRegex(EXPECTED_PREV_VERSION)}\\.\\.\\.v${escapeRegex(EXPECTED_VERSION)}$`,
+      "m",
+    );
+    expect(changelog).toMatch(pattern);
+  });
+
+  it("CHANGELOG.md 前 release link [X.Y.Z_prev] が releases/tag 形式で残存", () => {
+    const pattern = new RegExp(
+      `^\\[${escapeRegex(EXPECTED_PREV_VERSION)}\\]: .*releases/tag/v${escapeRegex(EXPECTED_PREV_VERSION)}$`,
+      "m",
+    );
+    expect(changelog).toMatch(pattern);
+  });
+
+  it("CHANGELOG.md に [Unreleased] section header は残っている (Keep a Changelog 慣習)", () => {
+    expect(changelog).toMatch(/^## \[Unreleased\]$/m);
+  });
+
+  // --- 11-12: docs (unreleased) マーカー除去 (prev + current 両方) ---
+  it("test-bed-usage.md に v{prev} (unreleased) マーカーが残っていない", () => {
+    const pattern = new RegExp(
+      `v${escapeRegex(EXPECTED_PREV_VERSION)}\\s*\\(unreleased\\)`,
+    );
+    expect(testBedUsage).not.toMatch(pattern);
+  });
+
+  it("test-bed-usage.md に v{current} (unreleased) マーカーが残っていない", () => {
+    // current version も誰かが (unreleased) 付きで書いていた場合を検知
+    const pattern = new RegExp(
+      `v${escapeRegex(EXPECTED_VERSION)}\\s*\\(unreleased\\)`,
+    );
+    expect(testBedUsage).not.toMatch(pattern);
   });
 });

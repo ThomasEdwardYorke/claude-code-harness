@@ -3,7 +3,10 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Strict SemVer tag (v-prefix + X.Y.Z) のみを trigger。
+      # RC / pre-release / backport tag (`v0.2.0-rc.1` 等) は自動 release せず、
+      # `gh release create <tag> --prerelease` で手動発行する (docs/maintainer/release-process.md)。
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 jobs:
   release:
@@ -16,13 +19,27 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm install
+      # npm ci で package-lock.json を厳守 — CI の再現性保証 (Codex release review n-3)
+      - run: npm ci
       - run: npm run build
       - run: npm test
       - run: npm run smoke
+      # CHANGELOG.md から当該 version の section を抽出して Release notes に使う。
+      # 手書きの Keep a Changelog カテゴリ別 notes を Release body に表示、
+      # generate_release_notes (自動 PR タイトル一覧) との二重掲載を回避 (Codex release review M-2)。
+      - name: Extract CHANGELOG section for Release body
+        run: node scripts/extract-changelog.mjs "${{ github.ref_name }}" > RELEASE_NOTES.md
+      # defense-in-depth: extract が exit 0 を返しながら stdout が空だった場合
+      # (現実装では section header 行が必ず含まれるため発生しないが、
+      # 将来的な実装変更で該当ケースが生まれた場合の silent empty body release を
+      # 構造的に遮断する)。現時点では主に future-proof な防御として機能する。
+      - name: Verify release notes are non-empty
+        run: test -s RELEASE_NOTES.md
       - uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          # CHANGELOG を Release body に展開するため auto 生成は無効化
+          generate_release_notes: false
           files: |
             CHANGELOG.md
             LICENSE

@@ -5,7 +5,7 @@
 - Claude Code CLI
 - Node.js 18 以上
 
-ネイティブ依存はありません（v0.1.0 は Pure JS 実装）。
+ネイティブ依存はありません（Pure JS 実装）。
 
 ## Marketplace からインストール
 
