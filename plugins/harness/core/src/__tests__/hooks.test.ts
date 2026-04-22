@@ -621,6 +621,49 @@ describe("handlePreCompact config override (Codex M-1B)", () => {
     // fallback default markers が効いて担当表を拾う
     expect(result.additionalContext).toContain("担当表");
   });
+
+  it("空 `assignmentSectionMarkers: []` でも default marker に fallback して担当表が拾える (pseudo-CodeRabbit PCR-1)", async () => {
+    // `[].every(pred)` は vacuously true なので length > 0 guard が無いと
+    // `markers = []` になり `some(...)` 常に false で reminder / additionalContext
+    // の "担当表" が消失する。regression guard。
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-pc-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "Plans.md"),
+      "# Plans\n\n## 担当表\n| task |\n|---|\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { assignmentSectionMarkers: [] } }),
+      "utf-8",
+    );
+    const result = await handlePreCompact({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    expect(result.additionalContext).toContain("担当表");
+  });
+
+  it("空文字 / 空白のみの marker は invalid として default に fallback (CodeRabbit PR #3 inline)", async () => {
+    // `[""]` / `["   "]` は typeof "string" を通過するが content.includes("") が常に
+    // true になり担当表先頭検出が壊れる。normalize chain が空文字を除去することの
+    // regression guard (pre-compact.ts:51 の filter → trim → filter 連鎖)。
+    const dir = mkdtempSync(join(tmpdir(), "harness-test-pc-"));
+    tempDirs.push(dir);
+    writeFileSync(
+      join(dir, "Plans.md"),
+      "# Plans\n\n## 担当表\n| task |\n|---|\n",
+      "utf-8",
+    );
+    writeFileSync(
+      join(dir, "harness.config.json"),
+      JSON.stringify({ work: { assignmentSectionMarkers: ["", "   "] } }),
+      "utf-8",
+    );
+    const result = await handlePreCompact({ ...baseInput, cwd: dir });
+    expect(result.decision).toBe("approve");
+    // default ("担当表" / "Assignment" / "In Progress") に fallback して拾える
+    expect(result.additionalContext).toContain("担当表");
+  });
 });
 
 // NOTE: previous revisions carried a tautological `expect(true).toBe(true)`

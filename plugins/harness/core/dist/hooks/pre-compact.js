@@ -29,8 +29,20 @@ function readAssignmentTable(projectRoot) {
             : "Plans.md";
         const rawMarkers = config.work
             ?.assignmentSectionMarkers;
-        const markers = Array.isArray(rawMarkers) && rawMarkers.every((m) => typeof m === "string")
+        // 2 段の regression 対応:
+        //  - pseudo-CodeRabbit (PCR-1): `[].every(...)` は vacuously true のため、空配列で
+        //    markers = [] になり `markers.some(...)` 常に false で reminder が無音消失。
+        //  - CodeRabbit (PR #3 inline): `[""]` / `["   "]` は typeof "string" を通過してしまい、
+        //    `l.includes("")` がどの行でも true となり担当表先頭検出が壊れる。
+        // 対応: string 要素に絞り込み → trim → 空要素除去 → 空なら default fallback。
+        const normalizedMarkers = Array.isArray(rawMarkers)
             ? rawMarkers
+                .filter((m) => typeof m === "string")
+                .map((m) => m.trim())
+                .filter((m) => m.length > 0)
+            : [];
+        const markers = normalizedMarkers.length > 0
+            ? normalizedMarkers
             : ["担当表", "Assignment", "In Progress"];
         const plansPath = resolve(projectRoot, plansFile);
         if (!existsSync(plansPath))

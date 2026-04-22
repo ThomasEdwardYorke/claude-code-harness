@@ -35,7 +35,7 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 
 6. **全 6 agent `model: sonnet` 固定** (security-auditor は opus 向き、codex-sync は haiku で十分)
 
-7. **未活用の Claude Code 機能** (subagent frontmatter `maxTurns`/`memory`/`isolation` [`isolation` は Phase κ (2026-04-22) の guard-test approach で現状方針 = 全 agent 未付与を regression guard 化完了。Phase κ-2 で `isolation: worktree` + `WorktreeCreate`/`WorktreeRemove` hook 協調設計を予定]、hooks `SubagentStop`/`PreCompact`/`FileChanged`、MCP 0 個)
+7. **未活用の Claude Code 機能** (subagent frontmatter `maxTurns`/`memory`/`isolation` [`isolation` は Phase κ (2026-04-22) の guard-test approach で現状方針 = 全 agent 未付与を regression guard 化完了。Phase κ-2 で `isolation: worktree` + `WorktreeCreate`/`WorktreeRemove` hook 協調設計を予定。**Phase η P0-κ (commit `9c7c706`) で `WorktreeRemove` の non-blocking observability 登録 + `WorktreeCreate` scaffold + regression guard まで完了、Phase κ-2 で blocking protocol 実装 + 二重 worktree 協調を追加予定**]、hooks `SubagentStop`/`PreCompact`/`FileChanged`、MCP 0 個)
 
 詳細は `parts-management/docs/harness-model-b-plan.md` 参照。
 
