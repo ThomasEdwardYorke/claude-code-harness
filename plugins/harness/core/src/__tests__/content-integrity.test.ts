@@ -1406,10 +1406,11 @@ describe("session-handoff skill (shipped plugin 汎用 handoff skill)", () => {
     expect(fm).toMatch(/^allowed-tools:/m);
   });
 
-  it("argument-hint に subcommand 候補を列挙している", () => {
+  it("argument-hint に subcommand 候補を厳密な [word|word|word] 形式で列挙している", () => {
     const fm = extractFrontmatter(readSkill());
-    // e.g., "[init|update|archive|check]" のような subcommand 形式
-    expect(fm).toMatch(/^argument-hint:\s*".*\[.*\|.*\].*"/m);
+    // Codex review 対応 (A-02): 値全体が `[word|word|...]` 形式であることを強制
+    // (過度に緩い `.*\[.*\|.*\].*` では `"free text [foo| ] bar"` も pass してしまう)
+    expect(fm).toMatch(/^argument-hint:\s*"\[[\w-]+(?:\|[\w-]+)+\]"$/m);
   });
 
   it("本体 500 行未満 (Anthropic 公式 SKILL.md 目安)", () => {
@@ -1461,9 +1462,28 @@ describe("session-handoff skill (shipped plugin 汎用 handoff skill)", () => {
 
 // harness-setup check が session-handoff を認識する (Phase 0 P0.8 の延長)
 describe("session-handoff skill — harness-setup check 統合", () => {
-  it("harness-setup.md の check 対象 command list に session-handoff が含まれる", () => {
+  it("harness-setup.md の check 対象 command list に commands/session-handoff.md パス形式で含まれる", () => {
+    // Codex review 対応 (A-05): 単なる文字列一致ではなく file path 形式で検証。
+    // コメント内の偶然の一致を防ぐ。
     const setupPath = resolve(PLUGIN_ROOT, "commands/harness-setup.md");
     const content = readFileSync(setupPath, "utf-8");
-    expect(content).toMatch(/session-handoff/);
+    expect(content).toMatch(/commands\/session-handoff\.md/);
+  });
+
+  it("harness-setup.md のワークフロースキル数宣言が plugin.json 実数 - verb skills 数 (5) と一致する", () => {
+    // Codex review 対応 (A-01): workflow skills 数字が手動で bookkeep されている
+    // ため、plugin.json 実数と一致することを CI で強制。
+    const setupPath = resolve(PLUGIN_ROOT, "commands/harness-setup.md");
+    const setupContent = readFileSync(setupPath, "utf-8");
+    const pluginJson = JSON.parse(
+      readFileSync(resolve(PLUGIN_ROOT, ".claude-plugin/plugin.json"), "utf-8"),
+    ) as { commands: string[] };
+    const totalCommands = pluginJson.commands.length;
+    const verbSkillCount = 5; // harness-plan/work/review/release/setup
+    const expectedWorkflow = totalCommands - verbSkillCount;
+    // "5 verb skills plus N workflow skills" フレーズの N を抽出
+    const match = /(\d+)\s*workflow\s+skills/.exec(setupContent);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(expectedWorkflow);
   });
 });

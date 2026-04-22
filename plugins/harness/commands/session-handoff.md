@@ -31,6 +31,8 @@ argument-hint: "[init|update|archive|check]"
 
 [anthropic-memory]: https://code.claude.com/docs/en/memory
 [anthropic-skills]: https://code.claude.com/docs/en/skills
+[anthropic-context]: https://code.claude.com/docs/en/context-window
+[anthropic-hooks]: https://code.claude.com/docs/en/hooks-guide
 
 ---
 
@@ -88,6 +90,8 @@ argument-hint: "[init|update|archive|check]"
 
 ### archive/ の命名規約
 
+主規約:
+
 ```
 session-<YYYY-MM-DD>-<phase-slug>.md
 ```
@@ -98,6 +102,47 @@ session-<YYYY-MM-DD>-<phase-slug>.md
 
 1 セッション = 1 ファイルを原則とする。長時間セッションで Phase が跨がるなら
 `session-<YYYY-MM-DD>-part-a.md` / `part-b.md` に分割。
+
+**命名例外** (主規約の `session-` prefix に収まらないケース):
+
+- `pre-<YYYY-MM-DD>-<slug>.md` — 既存 monolithic doc を分割する際の
+  "ある日付以前の要約 archive" 用。単一セッションではなく複数セッションを
+  まとめた historical summary を指し、通常の session ログとは扱いを変える
+  ことを file 名で明示。`check` サブコマンドはこの prefix を許容する。
+- `summary-<slug>.md` — Phase 完了時の Phase-level summary archive。
+  個別セッションを跨いだ Phase 全体の結果を記録する用途。
+
+### archive ファイルの推奨構造
+
+新 archive file を作成する際は以下の section を含める:
+
+```markdown
+# Archive: Session <YYYY-MM-DD> — <Phase 名 or 目的>
+
+**元ファイル / 対象 PR**: <git commit range or PR URL>
+**生成日**: <YYYY-MM-DD>
+
+---
+
+## 目的 / Session summary
+(3-5 行で何を達成したセッションか)
+
+## Commits
+(`git log --oneline <from>..<to>` の出力)
+
+## レビュー統計
+(使用したレビューツール毎の指摘件数サマリ。例: Codex 2 round で計 8 件、
+CodeRabbit 1 round で Nitpick 1 件など。ツール名は汎用に記述)
+
+## 設計判断 / Design decisions
+(このセッションで確定した恒久方針 — `design-decisions.md` への追記と対応)
+
+## 残件 / Open issues
+(次セッションへの申送 — `backlog.md` への登録と対応)
+```
+
+この構造により、後から archive を読み返すときに "何が起きたか / なぜこう
+決めたか / 次に何が必要か" が一貫して追跡できる。
 
 ---
 
@@ -177,8 +222,8 @@ touch .docs/handoff/<project>-design-decisions.md
 ### `archive`
 
 1. セッション成果を `archive/session-<YYYY-MM-DD>-<phase-slug>.md` に書き出し
-2. テンプレート (Codex review 統計、commit chain、指摘リスト) に従って
-   構造化
+2. 上記「archive ファイルの推奨構造」テンプレートに従って構造化
+   (Session summary / Commits / レビュー統計 / Design decisions / Open issues)
 3. `current.md` を backup → archive の最新情報で上書き
 
 ### `check`
@@ -188,7 +233,8 @@ touch .docs/handoff/<project>-design-decisions.md
 - `backlog.md` 各 entry に priority ラベルがあるか
 - `design-decisions.md` が append-only になっているか (前回コミット
   との diff で削除/編集を検知)
-- archive ファイルに `session-<YYYY-MM-DD>-` prefix があるか
+- archive ファイル名が主規約 (`session-<YYYY-MM-DD>-<slug>.md`) または
+  命名例外 (`pre-<YYYY-MM-DD>-<slug>.md` / `summary-<slug>.md`) に従うか
 
 ---
 
@@ -220,8 +266,6 @@ touch .docs/handoff/<project>-design-decisions.md
 - **per-session archive** 運用 (公式は archive の自動化を skill or hook
   で実装することを許容している)
 
-[anthropic-context]: https://code.claude.com/docs/en/context-window
-
 ---
 
 ## 関連 skill / 機能
@@ -229,8 +273,7 @@ touch .docs/handoff/<project>-design-decisions.md
 - `/harness-plan` — Plans.md 管理 (本 skill と相補的、Plans.md は active
   task tracker、handoff は context 保全)
 - `SessionStart` / `SessionEnd` hook — 自動 trigger に乗せる場合は plugin
-  hooks.json で wire する (詳細は
-  [Anthropic hooks docs](https://code.claude.com/docs/en/hooks-guide) 参照)
+  hooks.json で wire する (詳細は [anthropic-hooks][] 参照)
 - `PreCompact` hook — compaction 直前に current.md を保護する用途に使える
 
 ---

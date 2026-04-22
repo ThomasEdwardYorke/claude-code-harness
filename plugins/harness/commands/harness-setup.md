@@ -64,7 +64,7 @@ And that the following agent definitions exist (v3 layout):
 - `agents/security-auditor.md`
 - `agents/codex-sync.md`
 
-And that the skills exist (5 verb skills plus 7 workflow skills):
+And that the skills exist (5 verb skills plus 8 workflow skills):
 
 - Verb skills
   - `commands/harness-plan.md`

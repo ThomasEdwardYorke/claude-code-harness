@@ -89,12 +89,17 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 | P1.4 | `plugins/harness/agents/codex-sync.md` | `model: haiku` 試験 (軽量 wrapper のため) |
 | P1.5 | `plugins/harness/commands/*.md` | 全 skill に `allowed-tools` / `argument-hint` 明示 |
 | P1.6 | `plugins/harness/core/src/hooks/task-lifecycle.ts` (新規) | `TaskCreated` / `TaskCompleted` で Plans.md 担当表を自動同期 (プロジェクトが Plans.md 運用を持つ場合のみ) |
+| P1.7 | `plugins/harness/commands/session-handoff.md` (新規、2026-04-22 完了) | **Completed in `feature/session-handoff-skill` (PR #4 候補)**: 長期プロジェクトの引き継ぎ doc を 3 層構造 (current + backlog + design-decisions + archive/) で管理する skill。Anthropic 公式 [MEMORY.md][anthropic-memory] / [SKILL.md][anthropic-skills] pattern 準拠。subcommand: `init` / `update` / `archive` / `check`。汎用化厳守 (`<project>` placeholder、特定 project 情報なし) |
 
 ### Phase 1 完了条件
 
 - [ ] `/compact` 後も担当表コンテキスト維持
 - [ ] `harness:worker` 完了時に CI が自動実行
 - [ ] per-agent model routing が効く (security-auditor に opus、codex-sync に haiku)
+- [x] **session-handoff skill で長期プロジェクト引き継ぎをサポート (P1.7、2026-04-22)**
+
+[anthropic-memory]: https://code.claude.com/docs/en/memory
+[anthropic-skills]: https://code.claude.com/docs/en/skills
 
 ---
 
