@@ -1473,15 +1473,29 @@ describe("session-handoff skill — harness-setup check 統合", () => {
   it("harness-setup.md のワークフロースキル数宣言が plugin.json 実数 - verb skills 数 (5) と一致する", () => {
     // Codex review 対応 (A-01): workflow skills 数字が手動で bookkeep されている
     // ため、plugin.json 実数と一致することを CI で強制。
+    // Codex review 対応 (N-01): VERB_SKILL_COUNT は verb skill (plan/work/review/release/setup) の
+    // 数に追随して手動更新が必要。新 verb skill 追加時はこの定数と harness-setup.md の
+    // "X verb skills plus Y workflow skills" 表現の両方を更新すること。
+    const VERB_SKILLS = [
+      "harness-plan",
+      "harness-work",
+      "harness-review",
+      "harness-release",
+      "harness-setup",
+    ];
     const setupPath = resolve(PLUGIN_ROOT, "commands/harness-setup.md");
     const setupContent = readFileSync(setupPath, "utf-8");
     const pluginJson = JSON.parse(
       readFileSync(resolve(PLUGIN_ROOT, ".claude-plugin/plugin.json"), "utf-8"),
     ) as { commands: string[] };
     const totalCommands = pluginJson.commands.length;
-    const verbSkillCount = 5; // harness-plan/work/review/release/setup
-    const expectedWorkflow = totalCommands - verbSkillCount;
-    // "5 verb skills plus N workflow skills" フレーズの N を抽出
+    // plugin.json 実際の verb skills をカウント (VERB_SKILLS 定数からの drift を検知)
+    const actualVerbCount = pluginJson.commands.filter((p) =>
+      VERB_SKILLS.some((v) => p.endsWith(`/${v}.md`)),
+    ).length;
+    expect(actualVerbCount).toBe(VERB_SKILLS.length); // drift guard
+    const expectedWorkflow = totalCommands - VERB_SKILLS.length;
+    // "X verb skills plus Y workflow skills" フレーズの Y を抽出
     const match = /(\d+)\s*workflow\s+skills/.exec(setupContent);
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(expectedWorkflow);

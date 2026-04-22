@@ -15,7 +15,7 @@ argument-hint: "[init|update|archive|check]"
 
 ---
 
-## なぜ必要か
+## Why This Skill Exists (なぜ必要か)
 
 長期プロジェクトで 1 ファイルに session log を追記し続けると以下が起きる:
 
@@ -47,7 +47,7 @@ argument-hint: "[init|update|archive|check]"
 
 ---
 
-## 推奨ファイルレイアウト (generic)
+## Recommended Layout (推奨ファイルレイアウト — generic)
 
 プロジェクト固有の slug を `<project>` と表記。実プロジェクトでは
 例えば `<project>` → `my-app` / `new-feature` などに置換して使用する。
@@ -114,39 +114,47 @@ session-<YYYY-MM-DD>-<phase-slug>.md
 
 ### archive ファイルの推奨構造
 
-新 archive file を作成する際は以下の section を含める:
+**最小テンプレート** (必須 — すべての archive に含める):
 
 ```markdown
 # Archive: Session <YYYY-MM-DD> — <Phase 名 or 目的>
 
-**元ファイル / 対象 PR**: <git commit range or PR URL>
 **生成日**: <YYYY-MM-DD>
 
----
-
-## 目的 / Session summary
+## Session summary / 目的
 (3-5 行で何を達成したセッションか)
 
-## Commits
-(`git log --oneline <from>..<to>` の出力)
-
-## レビュー統計
-(使用したレビューツール毎の指摘件数サマリ。例: Codex 2 round で計 8 件、
-CodeRabbit 1 round で Nitpick 1 件など。ツール名は汎用に記述)
-
-## 設計判断 / Design decisions
+## Design decisions / 設計判断
 (このセッションで確定した恒久方針 — `design-decisions.md` への追記と対応)
 
-## 残件 / Open issues
+## Open issues / 残件
 (次セッションへの申送 — `backlog.md` への登録と対応)
 ```
+
+**拡張テンプレート** (任意 — 該当する場合のみ追加):
+
+```markdown
+**元ファイル / 対象 PR**: <git commit range or PR URL>
+  (PR-based workflow を使うプロジェクトで任意追加)
+
+## Commits (任意)
+(`git log --oneline <from>..<to>` の出力。git 基盤プロジェクトで任意追加)
+
+## Review statistics / レビュー統計 (任意)
+(使用したレビューツール毎の指摘件数サマリ。例: `<review-tool> X round で計 N 件、
+<review-tool> Y round で Nitpick 1 件`。review 体制があるプロジェクトで任意追加。
+ツール名は汎用 placeholder で記述)
+```
+
+**分離の意図**: PR を使わないチームや review tool を持たない小規模プロジェクト
+でも最小テンプレートだけで運用可能にし、過剰な構造を強制しない (Codex review N-05 対応)。
 
 この構造により、後から archive を読み返すときに "何が起きたか / なぜこう
 決めたか / 次に何が必要か" が一貫して追跡できる。
 
 ---
 
-## update triggers (更新タイミング)
+## Update Triggers (更新タイミング)
 
 | タイミング | 更新する file | 操作 |
 |---|---|---|
@@ -159,7 +167,7 @@ CodeRabbit 1 round で Nitpick 1 件など。ツール名は汎用に記述)
 
 ---
 
-## Anti-patterns (避けるべき)
+## Anti-patterns (避けるべきパターン)
 
 1. **current.md がセッションログを蓄積している**
    current は「今の状態」だけを持つ。ログは archive へ。
@@ -197,7 +205,7 @@ CodeRabbit 1 round で Nitpick 1 件など。ツール名は汎用に記述)
 
 ---
 
-## サブコマンド詳細
+## Subcommand Details (サブコマンド詳細)
 
 ### `init`
 
@@ -238,7 +246,7 @@ touch .docs/handoff/<project>-design-decisions.md
 
 ---
 
-## 実装時のチェックリスト (skill 起動時の self-validation)
+## Self-Validation Checklist (実装時の自己検証)
 
 起動時に以下を確認:
 
@@ -251,7 +259,7 @@ touch .docs/handoff/<project>-design-decisions.md
 
 ---
 
-## Anthropic 公式との整合性
+## Alignment with Anthropic Official Docs (Anthropic 公式との整合性)
 
 本 skill は Anthropic 公式の以下を踏襲:
 
@@ -268,7 +276,7 @@ touch .docs/handoff/<project>-design-decisions.md
 
 ---
 
-## 関連 skill / 機能
+## Related Skills / Hooks (関連 skill / 機能)
 
 - `/harness-plan` — Plans.md 管理 (本 skill と相補的、Plans.md は active
   task tracker、handoff は context 保全)
@@ -278,7 +286,7 @@ touch .docs/handoff/<project>-design-decisions.md
 
 ---
 
-## 注意事項
+## Notes (注意事項)
 
 - 本 skill は **汎用テンプレート** である。特定プロジェクトの branch 名 /
   ファイル layout 前提はない。project-specific な拡張は consumer 側
