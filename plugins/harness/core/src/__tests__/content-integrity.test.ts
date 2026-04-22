@@ -1549,6 +1549,60 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
     expect(hasFirstTime).toBe(true);
     expect(hasGitUnavailable).toBe(true);
   });
+
+  // PR #6: full-context ingestion + backlog 再肥大化 guard の 5 追加改善
+
+  it("Gate 2 が full-context ingestion を明示する (Read で full 読込 = Claude context に入る旨)", () => {
+    const sec = checkSection();
+    // Gate 2 description に「全文 / full content / context に入る」相当の明示。
+    // 単なる「抽出 (extract)」だけでは、Read 済の full content が Claude context に
+    // 残ることが伝わらない。明示することで「check 後に current.md を別途 Read」
+    // という冗長運用を予防。
+    expect(sec).toMatch(
+      /full[-\s]?context|full[-\s]?content|全文|ingestion|Claude[\s\S]{0,30}(context|コンテキスト)/i,
+    );
+  });
+
+  it("Output Template が Context loaded 行を持つ (毎回の context 消費量可視化)", () => {
+    const sec = checkSection();
+    // Summary 部 or Gate 2 output に「context に入った行数」を明示する invariant。
+    // 再肥大化を運用者が即時検知できるようにする。
+    expect(sec).toMatch(
+      /Context\s*loaded|context\s*consumption|読込[\s\S]{0,10}行|consumed[\s\S]{0,20}lines/i,
+    );
+  });
+
+  it("Output Template に『詳細は Claude context 内、再 Read 不要』注記がある", () => {
+    const sec = checkSection();
+    // Codex review i-1 対応: 旧 regex は `不要` 単独で偽陽性リスクあり (一般名詞)。
+    // 「check 後 / 再 Read / ingest 済」といった前後文脈を要求し、false-pass を防ぐ。
+    // "Details in context after Gate 2 Read, no need to re-read" 相当の明示を強制。
+    const explicitReReadBan =
+      /(check 後|after check|再 Read|re[-\s]?read|再読[込み]|query directly|query\s+directly)/i;
+    expect(sec).toMatch(explicitReReadBan);
+  });
+
+  it("陳腐化 signal 一覧に S-13 (backlog.md 肥大化 guard) が含まれる", () => {
+    const sec = checkSection();
+    // S-13 signal として backlog.md の行数 150 行超 WARN / 200 行超 FAIL を列挙。
+    // 再肥大化 (旧 1354 行 prompt 問題の再発) を自動検知する。
+    expect(sec).toMatch(/S-13/);
+    expect(sec).toMatch(/backlog[\s\S]{0,80}(150|200)/);
+  });
+
+  it("Anti-pattern 10 個目 (check 後の re-read 冗長禁止) が追加されている", () => {
+    // Anti-patterns section に 10 個目の項目として「check 後に current.md を
+    // 別途 Read する運用」を禁止パターンとして列挙。
+    const body = readSkill();
+    const antiSection = body.match(
+      /## Anti-patterns[\s\S]*?(?=\n## [^#]|$)/,
+    )?.[0] ?? "";
+    // 10 個目の item が存在 (`10. **...**` の形式) + check 後 re-read 言及
+    expect(antiSection).toMatch(/^\s*10\.\s*\*\*/m);
+    expect(antiSection).toMatch(
+      /(check 後|after check|check 直後)[\s\S]{0,150}(再[\s]?Read|re[-\s]?read|再読|redundant|冗長)/i,
+    );
+  });
 });
 
 
