@@ -66,15 +66,21 @@ function hasAssignmentTable(projectRoot) {
             ? rawPlans
             : "Plans.md";
         const rawMarkers = config.work?.assignmentSectionMarkers;
-        // Codex pseudo-CodeRabbit review 対応 (PCR-1): 空配列 (`[]`) は `Array.isArray` +
-        // `every(predicate)` の両方を vacuously true で通過するが、`some(...)` で
-        // 常に false を返すため reminder が永久無音化される。`length > 0` guard を
-        // 追加し、空配列は default marker に fallback させる。同問題は pre-compact.ts
-        // でも同時修正。
-        const markers = Array.isArray(rawMarkers) &&
-            rawMarkers.length > 0 &&
-            rawMarkers.every((m) => typeof m === "string")
+        // 2 段の regression 対応 (pre-compact.ts と同等):
+        //  - pseudo-CodeRabbit (PCR-1): 空配列 `[]` は `Array.isArray` + `every(pred)` の両方を
+        //    vacuously true で通過するが、`some(...)` が常に false を返す。
+        //  - CodeRabbit (PR #3 inline review): `[""]` / `["   "]` は `typeof "string"` を通過
+        //    してしまい、`.some(m => content.includes(m))` で空文字列が任意の行を match し
+        //    担当表先頭検出が壊れる。
+        // 対応: string 要素に絞り込み → trim → 空要素除去 → 非空要素のみ採用、空なら default fallback。
+        const normalizedMarkers = Array.isArray(rawMarkers)
             ? rawMarkers
+                .filter((m) => typeof m === "string")
+                .map((m) => m.trim())
+                .filter((m) => m.length > 0)
+            : [];
+        const markers = normalizedMarkers.length > 0
+            ? normalizedMarkers
             : ["担当表", "Assignment", "In Progress"];
         const plansPath = resolve(projectRoot, plansFile);
         if (!existsSync(plansPath))

@@ -212,6 +212,57 @@ describe("handleWorktreeRemove", () => {
     );
   });
 
+  it("空文字 / 空白のみの marker は invalid として default に fallback (CodeRabbit PR #3 inline)", async () => {
+    // `[""]` / `["   "]` は typeof "string" + length > 0 を通過してしまうが、
+    // `content.includes("")` が常に true になり担当表先頭検出が壊れる。normalize chain
+    // (filter string → trim → filter non-empty) で排除されていることを regression guard。
+    const plans = "# Plans\n\n## 担当表\n\n| x | y |\n|---|---|\n";
+    // ケース 1: `[""]` (empty string のみ)
+    const dir1 = makeTempProject({
+      plansContent: plans,
+      harnessConfig: { work: { assignmentSectionMarkers: [""] } },
+    });
+    const r1 = await handleWorktreeRemove({
+      ...baseInput,
+      cwd: dir1,
+      worktree_path: "/tmp/wt/a",
+    });
+    expect(r1.decision).toBe("approve");
+    expect(r1.additionalContext).toContain("担当表"); // default marker にフォールバック
+
+    // ケース 2: `["   "]` (whitespace のみ)
+    const dir2 = makeTempProject({
+      plansContent: plans,
+      harnessConfig: { work: { assignmentSectionMarkers: ["   "] } },
+    });
+    const r2 = await handleWorktreeRemove({
+      ...baseInput,
+      cwd: dir2,
+      worktree_path: "/tmp/wt/b",
+    });
+    expect(r2.decision).toBe("approve");
+    expect(r2.additionalContext).toContain("担当表");
+  });
+
+  it("valid marker は trim された形で採用される (normalize chain 回帰ガード)", async () => {
+    // `["  進捗表  "]` を渡すと trim 後 "進捗表" として Plans.md の "進捗表" と match し、
+    // `hasAssignmentTable` が true を返し reminder が出る。trim が抜けると match 失敗で
+    // reminder が出ない。
+    const plans = "# Plans\n\n## 進捗表\n\n| x | y |\n|---|---|\n| a | b |\n";
+    const dir = makeTempProject({
+      plansContent: plans,
+      harnessConfig: { work: { assignmentSectionMarkers: ["  進捗表  "] } },
+    });
+    const result = await handleWorktreeRemove({
+      ...baseInput,
+      cwd: dir,
+      worktree_path: "/tmp/wt/c",
+    });
+    expect(result.decision).toBe("approve");
+    // reminder が出る = trim された "進捗表" が markers として採用され Plans.md と match
+    expect(result.additionalContext).toContain("[reminder]");
+  });
+
   it("payload 値内の `\\r` のみ / CRLF も `\\n` エスケープされる (Codex review R2-T1 / R2-I1)", async () => {
     // WL-2 sanitize は `\r` と CRLF も単位として扱う。regex 劣化 (例: `/\n/g` への置換) を
     // 検知するため 2 パターンを独立にカバー。
