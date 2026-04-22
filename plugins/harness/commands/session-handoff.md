@@ -237,8 +237,9 @@ touch .docs/handoff/<project>-design-decisions.md
 ### `archive`
 
 1. セッション成果を `archive/session-<YYYY-MM-DD>-<phase-slug>.md` に書き出し
-2. 上記「archive ファイルの推奨構造」テンプレートに従って構造化
-   (Session summary / Commits / レビュー統計 / Design decisions / Open issues)
+2. 上記「archive ファイルの推奨構造」テンプレートに従って構造化:
+   - **最小 (必須)**: Session summary / Design decisions / Open issues
+   - **拡張 (任意)**: Commits / Review statistics / 対象 PR ref (PR-based workflow や review tool を持つプロジェクトでのみ追加、無ければ省略可)
 3. `current.md` を backup (例: `<project>-current.prev.md`) した後、今セッションの
    成果を反映した最新状態で `current.md` を更新する (archive ファイルの内容を
    current.md に流し込むのではなく、current.md は「今の状態」の新しい snapshot に
