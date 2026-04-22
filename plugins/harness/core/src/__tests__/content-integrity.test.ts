@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1857,5 +1858,161 @@ describe("release guard — version consistency (Phase μ)", () => {
       `v${escapeRegex(EXPECTED_VERSION)}\\s*\\(unreleased\\)`,
     );
     expect(testBedUsage).not.toMatch(pattern);
+  });
+});
+
+/**
+ * `.coderabbit.yaml` repository-level CodeRabbit config の構造検証。
+ *
+ * 目的:
+ *   - yaml parse による nested access で structural integrity を検証
+ *     (regex match の false-positive / false-negative を根本解決)
+ *   - path-based instructions の drift 防止 (shipped spec 全 path を網羅)
+ *   - Organization UI default への silent fallback を防止
+ *   - yaml 自身が汎用化原則 (内部 tracker ID 禁止) を遵守していることを self-check
+ *
+ * 技術選択:
+ *   `yaml` (pure JS, Node >=18) を dev dep に追加、YAML.parse で nested object にしてから
+ *   `config.reviews.profile` のような正確な path で検証。substring match の曖昧性を排除。
+ */
+describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
+  const coderabbitYamlPath = resolve(PLUGIN_ROOT, "../../.coderabbit.yaml");
+  const coderabbitYamlRaw = readFileSync(coderabbitYamlPath, "utf-8");
+  const coderabbitConfig = parseYaml(coderabbitYamlRaw) as Record<string, unknown>;
+
+  it("schema directive がファイル先頭行 (yaml-language-server + coderabbit schema v2)", () => {
+    const firstLine = coderabbitYamlRaw.split("\n", 1)[0];
+    expect(firstLine).toBe(
+      "# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json",
+    );
+  });
+
+  it("language は ja-JP", () => {
+    expect(coderabbitConfig["language"]).toBe("ja-JP");
+  });
+
+  it("tone_instructions は 非空 + 250 文字以内 (公式 schema.v2 制約)", () => {
+    const tone = coderabbitConfig["tone_instructions"];
+    expect(typeof tone).toBe("string");
+    expect(tone).toBeTruthy();
+    expect((tone as string).length).toBeLessThanOrEqual(250);
+  });
+
+  it("reviews.profile: chill (actionable-only、nitpick は assertive profile 専用の公式仕様)", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    expect(reviews["profile"]).toBe("chill");
+    expect(reviews["request_changes_workflow"]).toBe(false);
+  });
+
+  it("reviews.auto_review: enabled + drafts=false + base_branches に ^main$ (regex 形式)", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    const autoReview = reviews["auto_review"] as Record<string, unknown>;
+    expect(autoReview["enabled"]).toBe(true);
+    expect(autoReview["drafts"]).toBe(false);
+    const baseBranches = autoReview["base_branches"];
+    expect(Array.isArray(baseBranches)).toBe(true);
+    // regex 形式 (glob ではない、公式 schema.v2 仕様)
+    expect(baseBranches as string[]).toContain("^main$");
+  });
+
+  it("reviews.path_instructions に harness shipped spec の 17 path 全てが含まれる", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    const pathInstructions = reviews["path_instructions"] as Array<{
+      path: string;
+      instructions: string;
+    }>;
+    expect(Array.isArray(pathInstructions)).toBe(true);
+    const actualPaths = new Set(pathInstructions.map((p) => p.path));
+    // shipped spec の各 path が review 指示対象になっているか (drift 防止)。
+    // 追加 / 削除時はこの配列を更新 (forcing function、release guard と同じ思想)。
+    const requiredPaths = [
+      "**/*",
+      "plugins/harness/core/src/**/*.ts",
+      "plugins/harness/core/src/__tests__/**/*.ts",
+      "plugins/harness/agents/**/*.md",
+      "plugins/harness/commands/**/*.md",
+      "plugins/harness/hooks/hooks.json",
+      "plugins/harness/schemas/**/*.json",
+      "plugins/harness/.claude-plugin/plugin.json",
+      ".claude-plugin/marketplace.json",
+      "scripts/**/*.mjs",
+      ".github/workflows/*.yml",
+      "template/**/*",
+      "CONTRIBUTING.md",
+      "CHANGELOG.md",
+      "docs/maintainer/**/*.md",
+      "docs/{en,ja}/**/*.md",
+      "README.md",
+    ];
+    for (const p of requiredPaths) {
+      expect(
+        actualPaths.has(p),
+        `path_instructions must include "${p}"`,
+      ).toBe(true);
+    }
+  });
+
+  it("`**/*` path の instructions が汎用化原則 (内部 tracker ID 禁止) を含む", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    const pathInstructions = reviews["path_instructions"] as Array<{
+      path: string;
+      instructions: string;
+    }>;
+    const globalEntry = pathInstructions.find((p) => p.path === "**/*");
+    expect(globalEntry).toBeDefined();
+    expect(globalEntry!.instructions).toContain("Plugin Generality Check");
+    expect(globalEntry!.instructions).toContain("内部 tracker ID");
+    expect(globalEntry!.instructions).toContain("time-stable wording");
+  });
+
+  it("reviews.path_filters で build artifact / local docs / maintainer session-notes を除外", () => {
+    const reviews = coderabbitConfig["reviews"] as Record<string, unknown>;
+    const pathFilters = reviews["path_filters"] as string[];
+    expect(Array.isArray(pathFilters)).toBe(true);
+    expect(pathFilters).toContain("!plugins/harness/core/dist/**");
+    expect(pathFilters).toContain("!.docs/**");
+    // session-notes は internal tracker ID の exemption zone。CodeRabbit review 対象から除外し、
+    // 機密 review 情報が外部送出されることを防止。
+    expect(pathFilters).toContain("!docs/maintainer/session-notes/**");
+  });
+
+  it("knowledge_base: learnings.scope=local + web_search.enabled=true + code_guidelines.enabled=true", () => {
+    const kb = coderabbitConfig["knowledge_base"] as Record<string, unknown>;
+    const learnings = kb["learnings"] as Record<string, unknown>;
+    expect(learnings["scope"]).toBe("local");
+    const webSearch = kb["web_search"] as Record<string, unknown>;
+    expect(webSearch["enabled"]).toBe(true);
+    const codeGuidelines = kb["code_guidelines"] as Record<string, unknown>;
+    expect(codeGuidelines["enabled"]).toBe(true);
+  });
+
+  it("chat.auto_reply: true (CodeRabbit との対話を能動化)", () => {
+    const chat = coderabbitConfig["chat"] as Record<string, unknown>;
+    expect(chat["auto_reply"]).toBe(true);
+  });
+
+  it("yaml 自身が internal tracker ID を usage 形式で含まない (generality 自己整合)", () => {
+    // yaml の shipped-spec 相当の扱いに対する self-check。
+    // Exemption: yaml 内で "禁止対象を記述する" 目的の例示 (`(C-N) / (M-N)` 等) は許容。
+    // 禁止: "Phase μ review での refactor" のような tracker ID を前提とする参照 usage。
+    //
+    // 検出対象:
+    //   - ギリシャ文字 Phase (Phase κ / λ / μ ...) の usage
+    //   - Arabic Phase (Phase 1 / Phase 2 ...) の usage
+    //   - Round N の usage (指摘 / review / fix / 対応)
+    //   - PCR-N 参照
+    const greekPhaseUsagePattern =
+      /Phase [κ-ω][-\s][A-Za-z0-9]/; // κ λ μ ν ξ ... の後に英字
+    expect(coderabbitYamlRaw).not.toMatch(greekPhaseUsagePattern);
+
+    const arabicPhaseUsagePattern =
+      /Phase\s+\d+\s+(review|fix|指摘|対応)/;
+    expect(coderabbitYamlRaw).not.toMatch(arabicPhaseUsagePattern);
+
+    const roundUsagePattern = /Round\s+\d+\s+(指摘|review|fix|対応)/;
+    expect(coderabbitYamlRaw).not.toMatch(roundUsagePattern);
+
+    const pcrPattern = /\bPCR-\d+\b/;
+    expect(coderabbitYamlRaw).not.toMatch(pcrPattern);
   });
 });

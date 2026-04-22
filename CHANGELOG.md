@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`.coderabbit.yaml` (repository-level CodeRabbit config)** — 旧 Organization UI default 設定への silent fallback を廃し、repository 固有の path-based review instructions を明示化。10 path × harness 固有 rules (TypeScript core の Pure JS / zero native deps / Record<string, unknown> + narrow access / hooks blocking protocol; commands/agents frontmatter 4-field; hooks.json 11 events + `WorktreeCreate` 未登録保持; plugin.json / marketplace.json drift guard; scripts ES module + strict SemVer; `.github/workflows/*.yml` strict tag + `npm ci` + `body_path`; CHANGELOG exemption zone; docs generality policy)、profile `chill`、`auto_review.base_branches: ^main$` (regex)、`path_filters` で dist / .docs 除外、`knowledge_base.learnings.scope: local` / `web_search.enabled: true`。公式 schema `coderabbit.ai/integrations/schema.v2.json` 準拠。`content-integrity.test.ts` に 9 regression guards 追加 (language / profile / auto_review / 10 path / tone_instructions ≤250 文字 / **/* 汎用化原則 / knowledge_base+chat / path_filters / schema directive)。
+
 ## [0.2.0] - 2026-04-23
 
 > **⚠️ Breaking change for v3/v4.1 users**: The `--test-pipeline` subflow has been fully removed from `harness-work.md`. If you relied on it, migrate to a project-local skill under `.claude/skills/<project>-local-rules/references/pipeline-check.md`. See `### Removed` below.
