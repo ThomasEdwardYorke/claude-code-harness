@@ -47,7 +47,23 @@ if (!/^\d+\.\d+\.\d+$/.test(version)) {
   process.exit(2);
 }
 
-const raw = readFileSync(changelogPath, "utf-8");
+// Local dry-run で plugin repo 外から実行した場合などに ENOENT が出るため、
+// Node.js の default error ("ENOENT: no such file or directory, open ...") より
+// 親切なメッセージを出力する (CodeRabbit nitpick 対応)。
+// ENOENT 以外 (EACCES / EISDIR 等) は意図しない IO 障害なので原エラーを再 throw。
+let raw;
+try {
+  raw = readFileSync(changelogPath, "utf-8");
+} catch (err) {
+  if (err && err.code === "ENOENT") {
+    console.error(`CHANGELOG.md not found at: ${changelogPath}`);
+    console.error(
+      `Hint: run this script from the plugin repository root, or ensure CHANGELOG.md exists at the expected path.`,
+    );
+    process.exit(1);
+  }
+  throw err;
+}
 
 // ## [X.Y.Z] ... 見出しを literal 検索し、次の ## [ 見出しまでを切り出す
 const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
