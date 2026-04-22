@@ -239,13 +239,145 @@ touch .docs/handoff/<project>-design-decisions.md
 
 ### `check`
 
+**読み取り専用 (read-only)** の 3-gate 検証を実行する。セッション開始時や定期
+健全性確認で使う。単なる構造検証 (v1) ではなく、handoff の **把握 (content
+comprehension) と理解 (understanding synthesis)** まで一貫して確認する v2 仕様
+(ユーザー要望「check は把握 / 理解も兼ねる」に応答)。
+
+#### Gate 1 — Structural Integrity (構造検証、継続)
+
+ファイルシステム上の構造が規約通りか確認 (内容を読まない、存在 / 形式 / 命名のみ):
+
 - `current.md` が 120 行を超えていないか
-- 各 detail file が対応する場所に存在するか
-- `backlog.md` 各 entry に priority ラベルがあるか
-- `design-decisions.md` が append-only になっているか (前回コミット
-  との diff で削除/編集を検知)
-- archive ファイル名が主規約 (`session-<YYYY-MM-DD>-<slug>.md`) または
-  命名例外 (`pre-<YYYY-MM-DD>-<slug>.md` / `summary-<slug>.md`) に従うか
+- 各 detail file (`backlog.md` / `design-decisions.md`) が存在するか
+- `backlog.md` 各 entry に `[High|Med|Low]` priority ラベルがあるか
+- `design-decisions.md` が append-only (前回コミットとの `git diff` で削除行検出 → FAIL)
+- archive ファイル名が主規約 (`session-<YYYY-MM-DD>-<slug>.md`) または命名例外
+  (`pre-<YYYY-MM-DD>-<slug>.md` / `summary-<slug>.md`) に従うか
+
+#### Gate 2 — Content Comprehension (内容把握、v2 新設)
+
+実行手順 (Claude が `Read` tool で handoff 内容を取り込んで要約する):
+
+1. `Read` で `current.md` 全文を読み、以下 4 section を抽出:
+   - **Latest state** (branch 名 / commit hash / 最後の merged PR 番号)
+   - **Top priority next task** (5 行以内、具体的着手レベル)
+   - **Quick-start command block** (copy-paste 可能な bash block)
+   - **Pointers to detail files** (max 4 件、各リンク先が存在するか `Glob` で確認)
+2. `Read` で `backlog.md` を読み、High priority 項目 (top 3) を抽出
+3. `Bash: git log --oneline -5` で直近 commit 履歴を取得し、current.md の
+   Latest state と突合 (一致しなければ Gate 3 で FAIL)
+4. archive/ の最新ファイル名 (`Glob` + 日付ソート) を取得し、current.md より
+   新しければ「archive 後 current 未更新」を疑う
+
+#### Gate 3 — Understanding Synthesis (理解の総合判定、v2 新設)
+
+把握した内容を元に **陳腐化シグナル (staleness signal)** を走査し、次セッション
+即着手可否を 3 段階で判定:
+
+| verdict | 条件 |
+|---|---|
+| **PASS (Ready)** | FAIL 0 / WARN 0 — そのまま次セッション開始可能 |
+| **WARN (Partial)** | FAIL 0 / WARN 1+ — 着手は可能だが推奨対応あり |
+| **FAIL (Stale)** | FAIL 1+ — update / archive を先に実行する必要あり |
+
+陳腐化 signal 一覧 (S-01 〜 S-12、severity 付き):
+
+| ID | Signal | 検出方法 | Severity |
+|---|---|---|---|
+| S-01 | current.md 最終更新日が 3 日以上前 | `git log --follow -1` の日付 vs 今日 | WARN |
+| S-02 | current.md 内の branch が存在しない | `git rev-parse --verify <branch>` | FAIL |
+| S-03 | current.md 内の commit hash が存在しない | `git cat-file -e <hash>` | FAIL |
+| S-04 | backlog `[High]` 項目が参照する PR が既に merged | `gh pr view <num> --json state` (gh 未導入なら skip) | WARN |
+| S-05 | current.md Latest state が `git log -1 --oneline` と不一致 | 文字列突合 | FAIL |
+| S-06 | current.md が参照する archive file が存在しない | `Glob` 確認 | FAIL |
+| S-07 | 他 handoff-pointer docs (project memory / legacy pointer docs) 内の handoff path が無効 | `Glob` 解決 | WARN |
+| S-08 | archive/ 最新ファイルより current.md が古い | git mtime 比較 | WARN |
+| S-09 | backlog の `archive:` 参照 file が存在しない | `Glob` 確認 | WARN |
+| S-10 | current.md pointer link が 4 件超過 (anti-pattern #7) | link count | WARN |
+| S-11 | design-decisions.md が 30 日以上 commit なし + backlog に設計項目あり | `git log -1` | INFO |
+| S-12 | current.md が 90 行以上 (120 上限の warn threshold) | 行数 | WARN |
+
+#### Output Template (実行結果の提示形式)
+
+check 実行後の report 形式 (heading には bold を使い、`##` は避ける — consumer
+document の regex-based scanner が誤検知しないため):
+
+```markdown
+**session-handoff check** — <YYYY-MM-DD HH:MM>
+
+**Summary**
+<PASS|WARN|FAIL> — Structural: {P}/{W}/{F} | Content: {P}/{W}/{F} | Synthesis: <Ready|Partial|Stale>
+
+---
+
+**Gate 1 — Structural Integrity**
+
+| 項目 | 結果 | 詳細 |
+| --- | --- | --- |
+| current.md 行数 | ✅ N 行 / 120 上限 | — |
+| detail files 存在 | ✅ 全 3 件 | — |
+| backlog ラベル | ⚠️ M 件ラベルなし | 行 X, Y |
+| design-decisions append-only | ✅ | — |
+| archive 命名規約 | ✅ 全 N 件 | — |
+
+---
+
+**Gate 2 — Content Comprehension**
+
+- **Branch**: <branch>
+- **Latest commit**: <hash> <msg> (<date>)
+- **Top priority**: <extracted one-liner>
+- **Quick-start command**: ✅ / ⚠️ missing
+- **Pointers**: N 件 (全て実在確認済 / N 件 broken)
+- **Backlog Top 3 [High]**: 1. ... / 2. ... / 3. ...
+
+---
+
+**Gate 3 — Understanding Synthesis**
+
+- **Rehydration verdict**: <Ready|Partial|Stale>
+- **Staleness signals**:
+  - ⚠️ S-01: current.md が N 日更新なし (<date>)
+  - ✅ S-02 / S-03 / S-05 (git 突合 OK)
+  - (他 signals を列挙)
+
+---
+
+**Recommended Remediation**
+<FAIL があれば具体的な次アクション、PASS なら「次タスクに着手可能」の一言>
+```
+
+#### Forbidden (check の禁止事項)
+
+`check` は **read-only must**。以下を絶対にしない:
+
+- ファイルの書き換え / 削除 (Read / Glob / 読み取り専用 Bash のみ使用)
+- `git commit` / `git push` / `git reset` の発行
+- `design-decisions.md` の編集 (append-only invariant の守護者であり、自身が
+  append してはならない)
+- archive ファイルの削除 / 移動 (規約違反は報告のみ)
+- PR / Issue の自動 close (merged PR の検知は WARN 報告のみ)
+- ネットワーク書込 (外部 POST) — `gh pr view` の read-only 呼出のみ許可
+- 上位 memory file (project / user memory) の書き換え — 参照のみ
+- 推測による stale 断定 — git / Glob で実証できなければ「確認不可」として
+  WARN 止まりにする
+
+#### Edge Cases (劣化ケースのハンドリング)
+
+- **First-time use (未初期化)**: `Glob` で `.docs/handoff/` が空なら `FAIL` では
+  なく `INIT_REQUIRED` を返し、`/session-handoff init` の実行を案内
+- **Git unavailable (CI / shallow clone)**: `Bash: git ...` が exit ≠ 0 なら
+  git 依存 signal (S-02 / S-03 / S-05 / S-08 / S-11) を SKIP し、
+  output に "git unavailable — signals skipped: S-02, S-03, ..." と記載。
+  Structural と Content は継続実行 (hard fail しない)
+- **Large archive (> 20 files)**: `Glob` 一覧取得 → 日付ソートで最新 10 件のみ
+  命名規約チェック。残りは件数カウントのみ。output に「archive: N 件中最新 10
+  件サンプリング」と明記
+- **gh CLI 未導入**: S-04 を SKIP (他 signal は継続)
+- **current.md の markdown 破損**: Required section が regex で拾えないなら
+  `required_section_missing: FAIL` を返す。Content Comprehension は停止、
+  Structural のみ報告
 
 ---
 
