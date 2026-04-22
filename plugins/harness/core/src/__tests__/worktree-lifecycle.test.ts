@@ -175,7 +175,7 @@ describe("handleWorktreeRemove", () => {
     expect(result.decision).toBe("approve");
   });
 
-  it("worktree_path が空文字列の場合は undefined と同様に無視 (Codex review DOC-7)", async () => {
+  it("worktree_path が空文字列の場合は undefined と同様に無視", async () => {
     // `if (input.worktree_path)` は空文字列を falsy として無視するため、
     // section に [worktree-path] 行は追加されない。現 fail-open 設計は approve を
     // 返し続けることが重要。
@@ -189,7 +189,7 @@ describe("handleWorktreeRemove", () => {
     expect(result.additionalContext).not.toContain("[worktree-path]");
   });
 
-  it("payload 値内の改行は `\\n` エスケープされ偽 section 注入を防ぐ (Codex review WL-2)", async () => {
+  it("payload 値内の改行は `\\n` エスケープされ偽 section 注入を防ぐ", async () => {
     const dir = makeTempProject();
     const result = await handleWorktreeRemove({
       ...baseInput,
@@ -209,7 +209,7 @@ describe("handleWorktreeRemove", () => {
     expect(wpLines[0]).toContain("\\n");
   });
 
-  it("空 `assignmentSectionMarkers: []` でも default marker に fallback し reminder が出る (pseudo-CodeRabbit PCR-1)", async () => {
+  it("空 `assignmentSectionMarkers: []` でも default marker に fallback し reminder が出る", async () => {
     // `[].every(pred)` は vacuously true のため、length ゼロチェックを入れないと
     // markers = [] になり `markers.some(...)` が永久 false で reminder が無音化。
     const plans = "# Plans\n\n## 担当表\n\n| slug | task |\n|---|---|\n| x | y |\n";
@@ -231,7 +231,7 @@ describe("handleWorktreeRemove", () => {
     );
   });
 
-  it("空文字 / 空白のみの marker は invalid として default に fallback (CodeRabbit PR #3 inline)", async () => {
+  it("空文字 / 空白のみの marker は invalid として default に fallback", async () => {
     // `[""]` / `["   "]` は typeof "string" + length > 0 を通過してしまうが、
     // `content.includes("")` が常に true になり担当表先頭検出が壊れる。normalize chain
     // (filter string → trim → filter non-empty) で排除されていることを regression guard。
@@ -282,9 +282,9 @@ describe("handleWorktreeRemove", () => {
     expect(result.additionalContext).toContain("[reminder]");
   });
 
-  it("payload 値内の `\\r` のみ / CRLF も `\\n` エスケープされる (Codex review R2-T1 / R2-I1)", async () => {
-    // WL-2 sanitize は `\r` と CRLF も単位として扱う。regex 劣化 (例: `/\n/g` への置換) を
-    // 検知するため 2 パターンを独立にカバー。
+  it("payload 値内の `\\r` のみ / CRLF も `\\n` エスケープされる", async () => {
+    // sanitize は `\r` と CRLF も単位として扱う。regex 劣化 (例: `/\n/g` への
+    // 置換) を検知するため 2 パターンを独立にカバー。
     const dir = makeTempProject();
     const crResult = await handleWorktreeRemove({
       ...baseInput,
@@ -301,7 +301,7 @@ describe("handleWorktreeRemove", () => {
     });
     const crlfLines = (crlfResult.additionalContext ?? "").split("\n");
     expect(crlfLines).not.toContain("=== INJECTED_CRLF ===");
-    // R2-I1: CRLF は 1 つの `\n` literal にまとまる (`\\n\\n` の二重表示にはならない)
+    // CRLF は 1 つの `\n` literal にまとまる (`\\n\\n` の二重表示にはならない)
     const wpLine = crlfLines.find((l) => l.startsWith("[worktree-path]")) ?? "";
     expect(wpLine).toContain("\\n");
     expect(wpLine).not.toContain("\\n\\n");
@@ -495,7 +495,10 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     expect(result.reason ?? "").toMatch(/name/i);
   });
 
-  it("cwd が git repo でない場合 worktreePath 未設定 (git command 失敗)", async () => {
+  it("cwd が git repo でない場合: reason に 'not a git repository' を明示 (unborn HEAD と区別)", async () => {
+    // 非 git ディレクトリは unborn HEAD とは異なる失敗モードなので、
+    // reason で「not a git repository」と明示されること (user が cwd 誤指定を
+    // 把握できる)。unborn HEAD 向け reason ("no commits") と文字列が分離される。
     const nonGit = mkdtempSync(join(tmpdir(), "harness-wtc-nogit-"));
     tempDirs.push(nonGit);
     const result = await handleWorktreeCreate({
@@ -505,8 +508,9 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     });
     expect(result.decision).toBe("approve"); // fail-open
     expect(result.worktreePath).toBeUndefined();
-    // reason に git / worktree 関連のエラーメッセージが含まれる
-    expect(result.reason ?? "").toMatch(/git|worktree|not a/i);
+    expect(result.reason ?? "").toMatch(/not a git repository/i);
+    // unborn HEAD 側の error 文言は混ざらない
+    expect(result.reason ?? "").not.toMatch(/unborn HEAD|no commits/i);
   });
 
   it("unborn HEAD (git init 直後、commit 前) で明示的 reason を返す", async () => {
@@ -613,7 +617,7 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     // 本テストは「cwd 未指定でも handler が throw しない」ことの guard。
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
-      name: `kappa-2-cwd-fallback-${Date.now()}`,
+      name: `cwd-fallback-${Date.now()}`,
     });
     // 成功 / 失敗のいずれでも decision は approve、throw しない
     expect(result.decision).toBe("approve");

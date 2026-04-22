@@ -215,18 +215,22 @@ export async function handleWorktreeRemove(input) {
 // existsSync で先に判定する。
 // ============================================================
 /**
- * path を realpath で正規化。対象が存在しない場合は parent を realpath して basename
- * と合成 (macOS `/var` → `/private/var` symlink 等の差を吸収)。両方失敗なら resolve。
+ * path を OS-native realpath で正規化。対象が存在しない場合は parent を正規化して
+ * basename と合成 (macOS `/var` → `/private/var` symlink 等の差を吸収、Windows の
+ * 8.3 短縮名 `RUNNER~1` → `runneradmin` も拡張)。両方失敗なら resolve で fallback。
+ *
+ * `realpathSync.native` は OS の canonicalization API を呼び出すため、`realpathSync`
+ * (Node.js 内部 JS 実装) と違い Windows 短縮名を確実に展開する。
  */
 function normalizePath(p) {
     try {
-        return realpathSync(p);
+        return realpathSync.native(p);
     }
     catch {
         // nothing
     }
     try {
-        return join(realpathSync(dirname(p)), basename(p));
+        return join(realpathSync.native(dirname(p)), basename(p));
     }
     catch {
         return resolve(p);
@@ -324,10 +328,13 @@ export async function handleWorktreeCreate(input) {
     const base = basename(resolve(projectRoot));
     const worktreePath = resolve(parent, `${base}-wt-${rawName}`);
     const branchName = `harness-wt/${rawName}`;
+    // additionalContext 全 payload 値に newline sanitize を適用。rawName/projectRoot
+    // 経由で worktreePath/branchName が派生するため、POSIX で改行を含む path が
+    // 与えられたケースでも additionalContext の section 境界が偽造されない。
     sections.push(`[name] ${sanitizeForContext(rawName)}`);
     sections.push(`[project-root] ${sanitizeForContext(projectRoot)}`);
-    sections.push(`[worktree-path] ${worktreePath}`);
-    sections.push(`[branch] ${branchName}`);
+    sections.push(`[worktree-path] ${sanitizeForContext(worktreePath)}`);
+    sections.push(`[branch] ${sanitizeForContext(branchName)}`);
     if (input.agent_type) {
         sections.push(`[agent-type] ${sanitizeForContext(input.agent_type)}`);
     }
@@ -348,11 +355,24 @@ export async function handleWorktreeCreate(input) {
         };
     }
     // -------------------------
-    // (4) Unborn HEAD (初 commit 前) 事前チェック
+    // (4) Repo / Unborn HEAD 事前チェック (2 段階)
     //
-    // `git worktree add` は unborn HEAD の repo で汎用エラーを吐くだけで user
-    // 視点の診断性が低い。明示的に検出して分かりやすい reason に変換する。
+    // `git worktree add` は non-git / unborn HEAD いずれの場合も汎用 git エラーを
+    // 吐くだけで user 視点の診断性が低い。2 段階に切り分けて診断的な reason に
+    // 変換する:
+    //   (a) 非 git ディレクトリ: "not a git repository"
+    //   (b) unborn HEAD (init 直後、commit 前): "repository has no commits"
     // -------------------------
+    if (!isGitRepository(projectRoot)) {
+        const reason = `cwd is not a git repository: ${projectRoot}`;
+        sections.push(`[error] ${sanitizeForContext(reason)}`);
+        sections.push("=== WorktreeCreate failed (non-git cwd) ===");
+        return {
+            decision: "approve",
+            reason,
+            additionalContext: sections.join("\n"),
+        };
+    }
     if (!gitHasCommit(projectRoot)) {
         const reason = "repository has no commits (unborn HEAD); WorktreeCreate requires at least one commit";
         sections.push(`[error] ${reason}`);
@@ -433,8 +453,30 @@ export async function handleWorktreeCreate(input) {
     };
 }
 /**
+ * `cwd` が git リポジトリ (通常の worktree / bare repo / linked worktree のいずれか)
+ * にあるかを `git rev-parse --git-dir` で確認。非 git ディレクトリなら false。
+ *
+ * unborn HEAD (= git init 直後 commit 前) でも true を返す (`git-dir` は存在するため)。
+ */
+function isGitRepository(repo) {
+    try {
+        execFileSync("git", ["rev-parse", "--git-dir"], {
+            cwd: repo,
+            stdio: ["pipe", "pipe", "pipe"],
+        });
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+/**
  * repository に少なくとも 1 個 commit があるかを `git rev-parse HEAD` で確認。
- * bare / non-git / unborn HEAD のいずれでも false を返す。
+ *
+ * 呼び出し前提: `cwd` は `isGitRepository(cwd) === true` が確認済の repo。
+ * unborn HEAD (= git init 直後、commit 前) では false、commit があれば true。
+ * bare / non-git のケースは `isGitRepository` で先に除外する運用のため、ここでは
+ * 「unborn HEAD かどうか」だけを判定できる前提になる。
  */
 function gitHasCommit(repo) {
     try {
