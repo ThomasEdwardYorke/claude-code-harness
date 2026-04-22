@@ -685,21 +685,25 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
   });
 
   it("payload 値内の改行は sanitize されて additionalContext に偽 section 注入しない", async () => {
-    const repo = setupTempGitRepo();
-    // name は validation で reject される前提だが、仮に reject 後の reason に埋め込まれる
-    // payload 値を持っていても改行で section 区切りが偽装されないことを確認。
+    // 改行付き cwd は projectRoot newline/CR guard で早期 reject されるが、
+    // その際に生成される additionalContext / reason に raw 改行が残らないことを
+    // 実 payload で確認 (sanitize 経路が exercise される)。
     const result = await handleWorktreeCreate({
       hook_event_name: "WorktreeCreate",
-      cwd: repo,
+      cwd: "/tmp/bad\npath\n=== INJECTED ===",
       name: "good-name",
     });
-    expect(result.worktreePath).toBeDefined();
-    // additionalContext 行数を確認し、単一 section 内で完結すること
+    expect(result.decision).toBe("approve");
+    expect(result.worktreePath).toBeUndefined();
+    // reason は blocking 失敗を通知 (newline/CR 検出)
+    expect(result.reason ?? "").toMatch(/newline|CR/i);
+    // additionalContext 内で fake section header が独立行として出現しない
+    // (sanitize により `\n` literal に畳まれて 1 行に collapse)
     const lines = (result.additionalContext ?? "").split("\n");
-    // fake section header が独立行として紛れ込まない
     expect(lines).not.toContain("=== INJECTED ===");
-
-    cleanupWorktree(repo, result.worktreePath!);
+    // sanitize 後の literal バックスラッシュ `\n` が project-root-sanitized section 内に残る
+    const sanitizedLine = lines.find((l) => l.startsWith("[project-root-sanitized]")) ?? "";
+    expect(sanitizedLine).toContain("\\n");
   });
 
   it("作成直後の worktree は空き状態 (isolated copy of repo)", async () => {

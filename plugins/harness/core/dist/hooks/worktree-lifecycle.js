@@ -456,8 +456,13 @@ export async function handleWorktreeCreate(input) {
     // (5) git worktree add を実行
     //
     // `-b <branch>` で新 branch を作成し HEAD から分岐。既に branch が存在する場合は
-    // `git worktree add` が失敗するため、事前確認せずに try/catch で拾い、fallback で
-    // branch を既存扱いで再試行する。
+    // `git worktree add` が失敗するため、エラー内容を reason にして fail する。
+    //
+    // 意図的に「既存 branch への attach」 fallback は提供しない。orphan branch
+    // (別 path にあった worktree の残骸、または別用途の手動 branch) を誤って
+    // 再利用すると user が期待していない commit 状態で作業を開始してしまう
+    // 危険があるため、失敗経路に回し user が branch を手動整理してから再試行
+    // する運用とする (cleanup: `git branch -D harness-wt/<name>`)。
     //
     // 成功時の戻り値は realpath 正規化した path (idempotent case と揃える)。
     // -------------------------
@@ -473,25 +478,13 @@ export async function handleWorktreeCreate(input) {
             additionalContext: sections.join("\n"),
         };
     }
-    // `-b` で失敗した場合、branch が既存の可能性があるため branch 既存前提で再試行。
-    // ただし既存 branch が別 worktree に check-out されている場合は git が拒否する
-    // (これは正しい挙動、2 つの worktree から同 branch は使えない)。
-    const retryResult = tryGitWorktreeAddExistingBranch(projectRoot, worktreePath, branchName);
-    if (retryResult.ok) {
-        sections.push("[created] worktree attached to existing branch");
-        sections.push("=== WorktreeCreate success (existing branch) ===");
-        return {
-            decision: "approve",
-            worktreePath: normalizePath(worktreePath),
-            additionalContext: sections.join("\n"),
-        };
-    }
     // -------------------------
     // (6) Race condition recheck
     //
-    // 2 回 add 失敗後、`findExistingWorktree` の初回判定と `git worktree add` の
+    // add 失敗後、`findExistingWorktree` の初回判定と `git worktree add` の
     // 間に並行 WorktreeCreate 呼出で worktree が作られた可能性がある。ここで
-    // もう一度 list を引いて既存 worktree があれば idempotent 再利用として扱う。
+    // もう一度 list を引いて path + branch match で既存 worktree があれば
+    // idempotent 再利用として扱う。
     // -------------------------
     const racedExisting = findExistingWorktree(projectRoot, worktreePath, branchName);
     if (racedExisting !== null) {
@@ -510,8 +503,7 @@ export async function handleWorktreeCreate(input) {
     // セクションヘッダが作られる余地がある。sanitizeForContext で改行を `\n`
     // literal に畳み、trim して返す。
     // -------------------------
-    const rawStderr = (retryResult.stderr || addResult.stderr || "unknown error")
-        .trim();
+    const rawStderr = (addResult.stderr || "unknown error").trim();
     const reason = `git worktree add failed: ${sanitizeForContext(rawStderr)}`;
     sections.push(`[error] ${reason}`);
     sections.push("=== WorktreeCreate failed ===");
@@ -562,23 +554,6 @@ function gitHasCommit(repo) {
 function tryGitWorktreeAdd(repo, path, branch) {
     try {
         execFileSync("git", ["worktree", "add", path, "-b", branch], {
-            cwd: repo,
-            stdio: ["pipe", "pipe", "pipe"],
-        });
-        return { ok: true };
-    }
-    catch (err) {
-        const stderr = err && typeof err === "object" && "stderr" in err
-            ? err.stderr?.toString() ?? ""
-            : String(err);
-        return { ok: false, stderr };
-    }
-}
-function tryGitWorktreeAddExistingBranch(repo, path, branch) {
-    try {
-        // -b 無しで既存 branch を使う。branch が存在しない場合はこれも失敗し、
-        // 上位で最終的な失敗として集約される。
-        execFileSync("git", ["worktree", "add", path, branch], {
             cwd: repo,
             stdio: ["pipe", "pipe", "pipe"],
         });
