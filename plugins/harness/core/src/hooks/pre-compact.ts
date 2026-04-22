@@ -45,7 +45,11 @@ function readAssignmentTable(projectRoot: string): string | null {
       : "Plans.md";
     const rawMarkers = (config.work as { assignmentSectionMarkers?: unknown } | undefined)
       ?.assignmentSectionMarkers;
-    const markers = Array.isArray(rawMarkers) && rawMarkers.every((m) => typeof m === "string")
+    // Codex pseudo-CodeRabbit review 対応 (PCR-1): `[].every(...)` は vacuously true
+    // のため、空配列を受け取ると markers = [] となり `markers.some(...)` が常に false を
+    // 返して reminder が無音で disable される。length > 0 guard を追加し、空配列は
+    // default に fallback する。
+    const markers = Array.isArray(rawMarkers) && rawMarkers.length > 0 && rawMarkers.every((m) => typeof m === "string")
       ? (rawMarkers as string[])
       : ["担当表", "Assignment", "In Progress"];
 

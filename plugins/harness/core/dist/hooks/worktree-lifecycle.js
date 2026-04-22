@@ -66,7 +66,14 @@ function hasAssignmentTable(projectRoot) {
             ? rawPlans
             : "Plans.md";
         const rawMarkers = config.work?.assignmentSectionMarkers;
-        const markers = Array.isArray(rawMarkers) && rawMarkers.every((m) => typeof m === "string")
+        // Codex pseudo-CodeRabbit review 対応 (PCR-1): 空配列 (`[]`) は `Array.isArray` +
+        // `every(predicate)` の両方を vacuously true で通過するが、`some(...)` で
+        // 常に false を返すため reminder が永久無音化される。`length > 0` guard を
+        // 追加し、空配列は default marker に fallback させる。同問題は pre-compact.ts
+        // でも同時修正。
+        const markers = Array.isArray(rawMarkers) &&
+            rawMarkers.length > 0 &&
+            rawMarkers.every((m) => typeof m === "string")
             ? rawMarkers
             : ["担当表", "Assignment", "In Progress"];
         const plansPath = resolve(projectRoot, plansFile);

@@ -190,6 +190,28 @@ describe("handleWorktreeRemove", () => {
     expect(wpLines[0]).toContain("\\n");
   });
 
+  it("空 `assignmentSectionMarkers: []` でも default marker に fallback し reminder が出る (pseudo-CodeRabbit PCR-1)", async () => {
+    // `[].every(pred)` は vacuously true のため、length ゼロチェックを入れないと
+    // markers = [] になり `markers.some(...)` が永久 false で reminder が無音化。
+    const plans = "# Plans\n\n## 担当表\n\n| slug | task |\n|---|---|\n| x | y |\n";
+    const dir = makeTempProject({
+      plansContent: plans,
+      harnessConfig: { work: { assignmentSectionMarkers: [] } },
+    });
+    const result = await handleWorktreeRemove({
+      ...baseInput,
+      cwd: dir,
+      worktree_path: "/tmp/wt/x",
+    });
+    expect(result.decision).toBe("approve");
+    // 空 array は default ("担当表" / "Assignment" / "In Progress") に fallback し、
+    // Plans.md の "担当表" が match → reminder が出る。
+    expect(result.additionalContext).toContain("担当表");
+    expect(result.additionalContext?.toLowerCase()).toMatch(
+      /coordinator|plans\.md|担当表/,
+    );
+  });
+
   it("payload 値内の `\\r` のみ / CRLF も `\\n` エスケープされる (Codex review R2-T1 / R2-I1)", async () => {
     // WL-2 sanitize は `\r` と CRLF も単位として扱う。regex 劣化 (例: `/\n/g` への置換) を
     // 検知するため 2 パターンを独立にカバー。
