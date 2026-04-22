@@ -1,0 +1,299 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit 設定 (Claude Code Harness plugin repository-level)
+#
+# 方針:
+# - Generality 原則 (CONTRIBUTING.md / docs/maintainer/test-bed-usage.md) を最優先
+# - path-based instructions で shipped spec の project-specific leak を事前に catch
+# - 内部 tracker ID (C-N / M-N / m-N / Phase N / Round N / PR 番号等) の混入は
+#   generality test の自動検知と text review の二重防止
+# - chill profile: actionable-only review (nitpick は assertive profile 専用の公式仕様、
+#   chill では出力されない)。過剰 noise 抑制が狙い
+#
+# 有効化タイミング:
+#   本 config は **default branch (main) に merge された commit** の内容が効く。
+#   本 PR 自身は旧 Organization UI config で review される。merge 後の次 PR から effect。
+
+language: "ja-JP"
+
+# max 250 文字。reviewer tone を指定。
+tone_instructions: "Senior TypeScript reviewer for a portable OSS plugin. Flag generality violations (project-specific leaks, internal tracker IDs, version-bound commitments) as priority. Be direct and constructive."
+
+reviews:
+  profile: "chill"
+  request_changes_workflow: false
+  high_level_summary: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  poem: false
+  in_progress_fortune: false
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # auto_review.base_branches は regex 形式 (minimatch ではない、公式 schema.v2 確認済)
+    # harness plugin は main 直 PR のみ、fork 運用なし
+    base_branches:
+      - "^main$"
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "DNM"
+      - "draft"
+
+  # 公式 default (node_modules / package-lock / dist / binary 等) に追加するもののみ
+  path_filters:
+    - "!plugins/harness/core/dist/**"
+    - "!.docs/**"
+    - "!docs/maintainer/session-notes/**"
+
+  path_instructions:
+    # ------------------------------------------------------------------
+    # 全 shipped spec 共通の汎用化原則 (CONTRIBUTING.md / test-bed-usage.md)
+    # ------------------------------------------------------------------
+    - path: "**/*"
+      instructions: |
+        全体の汎用化原則 (CONTRIBUTING.md Section 1-5 / docs/maintainer/test-bed-usage.md 準拠):
+
+        - **Plugin Generality Check**: project-specific leak (test bed project 名 / specific branch 名 /
+          業務 API / 特定スタック hardcode / 日本語固定など) が shipped spec (plugins/harness/**,
+          plugins/harness/core/src/** 非テスト) に混入していないか。generality test が自動検知するが、
+          text review でも併用確認。
+        - **内部 tracker ID 混入禁止**: `(C-N)` / `(M-N)` / `(m-N)` / `Phase N 申送 M-NN` / `Round N` /
+          `A-\d+ r\d+` / PR 番号 / Task ID は plugins/harness/** と plugins/harness/core/src/__tests__/**
+          (describe 文字列・コメント含む) に書かないこと。書いてよいのは CHANGELOG.md / docs/maintainer/ /
+          commit message のみ (exemption zone)。
+        - **例示値 generic 固定**: `feature/my-feature` / `main` / `my-project` / `src/` / `create_item()`
+          / `tests/` 等を使う。test bed project 固有の branch 名・directory・API 名は禁止。
+        - **time-stable wording**: 未達 commitment を `planned for v0.X.X` 形式で書かない。README /
+          installation.md / agents/ / commands/ では `planned for a future release` / version-agnostic
+          表現を優先 (過去に version-bound commitment が残存した教訓から)。`As of v0.X.X` は
+          docs/en,ja では NG (version-bound、`docs/{en,ja}/**/*.md` 項参照)。コード内コメント
+          (schema.ts 等) での歴史的 context 用途に限り許容。
+
+    # ------------------------------------------------------------------
+    # TypeScript core (guardrails / state store / hooks)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/core/src/**/*.ts"
+      instructions: |
+        ## 技術スタック
+        - Node >= 18, TypeScript strict, vitest
+        - **Pure JS state store** (SQLite 等の native dep 禁止)
+        - zero native dependencies を維持 (better-sqlite3 / sharp / node-gyp 等の依存提案は reject)
+
+        ## 設計方針
+        - **`Record<string, unknown>` + narrow access** パターン推奨 (field rename 時の runtime error
+          を compile error に昇格させる refactor pattern)
+        - hooks は protocol-compliant blocking 実装が揃うまで `hooks.json` 未登録 (scaffold として保留する
+          パターン、既存 `handleWorktreeCreate` 参照)
+        - `additionalContext` 注入 payload は newline sanitize (`\r\n|[\n\r]` を `\\n` literal に escape、
+          偽 section 境界注入対策)
+        - marker normalize 連鎖は **type 絞込 → trim → 空除去** の 3 段必須
+          (実運用で確認済の marker pattern、`readAssignmentTable` / `hasAssignmentTable` 等)
+
+        ## 却下基準
+        - `better-sqlite3` / `sharp` / `node-gyp` 依存の再導入提案は reject (Pure JS 原則)
+        - project-specific コード (test bed project branch 名 / 特定 business API 等) の
+          introduction は reject
+        - 例示値に実プロジェクト名が混入する提案は reject (generic fixture に置換させる)
+
+    # ------------------------------------------------------------------
+    # TypeScript tests (regression guard + generality blocklist)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/core/src/__tests__/**/*.ts"
+      instructions: |
+        - `describe()` / `it()` 文字列に内部 tracker ID (C-N / M-N / m-N 等) を入れない
+          (generality test の tracker ID guard で自動 fail)
+        - ギリシャ文字 Phase 名 (Phase κ / λ / μ 等) は設計判断参照として残っていた場合でも
+          shipped spec (テスト含む) には書かないこと。一貫して generic 表現を用いる
+        - **regression guard は 2 要件組合せ** で false-positive 回避
+          (例: `scaffold` + `hooks.json 未登録` の AND 条件など single-word false-positive 対策)
+        - content-integrity の release guard は EXPECTED_VERSION hardcode が意図的 (forcing function)、
+          dynamic derive に変更する提案は reject (PR で test 更新を強制する設計)
+        - `EXPECTED_*` 定数の SemVer 形状 validation は **shape only** (leading-zero 等の細部検査は省略)。
+          "canonical SemVer" と混同する記述は避ける (docstring 精度)
+
+    # ------------------------------------------------------------------
+    # agents frontmatter (plugin-scoped subagent 6 件)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/agents/**/*.md"
+      instructions: |
+        - frontmatter 必須 field: `name` / `description` / `allowed-tools` / `model` / `maxTurns`
+        - `name` は plugin 内 unique、plugin namespace (`harness:<name>`) で解決
+        - `description` は英語 (English migration policy)。commands 系は現在日本語を含むが、
+          英語に揃えることを推奨 (time-stable wording 原則に沿い、version-bound な「順次英訳予定」
+          表現は避ける)
+        - `maxTurns` は各 agent で個別定義 (base rate は既存定義を尊重、増減時は CHANGELOG で理由明記)
+        - **`isolation: worktree` は付与しない** (content-integrity.test.ts の agent isolation 固定 guard
+          で regression 防止、`/parallel-worktree` 手動管理との二重 worktree 干渉回避)
+        - project-specific checklist / path (特定 framework / PDF 生成 / 特定 DB driver 等) は
+          plugin core には含めず、project-local skill (`.claude/skills/<project>-local-rules/`) に委譲
+
+    # ------------------------------------------------------------------
+    # commands (5 verb skills + 8 workflow skills = 13 commands)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/commands/**/*.md"
+      instructions: |
+        - frontmatter 必須 field: `name` / `description` / `description-ja` / `allowed-tools` /
+          `argument-hint`
+        - `argument-hint` は `[word|word|...]` 厳密形式 (content-integrity test で正規表現 check)
+        - `session-handoff.md` は 500 行以内 (Anthropic SKILL.md 目安遵守)
+        - `commands/*.md` ファイル一覧は `plugin.json.commands[]` と完全同期
+          (drift guard: 数値 + 列挙両方の test あり)
+        - workflow skill count は `harness-setup.md` の `X verb skills plus Y workflow skills`
+          表現と一致 (VERB_SKILLS 定数 drift guard で強制)
+        - project-local 例示値 (test bed project branch 名・directory 等) は reject
+        - 時限的 commitment (`planned for v0.X.X`) の導入は避ける (README Known notes 参考、
+          必ず `future release` or `a future version` で記述)
+
+    # ------------------------------------------------------------------
+    # hooks.json (11 lifecycle events)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/hooks/hooks.json"
+      instructions: |
+        - 現在登録済 11 events: `PreToolUse` / `PostToolUse` / `PermissionRequest` /
+          `SessionStart` / `SessionEnd` / `PreCompact` / `SubagentStop` / `TaskCreated` /
+          `Stop` / `WorktreeRemove` / `TaskCompleted`
+        - **blocking hook** (`WorktreeCreate` 等) は protocol-compliant 実装 (stdout absolute-path
+          contract + real `git worktree` 生成) が揃うまで **登録禁止**。observability-only 登録は
+          Claude Code 既定処理を壊す (調査で判明済)
+        - `timeout` 値は test で `.toBe(X)` 固定 (後続 PR でのドリフト防止)
+          - `WorktreeRemove` = 10s (non-blocking observability)
+          - 将来の `WorktreeCreate` = 120s (blocking、実装時に protocol-compliant)
+        - event count は `.claude-plugin/marketplace.json.description` の `N lifecycle hook events`
+          数字と一致 (content-integrity の description drift guard あり)
+
+    # ------------------------------------------------------------------
+    # schemas (JSON Schema)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/schemas/**/*.json"
+      instructions: |
+        - `$id` URL が current repository origin と一致しているか確認 (fork 時 / rename 時の drift)
+        - `$schema` directive が draft-07 等、harness が想定する JSON Schema dialect と整合しているか
+        - version 記述が含まれる場合、`plugin.json.version` との drift を避ける
+        - schema の optional / required, type, constraint は既存の `harness.config.ts` 型定義と同期
+
+    # ------------------------------------------------------------------
+    # manifest (plugin.json / marketplace.json)
+    # ------------------------------------------------------------------
+    - path: "plugins/harness/.claude-plugin/plugin.json"
+      instructions: |
+        - `version` は **primary cache key** (marketplace.json `plugins[].version` は `relative-path`
+          source 専用で silently 上書きされる公式仕様、code.claude.com/docs/en/plugins-reference)
+        - version 同値での commit 蓄積は Claude Code 側で "identical" とみなされ cache 更新が
+          silent skip される。spec 変更時は必ず version bump
+          (content-integrity の release guard で強制)
+        - `commands` 配列は実 `commands/*.md` と完全同期 (drift guard: plugin.json.commands
+          count と harness-setup.md 表現一致 / marketplace.json.description 数字一致)
+
+    - path: ".claude-plugin/marketplace.json"
+      instructions: |
+        - `metadata.version == plugins[0].version` 必須 (content-integrity.test.ts 既存 test)
+        - `plugins[0].description` は:
+          - `plugin.json.commands.length` と一致する数字 (e.g. "13 commands")
+          - `hooks.json` keys 数と一致する数字 (e.g. "11 lifecycle hook events")
+          の両方を含む必要あり (content-integrity の description drift guards 2 件)
+        - `allowCrossMarketplaceDependenciesOn: ["openai-codex"]` 維持
+
+    # ------------------------------------------------------------------
+    # scripts (release helper 等 Node ES module)
+    # ------------------------------------------------------------------
+    - path: "scripts/**/*.mjs"
+      instructions: |
+        - ES module (`import` / `export`)、Node >= 18
+        - `extract-changelog.mjs` は release.yml の `body_path` 供給用、strict SemVer `X.Y.Z` のみ受付
+          (pre-release `-rc.1` や build metadata `+build.1` は reject)
+        - `try/catch + ENOENT 判定 + 非 ENOENT は再 throw` pattern 踏襲
+          (readFileSync error handling の uniform pattern)
+        - `trimEnd()` / regex escape / exit code 3 値 (0 = 成功 / 1 = 該当なし / 2 = 引数不正)
+          等の設計意図は docstring 必須
+
+    # ------------------------------------------------------------------
+    # CI / release workflows
+    # ------------------------------------------------------------------
+    - path: ".github/workflows/*.yml"
+      instructions: |
+        - release.yml: strict SemVer tag pattern `v[0-9]+.[0-9]+.[0-9]+` 維持
+          (pre-release / RC は workflow_dispatch or 手動 `gh release create` で)
+        - `npm ci` を使う (`npm install` は package-lock.json 更新リスクで再現性保証なし)
+        - `generate_release_notes: true` と `body_path` を両方使わない
+          (CHANGELOG body_path に統一、自動生成 notes との二重掲載回避)
+        - extract step の後に `verify non-empty step` (`test -s`) 保持 (defense-in-depth、
+          extract が exit 0 で empty stdout 時の silent release 防止)
+        - `ci.yml` / `build.yml` / `smoke.yml` は Linux / macOS / Windows × Node 18/20/22 matrix 維持
+
+    # ------------------------------------------------------------------
+    # template (user 配布補助)
+    # ------------------------------------------------------------------
+    - path: "template/**/*"
+      instructions: |
+        - user-facing な配布補助物 (`harness.config.json.tmpl` / `CLAUDE.md.tmpl` 等)
+        - `{{PLACEHOLDER}}` 形式の placeholder が release 時に正しく更新されるか確認
+        - test bed project 固有の記述が紛れ込んでいないか確認 (generic fixture のみ)
+
+    # ------------------------------------------------------------------
+    # CONTRIBUTING / CHANGELOG / README (project meta)
+    # ------------------------------------------------------------------
+    - path: "CONTRIBUTING.md"
+      instructions: |
+        - Section 1-5 (generality 原則の本体) に変更がある場合、`.coderabbit.yaml` の `**/*` instructions
+          との整合を確認 (drift 無検知リスクを人間 review で補完)
+        - R1 (PoC 順序) / R2 (内部 tracker ID 禁止) / R3 (例示値 generic 固定) の表現を変える場合、
+          yaml 側の説明文と同じ terminology を維持
+
+    - path: "CHANGELOG.md"
+      instructions: |
+        - Keep a Changelog 1.1.0 準拠 (https://keepachangelog.com/en/1.1.0/)
+        - `## [Unreleased]` header は空でも残す (公式慣習)
+        - BREAKING change は header 直後に blockquote `> **⚠️ Breaking change**: ...` で明記
+          (`### Removed` 記述と併用、section heading での視認性確保)
+        - 比較 link:
+          - `[Unreleased]: .../compare/v{new}...HEAD`
+          - `[X.Y.Z]: .../compare/v{prev}...v{new}`
+          - 前 release tag link: `[X.Y-prev]: .../releases/tag/v{prev}`
+        - **exemption zone**: 内部 tracker ID (`PR #N` / `Phase N` 等) はここでは許容。shipped spec
+          (plugins/harness/**) には書かないが CHANGELOG 本文での参照は OK
+
+    # ------------------------------------------------------------------
+    # docs (maintainer vs user-facing で generality policy 異なる)
+    # ------------------------------------------------------------------
+    - path: "docs/maintainer/**/*.md"
+      instructions: |
+        - maintainer-only、plugin 配布物から除外 (exemption zone)
+        - 内部 tracker ID / session log / test bed 固有情報 OK
+        - `release-process.md` の rollback 手順 / PR checklist は release.yml 実装と同期維持
+        - `test-bed-usage.md` の Migration Log は `v{X.Y.Z} (YYYY-MM-DD)` or `v{X.Y.Z} (unreleased)`
+          形式、release 時に `(unreleased)` → 日付に置換 (content-integrity guard 対象)
+
+    - path: "docs/{en,ja}/**/*.md"
+      instructions: |
+        - plugin ユーザー向け、**version 固定表現を避ける** (version-agnostic)
+        - NG: `v0.1.0 has zero native deps` → OK: `This plugin has zero native deps`
+        - NG: `As of v0.1.0` は schema.ts 等コード内 comment ではギリ OK、docs 本文は避ける
+        - 日本語 (`docs/ja/`) と英語 (`docs/en/`) の 2 系統。内容は原則同期、但し機械翻訳風にならない
+          自然な表現を優先
+
+    - path: "README.md"
+      instructions: |
+        - `Known notes` section に **未達 commitment** (`planned for v0.X.X`) を書かない
+          (future release shift を優先、v0.2.0 release で past 未達が露呈した教訓)
+        - `v0.1.0` 等の version 固定記述は歴史的 context (zero native deps の splitting rationale 等)
+          以外は避ける
+        - badge / shield は version 固定 OK (GitHub 側で auto-update される)
+
+knowledge_base:
+  # harness plugin 固有の review pattern 学習のみ (other projects への漏出を避ける)
+  learnings:
+    scope: "local"
+  issues:
+    scope: "local"
+  # Anthropic Claude Code docs / plugin reference / hooks spec を web 参照する
+  web_search:
+    enabled: true
+  # CLAUDE.md / CONTRIBUTING.md / README.md を自動認識
+  code_guidelines:
+    enabled: true
+
+chat:
+  # `@coderabbitai` メンション不要でも応答 (review 中の対話を能動化)
+  auto_reply: true

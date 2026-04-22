@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`.coderabbit.yaml` (repository-level CodeRabbit config)** — 旧 Organization UI default 設定への silent fallback を廃し、repository 固有の path-based review instructions を明示化。**17 path × harness 固有 rules** (TypeScript core の Pure JS / zero native deps / Record<string, unknown> + narrow access / hooks blocking protocol; tests の 2-requirement AND guard + forcing function hardcode; agents / commands frontmatter 規約; hooks.json 11 events + blocking hook 登録制限; schemas の `$id` drift; plugin.json / marketplace.json drift guard; scripts ES module + strict SemVer + try-catch ENOENT pattern; `.github/workflows/*.yml` strict tag + `npm ci` + `body_path`; template placeholder 更新; CONTRIBUTING / CHANGELOG exemption zone; docs/maintainer + docs/{en,ja} + README の version-agnostic + time-stable wording policy)、profile `chill`、`auto_review.base_branches: ^main$` (regex 形式、公式仕様)、`path_filters` で dist / .docs / docs/maintainer/session-notes 除外、`knowledge_base.learnings.scope: local` / `web_search.enabled: true` / `code_guidelines.enabled: true` / `chat.auto_reply: true`。公式 schema `coderabbit.ai/integrations/schema.v2.json` 準拠。`content-integrity.test.ts` に **11 regression guards** 追加 (yaml parse ベース structural validation、dev dep `yaml@^2.6.0` 追加 = pure JS、zero native deps 原則遵守): schema directive first line / language / tone_instructions ≤250 文字 / profile=chill + request_changes_workflow=false / auto_review + `^main$` literal / path_instructions 17 path 全列挙 / `**/*` entry の generality 原則内容 / path_filters 3 件 / knowledge_base 3 key / chat.auto_reply / self-check (yaml 自身が greek+arabic Phase / Round N / PCR-N の tracker ID usage を含まない)。
+
 ## [0.2.0] - 2026-04-23
 
 > **⚠️ Breaking change for v3/v4.1 users**: The `--test-pipeline` subflow has been fully removed from `harness-work.md`. If you relied on it, migrate to a project-local skill under `.claude/skills/<project>-local-rules/references/pipeline-check.md`. See `### Removed` below.
