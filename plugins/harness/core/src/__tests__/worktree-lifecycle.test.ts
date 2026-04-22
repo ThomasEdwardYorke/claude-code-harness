@@ -33,13 +33,15 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 
 /**
- * macOS では `/var` と `/private/var` の symlink 差で string 比較が壊れるため、
- * 存在する path は realpathSync で正規化する。handleWorktreeCreate も内部で
- * projectRoot を realpath 正規化するため、テスト期待値もそれに揃える。
+ * macOS では `/var` と `/private/var` の symlink 差、Windows では 8.3 短縮名
+ * `RUNNER~1` ↔ `runneradmin` の差で string 比較が壊れるため、存在する path を
+ * OS-native realpath で正規化する。production 側 `normalizePath` と同じ
+ * canonicalization 経路 (`realpathSync.native` = GetFinalPathNameByHandle /
+ * realpath(3)) を使い、ズレを生まない。
  */
 function realpathIfExists(p: string): string {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return p;
   }
@@ -564,8 +566,13 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
     cleanupWorktree(repo, expectedPath);
   });
 
-  it("name に path separator / shell metachar が含まれる場合 reject (injection 防止)", async () => {
+  it("name に path separator / shell metachar / git refname 違反文字列が含まれる場合 reject", async () => {
     const repo = setupTempGitRepo();
+    // 拒否カテゴリ:
+    //   - path separator / shell metachar (allowlist regex で除外)
+    //   - 先頭 '.' (startsWith check)
+    //   - 空文字列
+    //   - git refname 禁止パターン: '..' / 末尾 '.' / '.lock' suffix
     for (const bad of [
       "../etc/passwd",
       "slug/nested",
@@ -576,6 +583,9 @@ describe("handleWorktreeCreate (blocking protocol)", () => {
       "slug$(inj)",
       ".hidden",
       "",
+      "foo..bar",
+      "trailing.",
+      "branch.lock",
     ]) {
       const result = await handleWorktreeCreate({
         hook_event_name: "WorktreeCreate",

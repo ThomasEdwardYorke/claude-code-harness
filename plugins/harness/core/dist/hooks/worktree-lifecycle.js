@@ -66,6 +66,15 @@ const MAX_PLANS_SIZE = 512 * 1024;
  * 先頭 1 文字と合わせて enforce する (1 + 63 = 64)。別途の length ガードは
  * regex に届く前に fire しない dead code となるため置かず、regex と「最大長」
  * の契約を一本化している。
+ *
+ * 追加 git check-ref-format 準拠制約:
+ * - 先頭 `.` を reject (既存 startsWith check)
+ * - 連続 `..` を reject (git refname 禁止)
+ * - 末尾 `.` を reject (git refname 禁止)
+ * - `.lock` suffix を reject (git が refs/heads/ 配下の reserved suffix として使う)
+ *
+ * (regex 側は control char / space / `~ ^ : ? * [ \ /` 等の禁止文字を
+ * character class で既に除外している)
  */
 const NAME_ALLOWED_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
 function validateWorktreeName(name) {
@@ -79,6 +88,19 @@ function validateWorktreeName(name) {
         return {
             ok: false,
             reason: "name must match [A-Za-z0-9_] + [A-Za-z0-9_.-]{0,63} (max 64 chars, no path separators / shell metachars)",
+        };
+    }
+    // git check-ref-format --branch 準拠: `..` / trailing `.` / `.lock` 拒否
+    if (name.includes("..")) {
+        return { ok: false, reason: "name cannot contain '..' (git refname rule)" };
+    }
+    if (name.endsWith(".")) {
+        return { ok: false, reason: "name cannot end with '.' (git refname rule)" };
+    }
+    if (name.endsWith(".lock")) {
+        return {
+            ok: false,
+            reason: "name cannot end with '.lock' (reserved git ref suffix)",
         };
     }
     return { ok: true };
@@ -364,8 +386,8 @@ export async function handleWorktreeCreate(input) {
     //   (b) unborn HEAD (init 直後、commit 前): "repository has no commits"
     // -------------------------
     if (!isGitRepository(projectRoot)) {
-        const reason = `cwd is not a git repository: ${projectRoot}`;
-        sections.push(`[error] ${sanitizeForContext(reason)}`);
+        const reason = `cwd is not a git repository: ${sanitizeForContext(projectRoot)}`;
+        sections.push(`[error] ${reason}`);
         sections.push("=== WorktreeCreate failed (non-git cwd) ===");
         return {
             decision: "approve",
