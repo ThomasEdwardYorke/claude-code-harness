@@ -258,7 +258,7 @@
         "fenceContext": {
           "type": "boolean",
           "default": true,
-          "description": "When true, the injected context block is wrapped in fence markers (`===== HARNESS PROJECT-LOCAL CONTEXT =====` / `===== END HARNESS CONTEXT =====`) so the user / reader can attribute the content to the harness."
+          "description": "When true, the injected context block is wrapped in fence markers with a per-request 12-hex-char nonce (`===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` / `===== END HARNESS CONTEXT <nonce> =====`) so the user / reader can attribute the content to the harness. The nonce defeats context-boundary spoofing attempts by literal fence markers embedded in rule file content."
         }
       }
     },

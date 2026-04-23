@@ -1421,7 +1421,7 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 });
 
 // ============================================================
-// UserPromptSubmit hook 登録 invariant (Phase η P0, harness v0.3.2)
+// UserPromptSubmit hook 登録 invariant (initial phase, P0 — harness v0.3.2)
 //
 // 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
 //  - Trigger: user が prompt を submit した直後 / Claude 処理開始前
@@ -1440,7 +1440,7 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 //
 // 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
 // ============================================================
-describe("UserPromptSubmit hook 登録 invariant (Phase η P0)", () => {
+describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const handlerPath = resolve(
     PLUGIN_ROOT,
@@ -1502,6 +1502,7 @@ describe("UserPromptSubmit hook 登録 invariant (Phase η P0)", () => {
     expect(src).toMatch(/hookEventName[\s\S]{0,100}"UserPromptSubmit"/);
   });
 });
+
 
 // ============================================================
 // PostToolUseFailure hook 登録 invariant (initial phase P0, part 2 — harness v0.3.2)
@@ -1895,8 +1896,8 @@ describe("session-handoff skill — harness-setup check 統合", () => {
  *   も検出して false-fail する。歴史的言及を残す場合はバッククォート表現を変更すること。
  */
 describe("release guard — version consistency (Phase μ)", () => {
-  const EXPECTED_VERSION = "0.3.0";
-  const EXPECTED_PREV_VERSION = "0.2.0";
+  const EXPECTED_VERSION = "0.3.1";
+  const EXPECTED_PREV_VERSION = "0.3.0";
   const EXPECTED_RELEASE_DATE = "2026-04-23";
 
   // SemVer X.Y.Z 形状検証 (shape validation のみ、leading-zero 等の細部検査は省略)

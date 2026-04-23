@@ -27,10 +27,14 @@
  *   (decision: "approve" + additionalContext 未設定)
  * - **Path-traversal guard**: `..` 含む or absolute path は reject (silently skip)
  * - **Size cap**: `maxTotalBytes` (default 16 KiB) を超えた分は truncate
- *   + 末尾 marker `[harness] context truncated at N bytes`
- * - **Fence wrap**: `fenceContext: true` (default) で
- *   `===== HARNESS PROJECT-LOCAL CONTEXT =====` / `===== END HARNESS CONTEXT =====`
- *   marker で囲む (Claude / 読み手が harness 由来コンテンツと識別可能)
+ *   + 末尾 marker `[harness <nonce>] context truncated at N bytes`
+ * - **Fence wrap + per-request nonce**: `fenceContext: true` (default) で
+ *   `===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` /
+ *   `===== END HARNESS CONTEXT <nonce> =====` marker で囲む。
+ *   nonce は 12 hex 文字 (48-bit entropy) を request ごとに生成し、
+ *   open / close / truncation marker で共有する。攻撃者は次回 nonce を予測
+ *   できないため、content 内に埋め込んだ fake fence marker / fake truncate
+ *   告知 では context boundary spoofing が成立しない。
  *
  * ## 関連 doc
  * - docs/maintainer/research-anthropic-official-2026-04-22.md (公式 hook 仕様調査)

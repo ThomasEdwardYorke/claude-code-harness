@@ -21,11 +21,16 @@ import {
   mkdtempSync,
   writeFileSync,
   rmSync,
+  readFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
 import { handleUserPromptSubmit } from "../hooks/user-prompt-submit.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const tempDirs: string[] = [];
 
@@ -158,7 +163,7 @@ describe("UserPromptSubmit handler — context injection", () => {
     expect(result.additionalContext).not.toContain("rules/missing.md");
   });
 
-  it("fenceContext: true (default) → fence marker で囲まれる", async () => {
+  it("fenceContext: true (default) → per-request nonce 付き fence marker で囲まれる", async () => {
     const root = makeTempProject({
       files: { "x.md": "X" },
       harnessConfig: {
@@ -166,8 +171,39 @@ describe("UserPromptSubmit handler — context injection", () => {
       },
     });
     const result = await callHandler(root);
-    expect(result.additionalContext).toMatch(/^===== HARNESS PROJECT-LOCAL CONTEXT =====/);
-    expect(result.additionalContext).toMatch(/===== END HARNESS CONTEXT =====$/);
+    // 12 hex 文字の nonce (48-bit entropy) で spoofing 困難
+    expect(result.additionalContext).toMatch(
+      /^===== HARNESS PROJECT-LOCAL CONTEXT [a-f0-9]{12} =====\n/,
+    );
+    expect(result.additionalContext).toMatch(
+      /\n===== END HARNESS CONTEXT [a-f0-9]{12} =====$/,
+    );
+    // open / close fence は同一 nonce (request scope で整合)
+    const openMatch = result.additionalContext!.match(
+      /^===== HARNESS PROJECT-LOCAL CONTEXT ([a-f0-9]{12}) =====/,
+    );
+    const closeMatch = result.additionalContext!.match(
+      /===== END HARNESS CONTEXT ([a-f0-9]{12}) =====$/,
+    );
+    expect(openMatch?.[1]).toBeDefined();
+    expect(openMatch?.[1]).toBe(closeMatch?.[1]);
+  });
+
+  it("fence nonce は 2 回連続 invocation で異なる (per-request randomness)", async () => {
+    const root = makeTempProject({
+      files: { "x.md": "X" },
+      harnessConfig: {
+        userPromptSubmit: { contextFiles: ["x.md"] },
+      },
+    });
+    const r1 = await callHandler(root);
+    const r2 = await callHandler(root);
+    const nonceRe = /===== HARNESS PROJECT-LOCAL CONTEXT ([a-f0-9]{12}) =====/;
+    const n1 = r1.additionalContext!.match(nonceRe)?.[1];
+    const n2 = r2.additionalContext!.match(nonceRe)?.[1];
+    expect(n1).toBeDefined();
+    expect(n2).toBeDefined();
+    expect(n1).not.toBe(n2);
   });
 
   it("fenceContext: false → fence marker なし", async () => {
@@ -184,7 +220,7 @@ describe("UserPromptSubmit handler — context injection", () => {
 });
 
 describe("UserPromptSubmit handler — size cap", () => {
-  it("maxTotalBytes 超過分は truncate + marker", async () => {
+  it("maxTotalBytes 超過分は nonce 付き truncate marker で告知", async () => {
     const big = "X".repeat(2000);
     const root = makeTempProject({
       files: { "big.md": big },
@@ -198,9 +234,12 @@ describe("UserPromptSubmit handler — size cap", () => {
     });
     const result = await callHandler(root);
     expect(result.additionalContext).toBeDefined();
-    expect(result.additionalContext).toContain("[harness] context truncated at 512 bytes");
+    // truncation marker も nonce 付き (fake truncate 告知 injection 防御)
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] context truncated at 512 bytes/,
+    );
     // header (`--- big.md ---\n`) + slice ≤ 512 bytes (handler 内 totalBytes 計算)、
-    // 加えて truncation marker `\n\n[harness] context truncated at N bytes` (~42 chars)。
+    // 加えて truncation marker `\n\n[harness <nonce>] context truncated at N bytes` (~56 chars)。
     // marker 自体は cap 計算外 (可読性優先) なので cap + 100 chars 程度の余裕で評価。
     expect(result.additionalContext!.length).toBeLessThan(512 + 100);
   });
@@ -215,7 +254,9 @@ describe("UserPromptSubmit handler — size cap", () => {
     });
     const result = await callHandler(root);
     expect(result.additionalContext).toBeDefined();
-    expect(result.additionalContext).toContain("[harness] context truncated at 16384 bytes");
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] context truncated at 16384 bytes/,
+    );
   });
 
   it("malformed maxTotalBytes (string) → default が適用される", async () => {
@@ -231,7 +272,59 @@ describe("UserPromptSubmit handler — size cap", () => {
     });
     const result = await callHandler(root);
     // default fallback (16 KiB) で truncate
-    expect(result.additionalContext).toContain("[harness] context truncated at 16384 bytes");
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] context truncated at 16384 bytes/,
+    );
+  });
+
+  it("strict byte cap — header bytes を remaining から差し引き content+header ≤ maxTotalBytes", async () => {
+    // header (`--- big.md ---\n` = 16 bytes) を pre-allocate し、
+    // 残余分だけ content に割り当てる。truncation marker は cap 計算外。
+    const big = "X".repeat(5000);
+    const maxBytes = 512;
+    const root = makeTempProject({
+      files: { "big.md": big },
+      harnessConfig: {
+        userPromptSubmit: {
+          contextFiles: ["big.md"],
+          maxTotalBytes: maxBytes,
+          fenceContext: false,
+        },
+      },
+    });
+    const result = await callHandler(root);
+    expect(result.additionalContext).toBeDefined();
+    // truncation marker を除いた本体 (header + content) が strict cap を守る
+    const body = result.additionalContext!.replace(
+      /\n\n\[harness [a-f0-9]{12}\] context truncated at \d+ bytes$/,
+      "",
+    );
+    const bodyBytes = Buffer.byteLength(body, "utf-8");
+    expect(bodyBytes).toBeLessThanOrEqual(maxBytes);
+  });
+
+  it("fence + truncation marker が同一 nonce を共有 (request 整合)", async () => {
+    const big = "Z".repeat(30000);
+    const root = makeTempProject({
+      files: { "big.md": big },
+      harnessConfig: {
+        userPromptSubmit: { contextFiles: ["big.md"] },
+        // fenceContext default true
+      },
+    });
+    const result = await callHandler(root);
+    const openNonce = result.additionalContext!.match(
+      /===== HARNESS PROJECT-LOCAL CONTEXT ([a-f0-9]{12}) =====/,
+    )?.[1];
+    const truncNonce = result.additionalContext!.match(
+      /\[harness ([a-f0-9]{12})\] context truncated/,
+    )?.[1];
+    const closeNonce = result.additionalContext!.match(
+      /===== END HARNESS CONTEXT ([a-f0-9]{12}) =====/,
+    )?.[1];
+    expect(openNonce).toBeDefined();
+    expect(openNonce).toBe(truncNonce);
+    expect(openNonce).toBe(closeNonce);
   });
 });
 
@@ -307,5 +400,40 @@ describe("UserPromptSubmit handler — input contract", () => {
       { projectRoot: root },
     );
     expect(result.additionalContext).toContain("ROOT-X");
+  });
+});
+
+// ============================================================
+// Shipped-spec generality invariant
+//
+// 理由: harness-plugin-dev.md R2 rule は shipped hook source file
+// (plugins/harness/core/src/hooks/*.ts) に内部トラッカー ID
+// (`PR #N` / `Issue #N`) を書かないことを要求する。
+// commit message / CHANGELOG / docs/maintainer/ には書いてよいが、
+// shipped code comment には書かない — git blame で十分辿れる。
+//
+// 本 assertion は user-prompt-submit.ts に限定したローカルガード。
+// plugin 全体への拡張 (generality.test.ts B-10) は future work で
+// 扱う (internal backlog 参照)。本 PR の変更範囲を最小に保つため。
+// ============================================================
+describe("user-prompt-submit.ts — shipped-spec generality", () => {
+  it("ソース file に内部トラッカー ID (PR #N / Issue #N) を含まない", () => {
+    const handlerPath = resolve(
+      __dirname,
+      "../hooks/user-prompt-submit.ts",
+    );
+    const src = readFileSync(handlerPath, "utf-8");
+
+    // `PR #13` / `Issue #5` など、shipped comment に埋めるべきでない
+    // 開発時トラッカー ID を検出する。
+    const matches = src.match(/\b(PR|Issue)\s*#\d+/g);
+    if (matches && matches.length > 0) {
+      throw new Error(
+        `user-prompt-submit.ts contains internal tracker IDs: ${matches.join(", ")}. ` +
+          `Replace with generic wording (e.g. "internal security review") ` +
+          `and move PR/Issue references to CHANGELOG.md or commit messages.`,
+      );
+    }
+    expect(matches).toBeNull();
   });
 });

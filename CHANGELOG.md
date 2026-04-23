@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-23
+
 ### Fixed
 
 - **Single `Task` tool drift removal across 6 commands + 5 agents + body-text references (Codex B CRITICAL C.1 follow-up)** — official Claude Code tools catalog ([tools-reference](https://code.claude.com/docs/en/tools-reference)) does **not** contain a single `Task` tool; subagent spawning is performed by `Agent`, and task-list lifecycle is split into `TaskCreate` / `TaskGet` / `TaskList` / `TaskStop` / `TaskUpdate` (`TaskOutput` is marked *(Deprecated)* in the same table). Six commands (`harness-plan` / `harness-review` / `harness-work` / `parallel-worktree` / `pseudo-coderabbit-loop` / `tdd-implement`) previously listed `"Task"` in `allowed-tools`, which official runtime parses as non-tool (silent ignore) and breaks `claude plugin validate` on stricter future releases. Five agent frontmatters (`worker` / `scaffolder` / `reviewer` / `security-auditor` / `codex-sync`) previously used `disallowedTools: [..., Task]`, which was a no-op and failed to enforce the intended "no nested subagent spawning" invariant — now corrected to `disallowedTools: [..., Agent]`. Body-text drift in 3 command specs (`harness-work.md` / `parallel-worktree.md` / `pseudo-coderabbit-loop.md`) referring to `Task tool` / `Task ツール` / `Task({...})` pseudocode / `Parallel (Task tool)` mode name is rewritten to `Agent tool` / `Agent({...})` / `Parallel (Agent tool)` to match shipped reality. The `harness-work.md` dispatcher mode identifier moves from `parallel-task-tool` to `parallel-agent-tool` for the same reason. `harness-setup.md` config-field description (`work.maxParallel`) also drops the legacy `Task`-tool wording.
@@ -81,8 +83,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.2.0...v0.3.0
+[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.1.0
 
