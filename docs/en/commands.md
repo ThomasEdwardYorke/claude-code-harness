@@ -1,8 +1,9 @@
 # Commands
 
-The harness ships 9 commands: 5 verb skills that define the overall
-lifecycle, plus 4 workflow skills for git, PR review, and Codex
-collaboration.
+The harness ships 13 commands: 5 verb skills that define the overall
+lifecycle, plus 8 workflow skills for git, PR review, Codex collaboration,
+TDD enforcement, worktree parallelization, session handoff, and the local
+pseudo-CodeRabbit loop.
 
 ## Verb skills
 
@@ -18,10 +19,14 @@ collaboration.
 
 | Skill | Purpose |
 |-------|---------|
-| `/branch-merge`        | feature → dev → main merge with test gates + dev re-sync |
-| `/new-feature-branch`  | Create a new feature branch after verifying main/dev sync |
-| `/coderabbit-review`   | Background-watch a CodeRabbit review on a PR and auto-respond |
-| `/codex-team`          | Use Codex CLI as a teammate (review / dev / adversarial) |
+| `/branch-merge`          | feature → dev → main merge with test gates + dev re-sync |
+| `/new-feature-branch`    | Create a new feature branch after verifying main/dev sync |
+| `/coderabbit-review`     | Background-watch a CodeRabbit review on a PR and auto-respond |
+| `/codex-team`            | Use Codex CLI as a teammate (review / dev / adversarial) |
+| `/parallel-worktree`     | Orchestrate 2+ sub-tasks in parallel via `git worktree` with coordinator / worker dispatch |
+| `/pseudo-coderabbit-loop`| Local pseudo-CodeRabbit review loop via Codex CLI (rate-limit hedge for real CodeRabbit) |
+| `/session-handoff`       | 3-layer handoff doc structure (current / backlog / design-decisions + archive) with `init` / `update` / `archive` / `check` subcommands |
+| `/tdd-implement`         | Strict TDD + Codex parallel + pseudo-CodeRabbit + real CodeRabbit + Codex second-opinion quality gate |
 
 ## `/harness-work` auto-mode detection
 

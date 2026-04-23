@@ -37,6 +37,32 @@ Codex / CodeRabbit レビュー全件対応済。
 
 ---
 
+## Same-day double release の扱い
+
+複数の minor / patch release を同日に発行する運用は、以下を満たす限り許容:
+
+1. **`CHANGELOG.md` で各 version を独立 section** として記録 (`[X.Y.Z] - YYYY-MM-DD`
+   の date が重複してよい、SemVer は date ではなく version 番号で順序が決まる)
+2. **`content-integrity.test.ts` の `EXPECTED_RELEASE_DATE` は current release 専用**、
+   前 release との date 同一は許容 (Phase μ guard は current のみ検証)
+3. **tag push 順序を守る**: 前 release の tag push 完了を確認してから次 release branch
+   を main にマージ (Release workflow の順次起動、cache race 回避)
+4. **user cache 反映**: 同日に 2 release した場合、user 側で `/plugin marketplace update`
+   → `/plugin update harness` → `/reload-plugins` を最新 version 側のみで 1 回実施すれば足りる
+   (plugin.json.version が primary cache key のため最新値に到達)
+
+**実例** (2026-04-23):
+- v0.2.0 — cache 再生成問題の緊急 fix (CHANGELOG [0.2.0] - 2026-04-23)
+- v0.3.0 — WorktreeCreate blocking protocol + .coderabbit.yaml (CHANGELOG [0.3.0] - 2026-04-23、
+  v0.2.0 merge 後に feature branch で準備、同日 tag 発行)
+
+**避けるべきケース**:
+- 同じ date かつ同じ `[X.Y.Z]` section を複数作ってしまう (SemVer 違反)
+- tag push を同時実行 (release.yml の並列起動 → CHANGELOG extract の race は理論上なし
+  だが cache UI に複数 "Latest" 表示が出る可能性あり)
+
+---
+
 ## Pre-release / RC / backport tag の扱い
 
 > **注**: GitHub Actions の `tags:` は fnmatch (glob) であり、正規表現ではない。

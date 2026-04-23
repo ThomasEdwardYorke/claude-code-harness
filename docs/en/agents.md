@@ -13,7 +13,8 @@
 | Agent | Role |
 |-------|------|
 | `security-auditor` | API-key leakage, injection risk, permission audit |
-| `codex-sync`       | Synchronous wrapper around the Codex CLI companion (forces foreground mode to avoid the known background-hang bug in `codex-rescue`) |
+| `codex-sync`       | Synchronous wrapper around the Codex CLI companion (forces foreground mode to avoid the known background-hang bug in `codex-rescue`). Requires the `codex@openai-codex` plugin; errors immediately if absent. |
+| `coderabbit-mimic` | Read-only CodeRabbit-style PR reviewer via Codex CLI. Used by `/pseudo-coderabbit-loop` to pre-review locally before triggering the real CodeRabbit. Requires `codex@openai-codex`; errors immediately if absent. |
 
 ## When to invoke which
 
@@ -22,6 +23,7 @@
 - You want to **update docs / config / state**: `scaffolder`
 - You want a **security-only pass**: `security-auditor`
 - You want **Codex to do the work synchronously**: `codex-sync`
+- You want a **CodeRabbit-style pre-review locally** (rate-limit hedge): `coderabbit-mimic` (typically via `/pseudo-coderabbit-loop`)
 
 ## Notes
 

@@ -272,10 +272,18 @@ git diff --quiet && git diff --cached --quiet || {
 gh run list --branch main --limit 3 --json status,conclusion 2>/dev/null || true
 ```
 
-### Step 1: 現在バージョン取得
+### Step 1: 現在バージョン取得 / Detect current version
+
+Detect based on project layout. For a Claude Code plugin, treat `plugin.json` as the primary source of truth:
 
 ```bash
-CURRENT=$(cat VERSION 2>/dev/null || echo "0.0.0")
+# Claude Code plugin (recommended)
+CURRENT=$(jq -r .version plugins/*/.claude-plugin/plugin.json 2>/dev/null)
+
+# Legacy layouts: VERSION file or root package.json
+CURRENT=${CURRENT:-$(cat VERSION 2>/dev/null)}
+CURRENT=${CURRENT:-$(jq -r .version package.json 2>/dev/null)}
+CURRENT=${CURRENT:-"0.0.0"}
 ```
 
 ### Step 2: 新バージョン算出（SemVer）
@@ -284,11 +292,13 @@ CURRENT=$(cat VERSION 2>/dev/null || echo "0.0.0")
 - `minor`: x.Y.z → x.(Y+1).0（新機能・後方互換）
 - `major`: X.y.z → (X+1).0.0（破壊的変更）
 
-### Step 3: CHANGELOG 更新
+### Step 3: CHANGELOG 更新 / Migrate CHANGELOG
 
-Keep a Changelog フォーマット（英語）:
+Use Keep a Changelog 1.1.0 format (English-primary) and keep the empty `[Unreleased]` header for the next cycle:
 
 ```markdown
+## [Unreleased]
+
 ## [X.Y.Z] - YYYY-MM-DD
 
 ### Added
@@ -301,21 +311,62 @@ Keep a Changelog フォーマット（英語）:
 - **Fix**: Description
 ```
 
-### Step 4: バージョンファイル更新
+Rewrite the reference-style compare links as well:
 
-```bash
-echo "$NEW_VERSION" > VERSION
-# package.json がある場合
-jq --arg v "$NEW_VERSION" '.version = $v' package.json > tmp && mv tmp package.json
+```markdown
+[Unreleased]: <repo>/compare/vX.Y.Z...HEAD
+[X.Y.Z]: <repo>/compare/v{prev}...vX.Y.Z
+[{prev}]: <repo>/releases/tag/v{prev}  # migrate all but the newest release to a tag link
 ```
 
-### Step 5: コミット & タグ
+### Step 4: バージョンファイル更新（全 manifest 同期）/ Sync all version manifests
+
+To avoid version drift, update every manifest in the repository that carries a `version` field in a single batch:
 
 ```bash
-git add CHANGELOG.md VERSION
-git commit -m "chore: release v$NEW_VERSION"
-git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
-git push origin main --tags
+# (a) Legacy layout: VERSION file
+[ -f VERSION ] && echo "$NEW_VERSION" > VERSION
+
+# (b) npm workspace (root plus every sub-workspace)
+for pkg in package.json plugins/*/core/package.json plugins/*/package.json; do
+  [ -f "$pkg" ] || continue
+  jq --arg v "$NEW_VERSION" '.version = $v' "$pkg" > "$pkg.tmp" && mv "$pkg.tmp" "$pkg"
+done
+
+# (c) Claude Code plugin manifest
+for pj in plugins/*/.claude-plugin/plugin.json; do
+  [ -f "$pj" ] || continue
+  jq --arg v "$NEW_VERSION" '.version = $v' "$pj" > "$pj.tmp" && mv "$pj.tmp" "$pj"
+done
+
+# (d) Marketplace manifest (both metadata.version and plugins[].version)
+if [ -f .claude-plugin/marketplace.json ]; then
+  jq --arg v "$NEW_VERSION" '.metadata.version = $v | .plugins[].version = $v' \
+    .claude-plugin/marketplace.json > mp.tmp && mv mp.tmp .claude-plugin/marketplace.json
+fi
+
+# (e) Regenerate npm lockfile (resolves workspace-wide version drift)
+[ -f package.json ] && npm install --package-lock-only
+```
+
+**Phase μ release guard (harness-plugin specific)**: if `content-integrity.test.ts` contains the hardcoded `EXPECTED_VERSION` / `EXPECTED_PREV_VERSION` / `EXPECTED_RELEASE_DATE` constants, update all three manually (see `docs/maintainer/release-process.md`). The hardcoding is intentional — it acts as a forcing function that guarantees a release PR always bumps the test alongside the manifests.
+
+### Step 5: コミット & タグ / Commit and tag
+
+```bash
+git add CHANGELOG.md package.json package-lock.json \
+  plugins/*/.claude-plugin/plugin.json \
+  plugins/*/core/package.json \
+  .claude-plugin/marketplace.json 2>/dev/null
+# When the Phase μ guard test exists
+git add plugins/*/core/src/__tests__/content-integrity.test.ts 2>/dev/null
+
+git commit -m "release: v$NEW_VERSION — <summary>"
+# When working through a feature branch, merge into main first, then tag.
+git tag -a "v$NEW_VERSION" -m "release: v$NEW_VERSION"
+
+# Push the single tag explicitly (avoid `--tags`, which would push every local tag).
+git push origin "v$NEW_VERSION"
 ```
 
 ### Step 6: GitHub Release 作成（gh がある場合）
