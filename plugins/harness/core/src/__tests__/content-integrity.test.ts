@@ -1421,6 +1421,88 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 });
 
 // ============================================================
+// UserPromptSubmit hook 登録 invariant (initial phase, P0 — harness v0.3.2)
+//
+// 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
+//  - Trigger: user が prompt を submit した直後 / Claude 処理開始前
+//  - Payload: prompt (string, 固有) + 共通 field
+//  - Output: `hookSpecificOutput.additionalContext` / `hookSpecificOutput.sessionTitle`
+//    で context 注入 + session title 設定。`decision: "block"` + exit 2 で block 可。
+//  - matcher 非対応: 全 prompt で発火 → handler は短時間で完了
+//  - prompt modification は公式 docs で未定義 (実装不可)
+//
+// 現行の判断:
+//  - Global plugin → Local project rules bridge として実装 (config 駆動 context 注入)
+//  - hooks.json に UserPromptSubmit 登録、timeout 10s (non-blocking 軽処理)
+//  - handler は fail-open (config 読込失敗 / file 不在 / read error → silently skip)
+//  - path-traversal guard 必須 (`..` / absolute / projectRoot 外 resolve → skip)
+//  - index.ts main() で `hookSpecificOutput.additionalContext` JSON 形式に lift
+//
+// 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
+// ============================================================
+describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
+  const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
+  const handlerPath = resolve(
+    PLUGIN_ROOT,
+    "core/src/hooks/user-prompt-submit.ts",
+  );
+  const indexPath = resolve(PLUGIN_ROOT, "core/src/index.ts");
+
+  it("hooks.json は UserPromptSubmit を登録する (non-blocking, timeout 10s)", () => {
+    // timeout 10s の根拠:
+    //   - 本 hook は 全 user prompt で発火 (matcher 非対応)、performance 重要
+    //   - handler は config 読込 + 少数 file read のみ、数 ms オーダー
+    //   - 10s は余裕設定 (fail-open で実害なし、but drift 検知のため固定)
+    const raw = readFileSync(hooksJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ hooks: Array<{ command?: string; timeout?: number }> }>
+      >;
+    };
+    expect(parsed.hooks).toHaveProperty("UserPromptSubmit");
+    const entry = parsed.hooks["UserPromptSubmit"];
+    expect(Array.isArray(entry)).toBe(true);
+    expect(entry?.length).toBeGreaterThan(0);
+    expect(entry?.[0]?.hooks?.[0]?.command).toContain("user-prompt-submit");
+    expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
+  });
+
+  it("user-prompt-submit.ts が handleUserPromptSubmit を export する", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/export\s+async\s+function\s+handleUserPromptSubmit/);
+  });
+
+  it("user-prompt-submit.ts は context 注入に additionalContext を使う (systemMessage ではない)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/additionalContext/);
+    // systemMessage に sections / context を乗せる drift を拒否
+    expect(src).not.toMatch(/systemMessage\s*:\s*sections/);
+    expect(src).not.toMatch(/systemMessage\s*:\s*body/);
+  });
+
+  it("user-prompt-submit.ts は fail-open 実装 (loadConfigSafe try-catch + path-traversal guard)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // config 読込失敗時の try-catch による approve fallback
+    expect(src).toMatch(/loadConfigSafe/);
+    expect(src).toMatch(/try\s*\{[\s\S]*loadConfigSafe/);
+    expect(src).toMatch(/catch[\s\S]*decision:\s*"approve"/);
+    // path-traversal guard: `..` 含む と absolute path の reject
+    expect(src).toMatch(/includes\s*\(\s*["']\.\.["']\s*\)/);
+    expect(src).toMatch(/isAbsolute/);
+  });
+
+  it("index.ts main() に user-prompt-submit 分岐があり hookSpecificOutput 形式で出力する", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    // HookType union に追加済
+    expect(src).toMatch(/"user-prompt-submit"/);
+    // main() 出力分岐: hookSpecificOutput / hookEventName / UserPromptSubmit の組
+    expect(src).toMatch(/hookSpecificOutput/);
+    expect(src).toMatch(/hookEventName[\s\S]{0,40}"UserPromptSubmit"/);
+  });
+});
+
+// ============================================================
 // session-handoff skill: 引き継ぎ doc 構造化ベストプラクティスを
 // shipped plugin として提供する skill の existence + structure guard
 //

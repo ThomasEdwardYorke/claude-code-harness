@@ -236,6 +236,31 @@
           "description": "Command run before each merge step. When unset, /harness-release falls back to `work.testCommand` and finally to per-stack autodetection."
         }
       }
+    },
+    "userPromptSubmit": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by the UserPromptSubmit hook. Acts as the harness Global plugin → Local project rules bridge: each user prompt is augmented with project-local context files (e.g. `.claude/rules/coding-style.md`) so Claude inherits invariants the project owner cares about, without forcing the user to re-paste them. Empty `contextFiles` (default) makes the hook a no-op.",
+      "properties": {
+        "contextFiles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Project-local context file paths (relative to projectRoot) appended to each user prompt as `hookSpecificOutput.additionalContext`. Missing files are skipped silently. Path-traversal entries (containing `..`) and absolute paths are rejected and skipped."
+        },
+        "maxTotalBytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 65536,
+          "default": 16384,
+          "description": "Total byte cap across all contextFiles. Excess content is truncated with an inline marker so Claude can detect the boundary."
+        },
+        "fenceContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, the injected context block is wrapped in fence markers with a per-request 12-hex-char nonce (`===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` / `===== END HARNESS CONTEXT <nonce> =====`) so the user / reader can attribute the content to the harness. The nonce defeats context-boundary spoofing attempts by literal fence markers embedded in rule file content."
+        }
+      }
     }
   }
 }

@@ -212,6 +212,45 @@ export interface ToolingConfig {
  */
 export type ReleaseStrategy = "two-branch" | "three-branch";
 
+/**
+ * UserPromptSubmit hook configuration.
+ *
+ * Designed as the harness "Global plugin → Local project rules bridge":
+ * each user prompt is augmented with project-local context (e.g.
+ * `.claude/rules/coding-style.md`) so Claude inherits invariants the
+ * project owner cares about, without forcing the user to re-paste them.
+ *
+ * Empty `contextFiles` (default) makes the hook a no-op — handler returns
+ * `decision: "approve"` with no `additionalContext`, matching fail-open
+ * behaviour throughout the harness.
+ */
+export interface UserPromptSubmitConfig {
+  /**
+   * Project-local context file paths (relative to `projectRoot`) appended
+   * to each user prompt as `hookSpecificOutput.additionalContext`.
+   * Missing files are skipped silently. Path-traversal entries (`..` or
+   * absolute paths) are rejected and skipped.
+   */
+  contextFiles: string[];
+  /**
+   * Total byte cap across all contextFiles. Excess content is truncated
+   * with an inline marker so Claude can detect the boundary. Range 256
+   * (minimal) to 65536 (64 KiB) to keep prompt overhead bounded.
+   */
+  maxTotalBytes: number;
+  /**
+   * When true, the injected context block is wrapped in fence markers with
+   * a per-request nonce (12 hex chars, 48-bit entropy):
+   * `===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` /
+   * `===== END HARNESS CONTEXT <nonce> =====`
+   * so the user / reader can attribute the content to the harness rather
+   * than mistaking it for their own prompt. The nonce prevents context
+   * boundary spoofing by literal fence markers embedded in rule file
+   * content (attackers cannot predict the per-request value).
+   */
+  fenceContext: boolean;
+}
+
 export interface ReleaseConfig {
   /** Branch-merge strategy. Controls how /branch-merge walks feature → integration → production. */
   strategy: ReleaseStrategy;
@@ -262,6 +301,7 @@ export interface HarnessConfig {
   codeRabbit: CodeRabbitConfig;
   tooling: ToolingConfig;
   release: ReleaseConfig;
+  userPromptSubmit: UserPromptSubmitConfig;
 }
 
 // ============================================================
@@ -337,6 +377,11 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     integrationBranch: "dev",
     productionBranch: "main",
   },
+  userPromptSubmit: {
+    contextFiles: [],
+    maxTotalBytes: 16 * 1024,
+    fenceContext: true,
+  },
 };
 
 // ============================================================
@@ -397,6 +442,10 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
       ...DEFAULT_CONFIG.release,
       ...(partial.release ?? {}),
     }),
+    userPromptSubmit: {
+      ...DEFAULT_CONFIG.userPromptSubmit,
+      ...(partial.userPromptSubmit ?? {}),
+    },
   };
 }
 

@@ -11,7 +11,7 @@
  *   echo '{}' | node dist/index.js session-end
  */
 import type { HookInput, HookResult } from "./types.js";
-type HookType = "pre-tool" | "post-tool" | "permission" | "session-start" | "session-end" | "pre-compact" | "subagent-stop" | "task-created" | "task-completed" | "stop" | "worktree-remove" | "worktree-create";
+type HookType = "pre-tool" | "post-tool" | "permission" | "session-start" | "session-end" | "pre-compact" | "subagent-stop" | "task-created" | "task-completed" | "stop" | "worktree-remove" | "worktree-create" | "user-prompt-submit";
 export declare function route(hookType: HookType, input: HookInput | Record<string, unknown>): Promise<HookResult>;
 /**
  * Safe fallback used by `main()` when the dispatcher or any handler throws.

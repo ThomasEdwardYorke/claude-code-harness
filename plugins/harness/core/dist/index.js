@@ -207,6 +207,32 @@ export async function route(hookType, input) {
             }
             return wcHR;
         }
+        case "user-prompt-submit": {
+            // UserPromptSubmit: Global plugin → Local project rules bridge。
+            // 公式仕様 (https://code.claude.com/docs/en/hooks) の
+            // `hookSpecificOutput.additionalContext` / `sessionTitle` を
+            // HookResult 経由で受け、main() の JSON 出力分岐で整形する。
+            const { handleUserPromptSubmit } = await import("./hooks/user-prompt-submit.js");
+            const raw = input;
+            const upRes = await handleUserPromptSubmit({
+                hook_event_name: String(raw["hook_event_name"] ?? "UserPromptSubmit"),
+                prompt: typeof raw["prompt"] === "string" ? raw["prompt"] : "",
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                transcript_path: extractString(raw, "transcript_path"),
+            });
+            const upHR = { decision: upRes.decision };
+            if (upRes.additionalContext !== undefined) {
+                upHR.additionalContext = upRes.additionalContext;
+            }
+            if (upRes.sessionTitle !== undefined) {
+                upHR.sessionTitle = upRes.sessionTitle;
+            }
+            if (upRes.reason !== undefined) {
+                upHR.reason = upRes.reason;
+            }
+            return upHR;
+        }
         case "session-start":
         case "session-end": {
             return { decision: "approve" };
@@ -257,7 +283,8 @@ async function main() {
             hookType === "task-completed" ||
             hookType === "stop" ||
             hookType === "worktree-remove" ||
-            hookType === "worktree-create") {
+            hookType === "worktree-create" ||
+            hookType === "user-prompt-submit") {
             const parsed = parseSessionInput(raw);
             result = await route(hookType, parsed);
         }
@@ -302,6 +329,41 @@ async function main() {
             }
             process.exitCode = 1;
         }
+    }
+    else if (hookType === "user-prompt-submit") {
+        // UserPromptSubmit: 公式仕様 (https://code.claude.com/docs/en/hooks) の
+        // `hookSpecificOutput.additionalContext` / `sessionTitle` に lift して
+        // stdout に JSON を書く。decision=block 時は top-level reason / exit 2
+        // でも block 可能だが、本 handler は通常 approve + additionalContext のみ。
+        const out = {};
+        if (result.decision === "block") {
+            out["decision"] = "block";
+            if (result.reason)
+                out["reason"] = result.reason;
+        }
+        const hso = { hookEventName: "UserPromptSubmit" };
+        let hsoHasPayload = false;
+        if (result.additionalContext !== undefined) {
+            hso["additionalContext"] = result.additionalContext;
+            hsoHasPayload = true;
+        }
+        if (result.sessionTitle !== undefined) {
+            hso["sessionTitle"] = result.sessionTitle;
+            hsoHasPayload = true;
+        }
+        if (hsoHasPayload) {
+            out["hookSpecificOutput"] = hso;
+        }
+        // Universal control fields (continue / stopReason / suppressOutput) は
+        // 公式 top-level 仕様なのでそのまま lift。
+        if (result.continue !== undefined)
+            out["continue"] = result.continue;
+        if (result.stopReason !== undefined)
+            out["stopReason"] = result.stopReason;
+        if (result.suppressOutput !== undefined) {
+            out["suppressOutput"] = result.suppressOutput;
+        }
+        process.stdout.write(JSON.stringify(out) + "\n");
     }
     else {
         process.stdout.write(JSON.stringify(result) + "\n");

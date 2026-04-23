@@ -80,6 +80,11 @@ export const DEFAULT_CONFIG = {
         integrationBranch: "dev",
         productionBranch: "main",
     },
+    userPromptSubmit: {
+        contextFiles: [],
+        maxTotalBytes: 16 * 1024,
+        fenceContext: true,
+    },
 };
 // ============================================================
 // Loader
@@ -137,6 +142,10 @@ function mergeConfig(partial) {
             ...DEFAULT_CONFIG.release,
             ...(partial.release ?? {}),
         }),
+        userPromptSubmit: {
+            ...DEFAULT_CONFIG.userPromptSubmit,
+            ...(partial.userPromptSubmit ?? {}),
+        },
     };
 }
 /**
