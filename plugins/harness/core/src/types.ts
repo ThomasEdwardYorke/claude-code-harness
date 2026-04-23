@@ -26,8 +26,16 @@ export interface HookInput {
   plugin_root?: string;
 }
 
-/** Decision returned by a hook. */
-export type HookDecision = "approve" | "deny" | "ask";
+/**
+ * Decision returned by a hook.
+ *
+ * - `approve` / `deny` / `ask`: guardrails (PreToolUse / PostToolUse /
+ *   PermissionRequest) の trichotomy。
+ * - `block`: UserPromptSubmit 固有 (公式仕様:
+ *   https://code.claude.com/docs/en/hooks)。他 hook では使わない
+ *   (guardrails は deny を使う)。
+ */
+export type HookDecision = "approve" | "deny" | "ask" | "block";
 
 /** Output payload for hooks (Claude Code hooks protocol). */
 export interface HookResult {
@@ -86,6 +94,24 @@ export interface HookResult {
    *   worktree creation to fail — blocking hook の挙動)
    */
   worktreePath?: string;
+
+  /**
+   * UserPromptSubmit hook の出力 — Claude のコンテキストに追加注入する文字列。
+   * 公式仕様: `hookSpecificOutput.additionalContext` (JSON 出力時)。
+   *
+   * `index.ts main()` の `user-prompt-submit` 分岐で
+   * `{ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext } }`
+   * 形式に lift して stdout に書き出す。block 時は対象外 (reason のみ反映)。
+   */
+  additionalContext?: string;
+
+  /**
+   * UserPromptSubmit hook の出力 — Claude Code session に名前を付ける。
+   * 公式仕様: `hookSpecificOutput.sessionTitle` (JSON 出力時)。
+   *
+   * 未設定なら出力に含めない (Claude Code 側のデフォルト動作に委ねる)。
+   */
+  sessionTitle?: string;
 }
 
 // ============================================================
