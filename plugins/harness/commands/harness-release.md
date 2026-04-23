@@ -274,8 +274,16 @@ gh run list --branch main --limit 3 --json status,conclusion 2>/dev/null || true
 
 ### Step 1: 現在バージョン取得
 
+プロジェクト構成に応じて検出。Claude Code plugin の場合は `plugin.json` を primary source of truth とする:
+
 ```bash
-CURRENT=$(cat VERSION 2>/dev/null || echo "0.0.0")
+# Claude Code plugin の場合（推奨）
+CURRENT=$(jq -r .version plugins/*/.claude-plugin/plugin.json 2>/dev/null)
+
+# 古い構成（VERSION file or root package.json）
+CURRENT=${CURRENT:-$(cat VERSION 2>/dev/null)}
+CURRENT=${CURRENT:-$(jq -r .version package.json 2>/dev/null)}
+CURRENT=${CURRENT:-"0.0.0"}
 ```
 
 ### Step 2: 新バージョン算出（SemVer）
@@ -286,9 +294,11 @@ CURRENT=$(cat VERSION 2>/dev/null || echo "0.0.0")
 
 ### Step 3: CHANGELOG 更新
 
-Keep a Changelog フォーマット（英語）:
+Keep a Changelog 1.1.0 フォーマット（英語）+ `[Unreleased]` section の空 header を保持:
 
 ```markdown
+## [Unreleased]
+
 ## [X.Y.Z] - YYYY-MM-DD
 
 ### Added
@@ -301,21 +311,62 @@ Keep a Changelog フォーマット（英語）:
 - **Fix**: Description
 ```
 
-### Step 4: バージョンファイル更新
+比較 link も rewrite:
+
+```markdown
+[Unreleased]: <repo>/compare/vX.Y.Z...HEAD
+[X.Y.Z]: <repo>/compare/v{prev}...vX.Y.Z
+[{prev}]: <repo>/releases/tag/v{prev}  # 直近以外は tag link に migrate
+```
+
+### Step 4: バージョンファイル更新（全 manifest 同期）
+
+version drift を避けるため、プロジェクトにある version 保持ファイル全てを一斉更新:
 
 ```bash
-echo "$NEW_VERSION" > VERSION
-# package.json がある場合
-jq --arg v "$NEW_VERSION" '.version = $v' package.json > tmp && mv tmp package.json
+# (a) 古い構成: VERSION file
+[ -f VERSION ] && echo "$NEW_VERSION" > VERSION
+
+# (b) npm workspace（root + sub-workspaces 全部）
+for pkg in package.json plugins/*/core/package.json plugins/*/package.json; do
+  [ -f "$pkg" ] || continue
+  jq --arg v "$NEW_VERSION" '.version = $v' "$pkg" > "$pkg.tmp" && mv "$pkg.tmp" "$pkg"
+done
+
+# (c) Claude Code plugin manifest
+for pj in plugins/*/.claude-plugin/plugin.json; do
+  [ -f "$pj" ] || continue
+  jq --arg v "$NEW_VERSION" '.version = $v' "$pj" > "$pj.tmp" && mv "$pj.tmp" "$pj"
+done
+
+# (d) marketplace manifest (metadata.version + plugins[].version 両方)
+if [ -f .claude-plugin/marketplace.json ]; then
+  jq --arg v "$NEW_VERSION" '.metadata.version = $v | .plugins[].version = $v' \
+    .claude-plugin/marketplace.json > mp.tmp && mv mp.tmp .claude-plugin/marketplace.json
+fi
+
+# (e) npm lockfile 再生成（workspaces 全体の version drift を解消）
+[ -f package.json ] && npm install --package-lock-only
 ```
+
+**Phase μ release guard (harness plugin 固有)**: `content-integrity.test.ts` に `EXPECTED_VERSION` / `EXPECTED_PREV_VERSION` / `EXPECTED_RELEASE_DATE` の hardcode 定数がある場合、手動で 3 箇所更新する (詳細は `docs/maintainer/release-process.md`)。forcing function として意図的に hardcode なので、release PR で必ず test 更新を伴う設計。
 
 ### Step 5: コミット & タグ
 
 ```bash
-git add CHANGELOG.md VERSION
-git commit -m "chore: release v$NEW_VERSION"
-git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
-git push origin main --tags
+git add CHANGELOG.md package.json package-lock.json \
+  plugins/*/.claude-plugin/plugin.json \
+  plugins/*/core/package.json \
+  .claude-plugin/marketplace.json 2>/dev/null
+# Phase μ test がある場合
+git add plugins/*/core/src/__tests__/content-integrity.test.ts 2>/dev/null
+
+git commit -m "release: v$NEW_VERSION — <summary>"
+# main にマージしてから tag を打つ（feature branch 経由の場合）
+git tag -a "v$NEW_VERSION" -m "release: v$NEW_VERSION"
+
+# --tags を使わず単体 tag push（意図しない tag の一括 push を防止）
+git push origin "v$NEW_VERSION"
 ```
 
 ### Step 6: GitHub Release 作成（gh がある場合）

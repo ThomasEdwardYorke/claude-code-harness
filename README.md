@@ -55,7 +55,7 @@ therefore optional**:
 
 | Plugin installed | What works | What errors on invocation |
 |------------------|------------|---------------------------|
-| `harness` only (default) | All 13 guardrails, 12 verb commands, 4 agents (worker / reviewer / scaffolder / security-auditor), all lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
+| `harness` only (default) | All 13 guardrails, 13 commands (5 verb + 8 workflow), 4 agents (worker / reviewer / scaffolder / security-auditor), all 12 lifecycle hooks | `codex-sync` fails fast with `ERROR: Codex plugin not found` and `coderabbit-mimic` fails with `ERROR: codex-companion.mjs not found.` — both hard errors that stop the agent before any work starts. Other agents and commands are unaffected. |
 | `harness` + `codex` | Everything above **plus** Codex-powered synchronous second-opinion review (`codex-sync`) and local pseudo-CodeRabbit loop (`coderabbit-mimic`) | — |
 
 `install-project.sh --with-codex` flips the opt-in; otherwise run

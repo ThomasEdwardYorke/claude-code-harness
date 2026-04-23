@@ -19,9 +19,20 @@ core/src/index.ts  (routes by hook type)
         ├── guardrails/permission.ts  (auto-approve safe commands)
         └── state/store.ts            (JSON file store for sessions/signals/…)
         │
-        ▼ stdout JSON { decision, reason?, systemMessage? }
+        ▼ stdout JSON { decision, reason?, systemMessage?, continue?,
+                        stopReason?, suppressOutput?, worktreePath? }
 Claude Code enforces the decision
 ```
+
+> **Exception — `WorktreeCreate` blocking hook**: unlike every other event,
+> `WorktreeCreate` fully **replaces** Claude Code's default `git worktree add`
+> behavior. It follows the official *command* hook contract (see
+> <https://code.claude.com/docs/en/hooks>) — on success it prints the raw
+> absolute worktree path to stdout (no JSON envelope), and any non-zero exit
+> causes worktree creation to fail. The dispatcher (`scripts/hook-dispatcher.mjs`)
+> and `core/src/index.ts main()` both have a `worktree-create` branch that
+> honors this blocking contract end-to-end; all other events continue to use
+> the JSON-decision protocol shown above.
 
 ## Layers
 
@@ -50,8 +61,14 @@ Unknown fields in `harness.config.json` are ignored (forward compatibility).
   is always valid post-install.
 - Every rule evaluates a `RuleContext` that carries the loaded `HarnessConfig`.
   Empty config arrays mean "off", never "error".
-- All hook paths fail open on errors. A malformed input JSON or a missing
-  core build approves the tool call rather than blocking the user.
+- Every hook path **except `WorktreeCreate`** fails open on errors. A
+  malformed input JSON or a missing core build approves the tool call rather
+  than blocking the user. `WorktreeCreate` is the one event whose official
+  contract is **blocking** (raw stdout + non-zero exit fails worktree
+  creation); the dispatcher `failOpen()` routine has a `worktree-create`
+  special case that writes the failure to stderr and exits 1 so the
+  end-to-end contract is preserved even when the dispatcher itself fails
+  (e.g. `CLAUDE_PLUGIN_ROOT` unset, `core/dist` missing).
 
 ## Official reference patterns used
 
