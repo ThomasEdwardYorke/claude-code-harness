@@ -58,7 +58,7 @@ Each migration: keep behavior identical, replace Japanese prose with English. Ja
 
 ### Phase 4 — CI enforcement (after Phase 2-3 mostly complete)
 
-Once the critical path is migrated, add `generality.test.ts` series B-10 (locale check) to enforce English-only in shipped spec going forward. Files that are deliberately Japanese (like `docs/ja/`) would be under ALLOWLIST; files with pending migration get a time-bound exemption (`generality-exemption: B-10 — HARNESS-english-migration, until v0.4.0`).
+Once the critical path is migrated, add `generality.test.ts` series B-10 (locale check) to enforce English-only in shipped spec going forward. Files that are deliberately Japanese (like `docs/ja/`) would be under ALLOWLIST; files with pending migration get a time-bound exemption following the [Unified Exemption Grammar](../../CONTRIBUTING.md#31-unified-exemption-grammar), for example: `<!-- generality-exemption: B-10 | HARNESS-english-migration | v0.4.0 | migration in progress -->`.
 
 ## Exemption Handling During Migration
 
