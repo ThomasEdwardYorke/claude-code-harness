@@ -1,6 +1,6 @@
 {
   "name": "@claude-code-harness/core",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "TypeScript core for Claude Code Harness: guardrails, state store, lifecycle.",
   "type": "module",
   "main": "dist/index.js",

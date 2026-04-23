@@ -213,6 +213,40 @@ export interface ToolingConfig {
 export type ReleaseStrategy = "two-branch" | "three-branch";
 
 /**
+ * PostToolUseFailure hook configuration.
+ *
+ * Official spec (https://code.claude.com/docs/en/hooks): this hook fires
+ * when tool execution fails (exception / non-zero exit / interrupt) on a
+ * path separate from `PostToolUse`. Non-blocking observability hook that
+ * adds failure diagnostics and optional corrective hints to
+ * `additionalContext` so Claude has material for next-turn recovery.
+ *
+ * When `correctiveHints` is true (default), the harness built-in hint
+ * matchers cover common error patterns (permission denied / no such file /
+ * command not found / signal abort / timeout / network unreachable) and
+ * append a short suggestion string.
+ *
+ * When `enabled` is false or the config is malformed, the handler
+ * silently returns `decision: "approve"` with no `additionalContext`
+ * (fail-open).
+ */
+export interface PostToolUseFailureConfig {
+  /** Global on/off switch. When false the handler returns `approve` with no `additionalContext`. */
+  enabled: boolean;
+  /**
+   * Maximum length of the raw error string before truncation. Excess is
+   * cut with an inline marker. Range: 256-16384 chars, default 1024.
+   */
+  maxErrorLength: number;
+  /**
+   * When true (default), append a corrective hint for the first matching
+   * built-in error pattern. Set false to inject the raw error only
+   * (no hint lookup).
+   */
+  correctiveHints: boolean;
+}
+
+/**
  * UserPromptSubmit hook configuration.
  *
  * Designed as the harness "Global plugin → Local project rules bridge":
@@ -302,6 +336,7 @@ export interface HarnessConfig {
   tooling: ToolingConfig;
   release: ReleaseConfig;
   userPromptSubmit: UserPromptSubmitConfig;
+  postToolUseFailure: PostToolUseFailureConfig;
 }
 
 // ============================================================
@@ -382,6 +417,11 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     maxTotalBytes: 16 * 1024,
     fenceContext: true,
   },
+  postToolUseFailure: {
+    enabled: true,
+    maxErrorLength: 1024,
+    correctiveHints: true,
+  },
 };
 
 // ============================================================
@@ -445,6 +485,10 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
     userPromptSubmit: {
       ...DEFAULT_CONFIG.userPromptSubmit,
       ...(partial.userPromptSubmit ?? {}),
+    },
+    postToolUseFailure: {
+      ...DEFAULT_CONFIG.postToolUseFailure,
+      ...(partial.postToolUseFailure ?? {}),
     },
   };
 }

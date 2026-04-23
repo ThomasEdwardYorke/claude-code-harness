@@ -1421,7 +1421,7 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 });
 
 // ============================================================
-// UserPromptSubmit hook 登録 invariant (initial phase, P0 — harness v0.3.2)
+// UserPromptSubmit hook 登録 invariant (observability + context bridge)
 //
 // 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
 //  - Trigger: user が prompt を submit した直後 / Claude 処理開始前
@@ -1440,7 +1440,7 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 //
 // 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
 // ============================================================
-describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
+describe("UserPromptSubmit hook 登録 invariant", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const handlerPath = resolve(
     PLUGIN_ROOT,
@@ -1497,8 +1497,100 @@ describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
     // HookType union に追加済
     expect(src).toMatch(/"user-prompt-submit"/);
     // main() 出力分岐: hookSpecificOutput / hookEventName / UserPromptSubmit の組
+    // (PostToolUseFailure と generic 化した ternary も許容するため 100 chars window)
     expect(src).toMatch(/hookSpecificOutput/);
-    expect(src).toMatch(/hookEventName[\s\S]{0,40}"UserPromptSubmit"/);
+    expect(src).toMatch(/hookEventName[\s\S]{0,100}"UserPromptSubmit"/);
+  });
+});
+
+
+// ============================================================
+// PostToolUseFailure hook 登録 invariant (observability + corrective feedback)
+//
+// 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
+//  - Trigger: tool 失敗 (exception / non-zero exit / interrupt)。PostToolUse と
+//    mutually exclusive (成功時 PostToolUse、失敗時 本 hook)
+//  - Payload: tool_name / tool_input / tool_use_id / error / is_interrupt +
+//    共通 (session_id / transcript_path / cwd / hook_event_name / permission_mode)
+//  - Output: `hookSpecificOutput.additionalContext` で corrective feedback 注入
+//  - matcher: tool name base (PostToolUse と同じ)、本 harness は全 tool 登録
+//
+// 現行の判断:
+//  - non-blocking observability (必ず approve 返却、failure そのものを block せず)
+//  - 6 built-in corrective hint (permission denied / no such file / command not
+//    found / signal abort / timeout / connection refused)
+//  - enabled: true default (fail-open)、correctiveHints: true default
+//  - index.ts main() で UserPromptSubmit と共通の hookSpecificOutput 出力分岐
+//
+// 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
+// ============================================================
+describe("PostToolUseFailure hook 登録 invariant", () => {
+  const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
+  const handlerPath = resolve(
+    PLUGIN_ROOT,
+    "core/src/hooks/post-tool-use-failure.ts",
+  );
+  const indexPath = resolve(PLUGIN_ROOT, "core/src/index.ts");
+
+  it("hooks.json は PostToolUseFailure を登録する (non-blocking, timeout 10s)", () => {
+    const raw = readFileSync(hooksJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ hooks: Array<{ command?: string; timeout?: number }> }>
+      >;
+    };
+    expect(parsed.hooks).toHaveProperty("PostToolUseFailure");
+    const entry = parsed.hooks["PostToolUseFailure"];
+    expect(Array.isArray(entry)).toBe(true);
+    expect(entry?.length).toBeGreaterThan(0);
+    expect(entry?.[0]?.hooks?.[0]?.command).toContain("post-tool-use-failure");
+    expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
+  });
+
+  it("post-tool-use-failure.ts が handlePostToolUseFailure を export する", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/export\s+async\s+function\s+handlePostToolUseFailure/);
+  });
+
+  it("post-tool-use-failure.ts は context 注入に additionalContext を使う", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/additionalContext/);
+    // systemMessage を直接 lift する drift を拒否 (UserPromptSubmit と同じ規約)
+    expect(src).not.toMatch(/systemMessage\s*:\s*lines/);
+  });
+
+  it("post-tool-use-failure.ts は fail-open 実装 (loadConfigSafe try-catch + enabled switch)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // config 読込失敗時の try-catch による defaults fallback
+    expect(src).toMatch(/loadConfigSafe/);
+    expect(src).toMatch(/try\s*\{[\s\S]*loadConfigSafe/);
+    // enabled: false の時 no-op
+    expect(src).toMatch(/enabled[\s\S]{0,60}return\s*\{\s*decision:\s*"approve"\s*\}/);
+  });
+
+  it("post-tool-use-failure.ts は built-in corrective hint を 6 pattern 含む", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // 6 pattern (permission denied / no such file / command not found / signal abort /
+    // timed out / connection refused) を regex で探す
+    expect(src).toMatch(/permission\\s\+denied/i);
+    expect(src).toMatch(/no\\s\+such\\s\+file/i);
+    expect(src).toMatch(/command\\s\+not\\s\+found/i);
+    // Signal abort: `exit(ed)? ... (status code|status|code) (130|137|143)` を許容する
+    // broader regex (旧 `exit (status|code) N` のみから拡張)。
+    // `exited` suffix + 間に ≤50 chars の text を挟める形に緩和した痕跡を確認。
+    expect(src).toMatch(/exit\(\?:ed\)\?/);
+    expect(src).toMatch(/\(\?:130\|137\|143\)/);
+    expect(src).toMatch(/timed\\s\+out/i);
+    expect(src).toMatch(/connection\\s\+refused/i);
+  });
+
+  it("index.ts main() に post-tool-use-failure 分岐があり hookSpecificOutput 形式で出力する", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    // HookType union に追加済
+    expect(src).toMatch(/"post-tool-use-failure"/);
+    // main() 出力分岐: hookSpecificOutput / hookEventName / PostToolUseFailure の組
+    expect(src).toMatch(/hookEventName[\s\S]{0,100}"PostToolUseFailure"/);
   });
 });
 
@@ -1808,8 +1900,8 @@ describe("session-handoff skill — harness-setup check 統合", () => {
  *   も検出して false-fail する。歴史的言及を残す場合はバッククォート表現を変更すること。
  */
 describe("release guard — version consistency (Phase μ)", () => {
-  const EXPECTED_VERSION = "0.3.1";
-  const EXPECTED_PREV_VERSION = "0.3.0";
+  const EXPECTED_VERSION = "0.3.2";
+  const EXPECTED_PREV_VERSION = "0.3.1";
   const EXPECTED_RELEASE_DATE = "2026-04-23";
 
   // SemVer X.Y.Z 形状検証 (shape validation のみ、leading-zero 等の細部検査は省略)

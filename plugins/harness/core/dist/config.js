@@ -85,6 +85,11 @@ export const DEFAULT_CONFIG = {
         maxTotalBytes: 16 * 1024,
         fenceContext: true,
     },
+    postToolUseFailure: {
+        enabled: true,
+        maxErrorLength: 1024,
+        correctiveHints: true,
+    },
 };
 // ============================================================
 // Loader
@@ -145,6 +150,10 @@ function mergeConfig(partial) {
         userPromptSubmit: {
             ...DEFAULT_CONFIG.userPromptSubmit,
             ...(partial.userPromptSubmit ?? {}),
+        },
+        postToolUseFailure: {
+            ...DEFAULT_CONFIG.postToolUseFailure,
+            ...(partial.postToolUseFailure ?? {}),
         },
     };
 }

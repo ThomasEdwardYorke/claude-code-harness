@@ -207,6 +207,17 @@
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" post-tool-use-failure",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

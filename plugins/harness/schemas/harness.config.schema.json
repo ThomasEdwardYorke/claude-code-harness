@@ -261,6 +261,30 @@
           "description": "When true, the injected context block is wrapped in fence markers with a per-request 12-hex-char nonce (`===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` / `===== END HARNESS CONTEXT <nonce> =====`) so the user / reader can attribute the content to the harness. The nonce defeats context-boundary spoofing attempts by literal fence markers embedded in rule file content."
         }
       }
+    },
+    "postToolUseFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by the PostToolUseFailure hook. Fires when a tool execution fails (exception / non-zero exit / interrupt). Injects failure diagnostics and optional corrective hints into `hookSpecificOutput.additionalContext` so Claude can decide next-turn recovery without extra prompting.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "If false, the hook returns approve with no additionalContext (silent skip). Default true."
+        },
+        "maxErrorLength": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 16384,
+          "default": 1024,
+          "description": "Maximum length of the raw error string before truncation. Excess is cut with an inline marker."
+        },
+        "correctiveHints": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, append harness built-in corrective hints for well-known error patterns (permission denied / no such file / command not found / signal abort / timeout / network unreachable). Set false to inject raw error only."
+        }
+      }
     }
   }
 }

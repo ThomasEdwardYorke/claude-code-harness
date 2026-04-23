@@ -26,7 +26,8 @@ type HookType =
   | "stop"
   | "worktree-remove"
   | "worktree-create"
-  | "user-prompt-submit";
+  | "user-prompt-submit"
+  | "post-tool-use-failure";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -268,6 +269,39 @@ export async function route(
       }
       return upHR;
     }
+    case "post-tool-use-failure": {
+      // PostToolUseFailure: tool 失敗時の observability hook。
+      // 公式仕様 (https://code.claude.com/docs/en/hooks) の
+      // `hookSpecificOutput.additionalContext` で診断 + hint を inject する。
+      // non-blocking (必ず approve 返却)。
+      const { handlePostToolUseFailure } = await import(
+        "./hooks/post-tool-use-failure.js"
+      );
+      const raw = input as Record<string, unknown>;
+      const ptufRes = await handlePostToolUseFailure({
+        hook_event_name: String(raw["hook_event_name"] ?? "PostToolUseFailure"),
+        tool_name: extractString(raw, "tool_name"),
+        tool_input:
+          typeof raw["tool_input"] === "object" && raw["tool_input"] !== null
+            ? (raw["tool_input"] as Record<string, unknown>)
+            : undefined,
+        tool_use_id: extractString(raw, "tool_use_id"),
+        error: extractString(raw, "error"),
+        is_interrupt:
+          typeof raw["is_interrupt"] === "boolean"
+            ? (raw["is_interrupt"] as boolean)
+            : undefined,
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        transcript_path: extractString(raw, "transcript_path"),
+        permission_mode: extractString(raw, "permission_mode"),
+      });
+      const ptufHR: HookResult = { decision: ptufRes.decision };
+      if (ptufRes.additionalContext !== undefined) {
+        ptufHR.additionalContext = ptufRes.additionalContext;
+      }
+      return ptufHR;
+    }
     case "session-start":
     case "session-end": {
       return { decision: "approve" };
@@ -324,7 +358,8 @@ async function main(): Promise<void> {
       hookType === "stop" ||
       hookType === "worktree-remove" ||
       hookType === "worktree-create" ||
-      hookType === "user-prompt-submit"
+      hookType === "user-prompt-submit" ||
+      hookType === "post-tool-use-failure"
     ) {
       const parsed = parseSessionInput(raw);
       result = await route(hookType, parsed);
@@ -366,17 +401,29 @@ async function main(): Promise<void> {
       }
       process.exitCode = 1;
     }
-  } else if (hookType === "user-prompt-submit") {
-    // UserPromptSubmit: 公式仕様 (https://code.claude.com/docs/en/hooks) の
+  } else if (
+    hookType === "user-prompt-submit" ||
+    hookType === "post-tool-use-failure"
+  ) {
+    // UserPromptSubmit / PostToolUseFailure: 公式仕様
+    // (https://code.claude.com/docs/en/hooks) の
     // `hookSpecificOutput.additionalContext` / `sessionTitle` に lift して
     // stdout に JSON を書く。decision=block 時は top-level reason / exit 2
-    // でも block 可能だが、本 handler は通常 approve + additionalContext のみ。
+    // でも block 可能だが、両 handler は通常 approve + additionalContext のみ。
+    //
+    // hookEventName mapping (公式 event 名 vs harness dispatch 名):
+    //   - user-prompt-submit → "UserPromptSubmit"
+    //   - post-tool-use-failure → "PostToolUseFailure"
+    const hookEventName =
+      hookType === "user-prompt-submit"
+        ? "UserPromptSubmit"
+        : "PostToolUseFailure";
     const out: Record<string, unknown> = {};
     if (result.decision === "block") {
       out["decision"] = "block";
       if (result.reason) out["reason"] = result.reason;
     }
-    const hso: Record<string, unknown> = { hookEventName: "UserPromptSubmit" };
+    const hso: Record<string, unknown> = { hookEventName };
     let hsoHasPayload = false;
     if (result.additionalContext !== undefined) {
       hso["additionalContext"] = result.additionalContext;

@@ -5,6 +5,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-23
+
+### Added
+
+- **`UserPromptSubmit` hook — Global plugin → Local project rules bridge** (observability + context injection). New `plugins/harness/core/src/hooks/user-prompt-submit.ts` implements `handleUserPromptSubmit`, registered in `plugins/harness/hooks/hooks.json` (dispatch arg `user-prompt-submit`, timeout 10s). Reads `userPromptSubmit.contextFiles` from `harness.config.json` and injects aggregated content into `hookSpecificOutput.additionalContext` so each user prompt carries project-local invariants (e.g. `.claude/rules/*.md`) without manual paste. Fail-open (config read failure / file missing / read error → silent skip + `approve`). Path-traversal guard rejects `..` segments, absolute paths, and any resolved path escaping `projectRoot` via symlink — uses `realpathSync` on both root and target plus `lstatSync.isSymbolicLink()` reject for defence-in-depth. `statSync().isFile()` gate prevents blocking reads of FIFO / socket / char-device entries. Byte-based size cap (`Buffer.byteLength`) with header pre-allocation guarantees `header + content ≤ maxTotalBytes` strictly (truncation marker is informational, counted outside the cap). Binary-safe UTF-8 truncate uses `Buffer.subarray` at byte boundary and drops invalid trailing bytes via `toString("utf-8").replace(/�+$/, "")`. Newline sanitization (`\r\n` / `\n` / `\r` → `\\n` literal) defeats fake section-boundary injection. **Per-request nonce** (12-hex-char, 48-bit entropy via `crypto.randomBytes(6).toString("hex")`) is stamped onto the open / close fence markers (`===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` / `===== END HARNESS CONTEXT <nonce> =====`) and the truncation marker (`[harness <nonce>] context truncated at N bytes`) — an attacker cannot predict the next-request nonce (2^-48 ≈ 3.5e-15 collision probability), so literal fence markers embedded in rule-file content cannot spoof context boundaries. Spec basis: `docs/maintainer/research-anthropic-official-2026-04-22.md` § 3 (フック).
+- **`PostToolUseFailure` hook — observability + corrective feedback injection** (non-blocking). New `plugins/harness/core/src/hooks/post-tool-use-failure.ts` implements `handlePostToolUseFailure`, registered in `plugins/harness/hooks/hooks.json` (dispatch arg `post-tool-use-failure`, timeout 10s). Fires when tool execution fails (exception / non-zero exit / interrupt) — mutually exclusive with `PostToolUse`. Injects tool name + sanitized error + optional corrective hint into `hookSpecificOutput.additionalContext` so Claude has next-turn recovery material without extra prompting. 6 built-in hint matchers (permission denied / no such file / command not found / signal-based abort 130/137/143 / timeout / connection refused); the signal abort regex now accepts `exit(ed)? ... (status code|status|code) N` forms to match common emitters such as `Command exited with non-zero status code 130`. Always `decision: "approve"` — tool failure itself is not blocked. Fail-open (`enabled: false` or malformed config → silent skip). Error sanitization uses the same newline escape as UserPromptSubmit plus C0 control-char escape (TAB preserved for readability), and tool-name identifier sanitization restricts to `[A-Za-z0-9_-]` with ellipsis truncation at 64 chars. **Per-request nonce** is stamped onto the header (`[harness <nonce> PostToolUseFailure] tool=...`) and the truncation marker (`[harness <nonce>] error truncated at N chars`) symmetrically with UserPromptSubmit (defence in depth against fake-marker injection from tool output).
+- **14 lifecycle hook events total** (12 → 14, +`user-prompt-submit` +`post-tool-use-failure`). `plugins/harness/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` descriptions list the new events explicitly so Claude Code caches invalidate on upgrade.
+- **Content-integrity guards** (`content-integrity.test.ts`): new `describe` blocks for both hooks (registration invariants: `hooks.json` entry + 10s timeout; handler `export` + `additionalContext` injection policy + `loadConfigSafe` fail-open; `index.ts main()` JSON-envelope dispatch with `hookSpecificOutput.hookEventName` per official spec). Signal-abort hint-coverage assertion now validates the broader regex (`exit(?:ed)?` + exit-code alternation) rather than the narrower literal.
+- **Shipped-spec generality invariants** (`user-prompt-submit.test.ts` and `post-tool-use-failure.test.ts`): per-file regex guards that fail if internal tracker IDs leak into hook sources. The `post-tool-use-failure` guard mirrors the broader coding-guidelines pattern set (`PR|Issue|Task #N` / `(C-N)` / `(M-N)` / `(m-N)` / `A-N rN` / `Round N` / severity labels) so future comment drift is caught locally before plugin-wide extension.
+
+### Changed
+
+- `UserPromptSubmitConfig.fenceContext` docstring (in `plugins/harness/core/src/config.ts` and `plugins/harness/schemas/harness.config.schema.json`) documents the per-request nonce and boundary-spoofing threat model.
+- `PostToolUseFailureConfig` docstring is English (shipped public surface); Japanese rationale / investigation history moves to maintainer docs per contributing guidelines.
+
 ## [0.3.1] - 2026-04-23
 
 ### Fixed
@@ -83,8 +98,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.1...HEAD
-[0.3.1]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.0...v0.3.1
+[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.1
 [0.3.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.1.0
