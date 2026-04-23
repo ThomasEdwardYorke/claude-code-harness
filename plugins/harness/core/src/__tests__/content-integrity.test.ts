@@ -1220,7 +1220,7 @@ describe("marketplace.json のクロスマーケットプレイス依存宣言 (
 });
 
 // ---------------------------------------------------------------------------
-// Repo rename (Phase ζ+1): cc-triad-relay identity lock
+// Repo rename: cc-triad-relay identity lock
 // ---------------------------------------------------------------------------
 // Naming convention after the 2026-04-24 repository rename:
 // - marketplace catalog name: `cc-triad-relay`
@@ -1228,7 +1228,8 @@ describe("marketplace.json のクロスマーケットプレイス依存宣言 (
 // - workspace package name: `@cc-triad-relay/core`
 // - plugin component name: `harness` (unchanged; internal identifier)
 // - GitHub remote URL segment: `ThomasEdwardYorke/cc-triad-relay`
-// These four anchors must stay consistent; drift indicates a missed rename.
+// These anchors (plus schema `$id` and `plugin.json` homepage/repository) must
+// stay consistent; drift indicates a missed rename.
 describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
   const rootPkg = JSON.parse(
     readFileSync(resolve(PLUGIN_ROOT, "../../package.json"), "utf-8"),
@@ -1245,6 +1246,12 @@ describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
   const pluginManifest = JSON.parse(
     readFileSync(
       resolve(PLUGIN_ROOT, ".claude-plugin/plugin.json"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+  const harnessSchema = JSON.parse(
+    readFileSync(
+      resolve(PLUGIN_ROOT, "schemas/harness.config.schema.json"),
       "utf-8",
     ),
   ) as Record<string, unknown>;
@@ -1291,6 +1298,12 @@ describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
 
   it("install-project.sh header points at cc-triad-relay path", () => {
     expect(installScript).toMatch(/cc-triad-relay\/scripts\/install-project\.sh/);
+  });
+
+  it("harness.config.schema.json $id references the new repo URL", () => {
+    expect(harnessSchema["$id"]).toBe(
+      "https://raw.githubusercontent.com/ThomasEdwardYorke/cc-triad-relay/main/plugins/harness/schemas/harness.config.schema.json",
+    );
   });
 
   it("no stale `claude-code-harness` reference remains in shipped manifests", () => {
