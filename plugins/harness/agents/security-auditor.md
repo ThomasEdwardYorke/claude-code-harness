@@ -2,7 +2,7 @@
 name: security-auditor
 description: 認証情報漏洩・インジェクション・ファイル権限の包括的監査エージェント
 tools: [Read, Grep, Glob, Bash]
-disallowedTools: [Write, Edit, Task]
+disallowedTools: [Write, Edit, Agent]
 model: opus
 effort: max
 color: red

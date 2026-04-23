@@ -2,7 +2,7 @@
 name: codex-sync
 description: Synchronous wrapper around the Codex companion task runtime. Unlike the upstream codex-rescue agent, this always uses foreground mode so the Bash call blocks until Codex finishes and the full result is returned. Use when you need Codex's output as an actual return value for parallel Agent dispatch, for analysis that must be integrated into a report, etc. — not for fire-and-forget background work.
 tools: [Bash, Read]
-disallowedTools: [Write, Edit, Task]
+disallowedTools: [Write, Edit, Agent]
 model: haiku
 color: cyan
 maxTurns: 10

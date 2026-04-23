@@ -237,12 +237,12 @@ describe("parallel-worktree command の profile 引数伝播", () => {
   });
 });
 
-describe("harness-work command の Task-tool プロンプト materialize", () => {
+describe("harness-work command の Agent-tool プロンプト materialize", () => {
   const content = readCommand("harness-work");
 
-  it("wt:avoid Task-tool 経路の Phase 5.5 記述で literal $PROFILE を残さない", () => {
-    // Skill handoff と同様、Task prompt も materialize が必要。
-    // `/pseudo-coderabbit-loop --local --profile=$PROFILE` のまま Task prompt 文字列で
+  it("wt:avoid Agent-tool 経路の Phase 5.5 記述で literal $PROFILE を残さない", () => {
+    // Skill handoff と同様、Agent prompt (旧称 Task prompt) も materialize が必要。
+    // `/pseudo-coderabbit-loop --local --profile=$PROFILE` のまま Agent prompt 文字列で
     // 渡すと、subagent 側で slot 展開されない (Anthropic 公式の動的置換は $ARGUMENTS のみ)。
     // prompt 組立段階での実値埋込規約が明記されていること。
     expect(content).toMatch(
@@ -2044,5 +2044,294 @@ describe(".coderabbit.yaml — repository-level CodeRabbit config", () => {
 
     const pcrPattern = /\bPCR-\d+\b/;
     expect(coderabbitYamlRaw).not.toMatch(pcrPattern);
+  });
+});
+
+describe("slash command allowed-tools / subagent tools — 公式 tool catalog whitelist guard", () => {
+  // 公式 source (初回 fetch 2026-04-23 via Codex companion + WebFetch 直接照合、
+  // Worker A/B + Reviewer 3 agent 独立検証で一致。catalog 更新時は本コメントと
+  // OFFICIAL_TOOL_NAMES に反映し CHANGELOG.md で source URL を記録):
+  //   - https://code.claude.com/docs/en/tools-reference  (complete 35-tool table)
+  //   - https://code.claude.com/docs/en/slash-commands   (allowed-tools frontmatter spec)
+  //   - https://code.claude.com/docs/en/sub-agents       (tools / disallowedTools frontmatter spec)
+  //
+  // 公式 spec 要点:
+  //   - `allowed-tools` は "space-separated string or YAML list" を受け付ける
+  //     (公式引用: "Accepts a space-separated string or a YAML list.")
+  //   - 公式 catalog に単独 "Task" tool は**存在しない** (tools-reference 表に不在)
+  //   - subagent/task 起動は `Agent` (subagent spawn) + `TaskCreate` / `TaskGet` /
+  //     `TaskList` / `TaskStop` / `TaskUpdate` の個別 tool に分かれる
+  //   - `TaskOutput` は tools-reference で "(Deprecated)" と明記、catalog 掲載継続中
+  //   - `disallowedTools: [Task]` も同じ理由で実質 no-op — subagent spawning を
+  //     block したい場合は `disallowedTools: [Agent]` が正しい
+  //
+  // 更新ポリシー:
+  //   - 公式 docs が新規 tool を追加した場合は OFFICIAL_TOOL_NAMES に追記し、
+  //     根拠 URL を CHANGELOG.md に記録する。
+  //   - "Task" 単独を whitelist に戻すことは禁止 (上記根拠を破壊するため)。
+  //   - MCP 動的 tool (`mcp__<server>__<action>`) は server 登録で動的変化するため
+  //     本 whitelist の静的対象外 (`isMcpDynamicTool` で別扱い、公式 catalog の
+  //     `ListMcpResourcesTool` / `ReadMcpResourceTool` のみ whitelist に含む)。
+  const OFFICIAL_TOOL_NAMES = new Set<string>([
+    // file ops
+    "Read",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    // shell
+    "Bash",
+    "PowerShell",
+    // search
+    "Grep",
+    "Glob",
+    // subagent spawning
+    "Agent",
+    // task / todo management (単独 "Task" は存在しない)
+    "TaskCreate",
+    "TaskGet",
+    "TaskList",
+    "TaskStop",
+    "TaskUpdate",
+    "TaskOutput", // "(Deprecated)" per official tools-reference — 新規使用非推奨
+    "TodoWrite",
+    // web
+    "WebFetch",
+    "WebSearch",
+    // MCP (builtin enumeration — 動的 mcp__* tool は isMcpDynamicTool で別扱い)
+    "ListMcpResourcesTool",
+    "ReadMcpResourceTool",
+    // plan / worktree (EnterWorktree / ExitWorktree は subagents 側非対応)
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "EnterWorktree",
+    "ExitWorktree",
+    // cron / scheduled tasks
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    // agent teams (experimental, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 限定)
+    "SendMessage",
+    "TeamCreate",
+    "TeamDelete",
+    // user interaction
+    "AskUserQuestion",
+    // meta / code intelligence
+    "Skill",
+    "ToolSearch",
+    "Monitor",
+    "LSP",
+  ]);
+
+  // MCP 動的 tool (`mcp__<server>__<action>`) は server 設定で動的変化するため
+  // 静的 whitelist 対象外。公式 docs: https://code.claude.com/docs/en/mcp
+  // server / action 名は hyphen を含む実例あり (例: `mcp__my-server__run-task`)。
+  // 末尾 `$` anchor を付けて `mcp__foo__bar!!!` のような不正 suffix を reject する
+  // (pseudo-CodeRabbit review 2026-04-23 Minor 指摘)。
+  function isMcpDynamicTool(raw: string): boolean {
+    return /^mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+$/.test(raw);
+  }
+
+  // granular permission 指定 (公式 slash-commands の例: `Bash(git add *)` /
+  // `Bash(git commit *)`、permissions docs の `:*` suffix 形式も含む) から
+  // tool 名 prefix を抽出する。空括弧 / ネスト括弧にも対応。
+  function stripGranularSpec(raw: string): string {
+    const parenIdx = raw.indexOf("(");
+    return parenIdx === -1 ? raw : raw.slice(0, parenIdx);
+  }
+
+  // frontmatter の tool list field を公式仕様に従い parse する。
+  // 公式仕様 (slash-commands / sub-agents docs): "space-separated string or YAML list"。
+  //
+  // 対応するフォーマット:
+  //   (1) YAML flow array (quoted):   `["Read", "Bash"]`
+  //   (2) YAML flow array (unquoted): `[Read, Grep, Glob]` / 複数行 `[\n  Read,\n]`
+  //   (3) YAML block array:            複数行の `  - Read` 項目列
+  //   (4) Space-separated string:     `Read Grep Bash`
+  //   (5) CSV string (subagent 例):   `Read, Grep, Glob, Bash`
+  //   (6) Granular 要素含む string:   `Bash(git add *) Bash(git commit *)`
+  //
+  // key 未定義なら null、値が空文字・nil なら空配列、解析不能なら null を返す。
+  //
+  // 実装方針: YAML native parser で frontmatter 全体を parse し、指定 key の値を
+  // look up する。`.test.ts` 内で部分 fm (単一 key/value) を渡すケースも
+  // frontmatter として valid YAML なので同じ経路で動作する。
+  function parseToolListField(fm: string, key: string): string[] | null {
+    let doc: unknown;
+    try {
+      doc = parseYaml(fm);
+    } catch {
+      doc = undefined;
+    }
+    if (doc && typeof doc === "object" && key in (doc as Record<string, unknown>)) {
+      const value = (doc as Record<string, unknown>)[key];
+      if (Array.isArray(value)) return value.map((v) => String(v));
+      if (typeof value === "string") return splitFlatToolList(value);
+      if (value == null) return [];
+      // 公式 slash-commands / sub-agents spec に反する frontmatter 型 (object / number
+      // 等) は silent pass すると guard が偽陽性になるため loud に throw する。
+      // (real CodeRabbit 2026-04-23 inline review L2177 指摘、malformed frontmatter は
+      // CI 停止させる)
+      throw new Error(
+        `frontmatter field '${key}' has invalid type (expected array or space-separated string): ${JSON.stringify(value)}`,
+      );
+    }
+    // parseYaml 失敗 (catch で doc=undefined) or key 不在 → null を返し caller に skip させる。
+    // 以前は key 存在時に空配列を返していたが、malformed YAML を silent に通すため
+    // assertion が常に pass する偽陽性問題があった (pseudo-CodeRabbit review 2026-04-23 Nitpick #2)。
+    // 現在は 2 ケースを厳密に区別: doc が null/undefined or key 未定義 → null (skip)。
+    return null;
+  }
+
+  // 括弧 depth を考慮して space / comma separator で tool 名を展開する。
+  // 例: "Bash(git add *) Bash(git commit *)" → ["Bash(git add *)", "Bash(git commit *)"]
+  //     "Read, Grep, Glob"                   → ["Read", "Grep", "Glob"]
+  function splitFlatToolList(input: string): string[] {
+    const tokens: string[] = [];
+    let depth = 0;
+    let current = "";
+    for (const ch of input) {
+      if (ch === "(") {
+        depth += 1;
+        current += ch;
+      } else if (ch === ")") {
+        depth = Math.max(0, depth - 1);
+        current += ch;
+      } else if ((ch === " " || ch === "\t" || ch === "," || ch === "\n") && depth === 0) {
+        if (current !== "") {
+          tokens.push(current);
+          current = "";
+        }
+      } else {
+        current += ch;
+      }
+    }
+    if (current !== "") tokens.push(current);
+    return tokens.map((t) => t.replace(/^["']|["']$/g, "").trim()).filter((t) => t !== "");
+  }
+
+  // 各 field 共通の「単独 Task 禁止 + whitelist 適合」検査ロジック (DRY)。
+  function assertToolListOfficial(
+    subjectLabel: string,
+    fieldLabel: string,
+    list: string[],
+  ): void {
+    const normalized = list.map(stripGranularSpec);
+    expect(
+      normalized,
+      `${subjectLabel} ${fieldLabel} に単独 'Task' が残っている (公式 catalog 外、修正: Agent + TaskCreate/TaskGet/TaskList/TaskUpdate/TaskStop)`,
+    ).not.toContain("Task");
+    const unknown = normalized.filter(
+      (t) => !OFFICIAL_TOOL_NAMES.has(t) && !isMcpDynamicTool(t),
+    );
+    expect(
+      unknown,
+      `${subjectLabel} ${fieldLabel} に unknown tool: ${unknown.join(", ")}`,
+    ).toEqual([]);
+  }
+
+  it.each(COMMAND_NAMES)(
+    "%s command の allowed-tools が公式 tool catalog 内 (単独 Task 禁止含む)",
+    (name) => {
+      const fm = extractFrontmatter(readCommand(name));
+      const list = parseToolListField(fm, "allowed-tools");
+      // `allowed-tools` は本プロジェクトの coding guidelines で command frontmatter の
+      // 必須 field (plugins/harness/commands/**/*.md: name / description / description-ja
+      // / allowed-tools / argument-hint)。欠落は CI で止める (real CodeRabbit 2026-04-23
+      // inline review L2234 指摘、false negative 防止)。
+      expect(
+        list,
+        `${name} command is missing required 'allowed-tools' frontmatter field (coding guidelines)`,
+      ).not.toBeNull();
+      assertToolListOfficial(`${name} command`, "allowed-tools", list!);
+    },
+  );
+
+  it.each(AGENT_NAMES)(
+    "%s agent の tools が公式 tool catalog 内 (単独 Task 禁止含む)",
+    (name) => {
+      const fm = extractFrontmatter(readAgent(name));
+      const list = parseToolListField(fm, "tools");
+      if (list === null) return;
+      assertToolListOfficial(`${name} agent`, "tools", list);
+    },
+  );
+
+  it.each(AGENT_NAMES)(
+    "%s agent の disallowedTools が公式 tool catalog 内 (単独 Task 禁止含む)",
+    (name) => {
+      const fm = extractFrontmatter(readAgent(name));
+      const list = parseToolListField(fm, "disallowedTools");
+      if (list === null) return;
+      assertToolListOfficial(`${name} agent`, "disallowedTools", list);
+    },
+  );
+
+  // 内部ヘルパーの自己検証 (将来 helper を書き換えた際の回帰 guard)
+  it("stripGranularSpec は granular / 空括弧 / 括弧なしを正しく剥がす", () => {
+    expect(stripGranularSpec("Read")).toBe("Read");
+    expect(stripGranularSpec("Bash(git add *)")).toBe("Bash");
+    expect(stripGranularSpec("Bash(git:*)")).toBe("Bash");
+    expect(stripGranularSpec("Bash()")).toBe("Bash");
+    expect(stripGranularSpec("Bash(git (nested))")).toBe("Bash");
+  });
+
+  it("parseToolListField は不正型 (object / number) を silent pass せず throw する", () => {
+    expect(() =>
+      parseToolListField("allowed-tools: {foo: bar}", "allowed-tools"),
+    ).toThrow(/invalid type/);
+    expect(() => parseToolListField("tools: 123", "tools")).toThrow(
+      /invalid type/,
+    );
+  });
+
+  it("parseToolListField は 5 公式書式 (array / CSV / space / block / granular) を全て parse 可", () => {
+    // (1) JSON-style array (quoted)
+    expect(
+      parseToolListField('allowed-tools: ["Read", "Bash"]', "allowed-tools"),
+    ).toEqual(["Read", "Bash"]);
+    // (2) YAML flow array (unquoted)
+    expect(parseToolListField("tools: [Read, Grep, Glob]", "tools")).toEqual([
+      "Read",
+      "Grep",
+      "Glob",
+    ]);
+    // (3) 複数行 flow array
+    expect(
+      parseToolListField("tools: [\n  Read,\n  Grep,\n]", "tools"),
+    ).toEqual(["Read", "Grep"]);
+    // (4) 空配列
+    expect(parseToolListField("tools: []", "tools")).toEqual([]);
+    // (5) 公式 allowed-tools の space-separated string 書式
+    expect(
+      parseToolListField("allowed-tools: Read Grep", "allowed-tools"),
+    ).toEqual(["Read", "Grep"]);
+    // (6) 公式 slash-commands 実例の granular 混在
+    expect(
+      parseToolListField(
+        "allowed-tools: Bash(git add *) Bash(git commit *) Bash(git status *)",
+        "allowed-tools",
+      ),
+    ).toEqual(["Bash(git add *)", "Bash(git commit *)", "Bash(git status *)"]);
+    // (7) 公式 sub-agents ドキュメントの CSV 書式 (tools: Read, Grep, Glob)
+    expect(parseToolListField("tools: Read, Grep, Glob", "tools")).toEqual([
+      "Read",
+      "Grep",
+      "Glob",
+    ]);
+    // (8) YAML block style (複数行、ハイフン項目)
+    expect(
+      parseToolListField("tools:\n  - Read\n  - Grep\n  - Glob", "tools"),
+    ).toEqual(["Read", "Grep", "Glob"]);
+    // (9) key 未定義
+    expect(parseToolListField("other: value", "allowed-tools")).toBeNull();
+  });
+
+  it("isMcpDynamicTool は mcp__ 動的 tool のみを許容する", () => {
+    expect(isMcpDynamicTool("mcp__github__create_pr")).toBe(true);
+    expect(isMcpDynamicTool("mcp__my-server__run-task")).toBe(true);
+    expect(isMcpDynamicTool("Read")).toBe(false);
+    expect(isMcpDynamicTool("Task")).toBe(false);
+    expect(isMcpDynamicTool("mcp__")).toBe(false); // 空 body は reject
+    expect(isMcpDynamicTool("mcp__noaction__")).toBe(false); // trailing 区切りだけは reject
   });
 });

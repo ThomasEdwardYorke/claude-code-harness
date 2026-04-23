@@ -2,7 +2,7 @@
 name: harness-plan
 description: "Unified planning skill for Harness v3. Handles task planning, Plans.md management, progress sync, and development principles. Use when user mentions: create a plan, add tasks, update Plans.md, sync status, check progress, show principles, /harness-plan, /plan-with-agent, /sync-status, /principles. Do NOT load for: implementation, code review, or release tasks."
 description-ja: "Harness v3 統合プランニングスキル。タスク計画・Plans.md管理・進捗同期・開発原則表示を担当。以下のフレーズで起動: 計画を作る、タスクを追加、Plans.md更新、同期確認、進捗確認、原則を表示、/harness-plan、/plan-with-agent、/sync-status、/principles。実装・レビュー・リリースには使わない。"
-allowed-tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebSearch", "Task"]
+allowed-tools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "WebSearch", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
 argument-hint: "[create|sync|principles]"
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: parallel-worktree
-description: "複数サブタスクを git worktree 並列で開発するオーケストレータスキル (Model A: 単一 Claude + Task subagent)。coordinator が worktree 生成 / worker dispatch / 担当表同期 / マージ順序 / コンフリクト解消を orchestrate する。各 worker は TDD + Codex Phase 4-5 を実行し、Phase 5.5-7 は coordinator が取りまとめて実行する。単一リポジトリ (worktree なし) でもサブタスク数 1 の縮退モードとして利用可。Use when implementing 2+ independent sub-tasks in parallel with maximum quality."
-allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task"]
+description: "複数サブタスクを git worktree 並列で開発するオーケストレータスキル (Model A: 単一 Claude + Agent-tool subagent)。coordinator が worktree 生成 / worker dispatch / 担当表同期 / マージ順序 / コンフリクト解消を orchestrate する。各 worker は TDD + Codex Phase 4-5 を実行し、Phase 5.5-7 は coordinator が取りまとめて実行する。単一リポジトリ (worktree なし) でもサブタスク数 1 の縮退モードとして利用可。Use when implementing 2+ independent sub-tasks in parallel with maximum quality."
+allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
 argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N] [--profile=chill|assertive|strict] [--dry-run] [--no-commit]"
 ---
 
@@ -9,14 +9,14 @@ argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N
 
 ## 並列実行モデルの説明
 
-**本スキルは Model A (単一 Claude + Task subagent) で動作する。**
+**本スキルは Model A (単一 Claude + Agent-tool subagent) で動作する。**
 
 - **coordinator** (本スキルを実行中の Claude セッション) が全体を管理
-- **worker** (`harness:worker` agent) は coordinator から Task tool で dispatch される subagent
+- **worker** (`harness:worker` agent) は coordinator から Agent tool で dispatch される subagent (公式 tools-reference: `Agent` tool、旧称 `Task` は現行 catalog 未掲載)
 - 各 worker は独立した worktree ディレクトリで作業するが、coordinator の context 内で動作する
-- worker は `tools: [Read, Write, Edit, Bash, Grep, Glob]` / `disallowedTools: [Task]` のため:
+- worker は `tools: [Read, Write, Edit, Bash, Grep, Glob]` / `disallowedTools: [Agent]` のため:
   - Skill tool なし → `/pseudo-coderabbit-loop` 呼出不可
-  - Task tool 禁止 → 子 agent 起動不可
+  - Agent tool 禁止 → 子 agent 起動不可
 - **Phase 5.5 (疑似 CodeRabbit) / Phase 6 (本物 CodeRabbit) / Phase 7 (Codex セカンドオピニオン) は coordinator が worker 完了後に実行する**
 
 ### Model B (将来移行予定)
@@ -383,7 +383,7 @@ scripts/parallel-sessions.sh stop crud-projects
 | 各 worker の context | 親 context 共有要約 | **独立 1M context** |
 | 各 worker の harness | 限定 tools | **全 harness** (symlink 経由) |
 | Skill tool | 不可 | **可能** |
-| Task tool | 禁止 (OOM) | **可能** (top-level) |
+| Agent tool | 禁止 (OOM) | **可能** (top-level) |
 | 品質ゲート | coordinator 依存 | **各 worker が自律実行** |
 | MCP | 不可 | **可能** |
 
