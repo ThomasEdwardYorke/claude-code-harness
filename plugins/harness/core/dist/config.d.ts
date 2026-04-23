@@ -191,6 +191,34 @@ export interface ToolingConfig {
  */
 export type ReleaseStrategy = "two-branch" | "three-branch";
 /**
+ * PostToolUseFailure hook configuration.
+ *
+ * 公式仕様 (https://code.claude.com/docs/en/hooks): tool が失敗した (exception /
+ * non-zero exit / interrupt) 時に PostToolUse とは別経路で発火する non-blocking
+ * observability hook。`additionalContext` に失敗内容 + 簡易 corrective hint を
+ * 載せて Claude が次 turn で修復判断する材料を増やす。
+ *
+ * `correctiveHints: true` (default) で harness built-in の一般的 error pattern
+ * (permission denied / no such file / command not found / signal abort /
+ * timeout / network unreachable) にマッチする軽量 hint を付与する。
+ *
+ * `enabled: false` または config malformed → silent skip で approve (fail-open)。
+ */
+export interface PostToolUseFailureConfig {
+    /** Hook 全体の on/off switch。false にすると additionalContext 未設定で approve 返す。 */
+    enabled: boolean;
+    /**
+     * error 文字列の最大長。これを超えたぶんは truncate + marker。
+     * 256-16384 の範囲、default 1024。
+     */
+    maxErrorLength: number;
+    /**
+     * true の時、既知の error pattern にマッチする corrective hint を
+     * additionalContext 末尾に自動付与する。false で無効 (raw error のみ inject)。
+     */
+    correctiveHints: boolean;
+}
+/**
  * UserPromptSubmit hook configuration.
  *
  * Designed as the harness "Global plugin → Local project rules bridge":
@@ -274,6 +302,7 @@ export interface HarnessConfig {
     tooling: ToolingConfig;
     release: ReleaseConfig;
     userPromptSubmit: UserPromptSubmitConfig;
+    postToolUseFailure: PostToolUseFailureConfig;
 }
 export declare const DEFAULT_CONFIG: HarnessConfig;
 /**

@@ -1,0 +1,140 @@
+/**
+ * hooks/post-tool-use-failure.ts
+ *
+ * PostToolUseFailure hook handler.
+ *
+ * ## 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23)
+ *
+ * - **Trigger**: tool の実行が失敗した時 (exception / non-zero exit / interrupt)
+ *   PostToolUse と mutually exclusive (成功時は PostToolUse、失敗時は本 hook)
+ * - **Payload**: `tool_name` / `tool_input` / `tool_use_id` / `error` (string) /
+ *   `is_interrupt` (optional) + 共通 (session_id / transcript_path / cwd /
+ *   hook_event_name / permission_mode)
+ * - **Output**:
+ *   - exit 0 + JSON stdout → `{ decision?, reason?, hookSpecificOutput }` を parse
+ *   - exit 0 + `hookSpecificOutput.additionalContext` → Claude context 注入
+ *   - `decision: "block"` + reason → tool failure を明示 block (本 handler は使わない)
+ *   - その他 non-zero → non-blocking error (実行継続)
+ * - **matcher**: tool name base (PostToolUse と同じ)、本 harness は全 tool 登録
+ *
+ * ## 本 handler の責務
+ *
+ * tool 失敗時に診断情報 + 既知 error pattern の corrective hint を
+ * `hookSpecificOutput.additionalContext` へ inject し、Claude が次 turn で
+ * 修復判断する材料を増やす observability hook。
+ *
+ * - **Fail-open**: config 読込失敗 / error 文字列空 → silent skip で approve
+ * - **Truncate**: error 文字列が `maxErrorLength` 超なら truncate + marker
+ * - **Built-in hints (correctiveHints: true)**: 6 pattern (permission denied /
+ *   no such file / command not found / signal abort / timeout / connection refused)
+ * - **non-blocking**: 必ず `decision: "approve"` を返す (failure そのものを
+ *   block するのは設計外 — 本 hook は観察 + 助言に徹する)
+ *
+ * ## 関連 doc
+ * - docs/maintainer/research-anthropic-official-2026-04-22.md (hook 仕様調査)
+ * - CHANGELOG.md (feature history)
+ */
+import { loadConfigSafe } from "../config.js";
+function resolveConfig(projectRoot) {
+    try {
+        const config = loadConfigSafe(projectRoot);
+        const raw = config.postToolUseFailure;
+        const ptuf = typeof raw === "object" && raw !== null
+            ? raw
+            : {};
+        const rawMax = ptuf["maxErrorLength"];
+        return {
+            enabled: typeof ptuf["enabled"] === "boolean"
+                ? ptuf["enabled"]
+                : true,
+            maxErrorLength: typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax >= 256
+                ? Math.min(rawMax, 16384)
+                : 1024,
+            correctiveHints: typeof ptuf["correctiveHints"] === "boolean"
+                ? ptuf["correctiveHints"]
+                : true,
+        };
+    }
+    catch {
+        // Fail-open: hook が完全に沈黙しないよう、defaults で動作継続
+        return { enabled: true, maxErrorLength: 1024, correctiveHints: true };
+    }
+}
+// ============================================================
+// Corrective hint patterns
+//
+// 公式 docs で use case として挙げられた "auto-retry on specific error
+// patterns" を最小限サポート。patterns は overlap しないよう慎重に
+// 選択し、false positive を抑える。
+// ============================================================
+function formatHint(error) {
+    if (/permission\s+denied/i.test(error)) {
+        return "hint: check file permissions (chmod / chown) or rerun with appropriate privileges";
+    }
+    if (/no\s+such\s+file\s+or\s+directory/i.test(error)) {
+        return "hint: verify the path; list the parent directory (ls) or check for typos";
+    }
+    if (/command\s+not\s+found/i.test(error)) {
+        return "hint: the command is not installed or not on PATH; install or use an alternative";
+    }
+    // Signal-induced abort: 128+N (shell convention) — 130 (SIGINT), 137 (SIGKILL / OOM), 143 (SIGTERM)
+    if (/\bexit\s+(?:status|code)\s+(?:130|137|143)\b/i.test(error)) {
+        return "hint: signal-based abort (interrupt / OOM / termination); inspect stderr and consider retry";
+    }
+    if (/\btimed\s+out\b|\bdeadline\s+exceeded\b/i.test(error)) {
+        return "hint: operation timed out; raise the timeout or split into smaller steps";
+    }
+    if (/\bconnection\s+refused\b|\bnetwork\s+unreachable\b|\bdns\s+resolution\s+failed\b/i.test(error)) {
+        return "hint: network endpoint unreachable; verify URL / port / firewall / VPN / DNS";
+    }
+    return null;
+}
+// ============================================================
+// Handler
+// ============================================================
+/**
+ * PostToolUseFailure hook の本体実装。
+ *
+ * @param input  Claude Code から渡される hook payload
+ * @param options.projectRoot  config 読み込みの起点。未指定なら `input.cwd ?? process.cwd()`
+ *
+ * @returns 必ず `decision: "approve"` を返す (observability hook, fail-open)。
+ *          診断情報 + hint が生成できるとき `additionalContext` を含む。
+ */
+export async function handlePostToolUseFailure(input, options) {
+    const projectRoot = options?.projectRoot ?? input.cwd ?? process.cwd();
+    const cfg = resolveConfig(projectRoot);
+    if (!cfg.enabled) {
+        return { decision: "approve" };
+    }
+    const toolName = typeof input.tool_name === "string" && input.tool_name.length > 0
+        ? input.tool_name
+        : "unknown";
+    const rawError = typeof input.error === "string" ? input.error : "";
+    if (rawError.length === 0) {
+        // No diagnostic available — fail-open no-op
+        return { decision: "approve" };
+    }
+    const truncatedError = rawError.length > cfg.maxErrorLength
+        ? rawError.slice(0, cfg.maxErrorLength) +
+            `\n[harness] error truncated at ${cfg.maxErrorLength} chars`
+        : rawError;
+    const lines = [
+        `[harness PostToolUseFailure] tool=${toolName}`,
+        `error: ${truncatedError}`,
+    ];
+    if (input.is_interrupt === true) {
+        lines.push("(interrupted)");
+    }
+    if (cfg.correctiveHints) {
+        const hint = formatHint(rawError);
+        if (hint !== null) {
+            lines.push(hint);
+        }
+    }
+    return {
+        decision: "approve",
+        additionalContext: lines.join("\n"),
+    };
+}
+//# sourceMappingURL=post-tool-use-failure.js.map
