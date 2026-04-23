@@ -18,13 +18,18 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   mkdtempSync,
+  readFileSync,
   writeFileSync,
   rmSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 import { handlePostToolUseFailure } from "../hooks/post-tool-use-failure.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const tempDirs: string[] = [];
 
@@ -280,5 +285,34 @@ describe("PostToolUseFailure — truncation", () => {
     // 10 < 256 で fallback、100 文字は 1024 以下なので truncate 発生しない
     expect(result.additionalContext).toContain("a".repeat(100));
     expect(result.additionalContext).not.toContain("truncated");
+  });
+});
+
+// ============================================================
+// Shipped-spec generality invariant (same pattern as user-prompt-submit.test.ts)
+//
+// harness-plugin-dev.md R2 rule は shipped hook source file
+// (plugins/harness/core/src/hooks/*.ts) に内部トラッカー ID
+// (`PR #N` / `Issue #N`) を書かないことを要求する。本 assertion は
+// post-tool-use-failure.ts 限定のローカルガード。plugin 全体への拡張
+// (generality.test.ts B-10) は future work。
+// ============================================================
+describe("post-tool-use-failure.ts — shipped-spec generality", () => {
+  it("ソース file に内部トラッカー ID (PR #N / Issue #N) を含まない", () => {
+    const handlerPath = resolve(
+      __dirname,
+      "../hooks/post-tool-use-failure.ts",
+    );
+    const src = readFileSync(handlerPath, "utf-8");
+
+    const matches = src.match(/\b(PR|Issue)\s*#\d+/g);
+    if (matches && matches.length > 0) {
+      throw new Error(
+        `post-tool-use-failure.ts contains internal tracker IDs: ${matches.join(", ")}. ` +
+          `Replace with generic wording (e.g. "internal security review") ` +
+          `and move PR/Issue references to CHANGELOG.md or commit messages.`,
+      );
+    }
+    expect(matches).toBeNull();
   });
 });

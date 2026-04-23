@@ -137,13 +137,13 @@ function formatHint(error: string): string | null {
 }
 
 // ============================================================
-// Sanitization (Codex security review Issue #2 — error injection)
+// Sanitization (internal security review — error injection)
 //
 // 問題: raw `error` / `tool_name` 文字列が `additionalContext` へ unsanitized
 // で inject されると、attacker-controlled tool (e.g. 任意 Bash script) の
 // 出力で Claude context を混乱させることができる:
-//   - Multi-line error で `===== END HARNESS CONTEXT =====` 相当の fence
-//     boundary を偽造し、以降の prompt injection につなげる
+//   - Multi-line error で fence boundary 類似 pattern を偽造し、以降の
+//     prompt injection につなげる
 //   - ANSI escape sequence / control char で terminal rendering を破壊
 //   - Secrets (API key / password) が log に inject されると model-visible
 //
@@ -152,7 +152,7 @@ function formatHint(error: string): string | null {
 //   2. その他 control char (TAB 以外の C0 + DEL) を `\x{NN}` escape
 //   3. tool_name は identifier 属性なので厳格: `[A-Za-z0-9_-]` 以外は `?`
 //
-// 関連: user-prompt-submit.ts の newline sanitize (CodeRabbit PR #13 指摘)
+// 関連: user-prompt-submit.ts の newline sanitize (internal security review)
 // ============================================================
 
 function sanitizeErrorLine(s: string): string {
