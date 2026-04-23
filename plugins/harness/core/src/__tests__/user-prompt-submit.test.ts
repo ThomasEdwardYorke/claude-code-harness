@@ -21,11 +21,16 @@ import {
   mkdtempSync,
   writeFileSync,
   rmSync,
+  readFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
 import { handleUserPromptSubmit } from "../hooks/user-prompt-submit.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 const tempDirs: string[] = [];
 
@@ -307,5 +312,40 @@ describe("UserPromptSubmit handler — input contract", () => {
       { projectRoot: root },
     );
     expect(result.additionalContext).toContain("ROOT-X");
+  });
+});
+
+// ============================================================
+// Shipped-spec generality invariant
+//
+// 理由: harness-plugin-dev.md R2 rule は shipped hook source file
+// (plugins/harness/core/src/hooks/*.ts) に内部トラッカー ID
+// (`PR #N` / `Issue #N`) を書かないことを要求する。
+// commit message / CHANGELOG / docs/maintainer/ には書いてよいが、
+// shipped code comment には書かない — git blame で十分辿れる。
+//
+// 本 assertion は user-prompt-submit.ts に限定したローカルガード。
+// plugin 全体への拡張 (generality.test.ts B-10) は follow-up PR で
+// 扱う (backlog #5e)。本 PR の変更範囲を最小に保つため。
+// ============================================================
+describe("user-prompt-submit.ts — shipped-spec generality", () => {
+  it("ソース file に内部トラッカー ID (PR #N / Issue #N) を含まない", () => {
+    const handlerPath = resolve(
+      __dirname,
+      "../hooks/user-prompt-submit.ts",
+    );
+    const src = readFileSync(handlerPath, "utf-8");
+
+    // `PR #13` / `Issue #5` など、shipped comment に埋めるべきでない
+    // 開発時トラッカー ID を検出する。
+    const matches = src.match(/\b(PR|Issue)\s*#\d+/g);
+    if (matches && matches.length > 0) {
+      throw new Error(
+        `user-prompt-submit.ts contains internal tracker IDs: ${matches.join(", ")}. ` +
+          `Replace with generic wording (e.g. "internal security review") ` +
+          `and move PR/Issue references to CHANGELOG.md or commit messages.`,
+      );
+    }
+    expect(matches).toBeNull();
   });
 });

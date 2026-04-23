@@ -133,7 +133,7 @@ export async function handleUserPromptSubmit(
 
     const fullPath = resolve(projectRoot, relPath);
 
-    // Codex security review (PR #14) — Issue #1 Symlink Escape:
+    // Symlink escape hardening (internal security review):
     //   lexical path confinement (startsWith) だけでは `readFileSync()` が
     //   symlink を follow するため、repo-controlled symlink で任意 file
     //   (例: `/etc/passwd` への symlink) を読まれるリスクがある。
@@ -165,7 +165,7 @@ export async function handleUserPromptSubmit(
       continue;
     }
 
-    // Codex review Issue #5 File Read Safety Gaps:
+    // File read safety (internal code review):
     //   - `isFile()` 未 gate: FIFO / socket / char device で `readFileSync`
     //     が block する可能性 → `statSync().isFile()` で通常 file のみ許可
     //   - byte vs char: `string.length` は UTF-16 code unit count、
@@ -203,8 +203,8 @@ export async function handleUserPromptSubmit(
       continue;
     }
 
-    // CodeRabbit security review (PR #13): newline sanitize で fake
-    // section-boundary injection を防ぐ。project-local rule file に
+    // Newline sanitization (internal security review): newline sanitize で
+    // fake section-boundary injection を防ぐ。project-local rule file に
     // `===== END HARNESS CONTEXT =====` のような fence marker を仕込まれた
     // 場合、元 file の `\n` が preserved だと fence が機能せず Claude の
     // context 解釈に attacker-controlled boundary を作れる。`\r\n` / `\n`
@@ -213,7 +213,7 @@ export async function handleUserPromptSubmit(
     // security を優先する strict 防御。content 内容は意味的に残る。
     const content = rawContent.replace(/\r\n|[\n\r]/g, "\\n");
 
-    // Byte-based size cap (Codex review Issue #5): string.length は UTF-16
+    // Byte-based size cap (internal code review): string.length は UTF-16
     // code unit 数、`maxTotalBytes` は byte 意味。Buffer.byteLength で
     // UTF-8 encode 後の byte 数を使う。slice 時も byte 境界で safe に cut。
     const contentBytes = Buffer.byteLength(content, "utf-8");
