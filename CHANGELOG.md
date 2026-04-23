@@ -5,6 +5,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-23
+
+### Fixed
+
+- **plugin.json manifest `hooks` field duplication — Duplicate hooks file detected (v0.3.2 regression)** — v0.3.2 `plugins/harness/.claude-plugin/plugin.json` explicitly declared `"hooks": "./hooks/hooks.json"`, but Claude Code auto-loads `hooks/hooks.json` by convention (spec: https://code.claude.com/docs/en/plugins-reference). The explicit reference triggered a runtime `Duplicate hooks file detected: ./hooks/hooks.json resolves to already-loaded file` error that blocked **all 14 hook events** (UserPromptSubmit / PostToolUseFailure / WorktreeCreate blocking protocol / WorktreeRemove / PreToolUse / PostToolUse / PermissionRequest / SessionStart / SessionEnd / PreCompact / SubagentStop / TaskCreated / Stop / TaskCompleted) from loading — the plugin was effectively silent for every project that upgraded to v0.3.2. `manifest.hooks` is reserved for *additional* hook files beyond the auto-loaded standard path; the standard `hooks/hooks.json` must be omitted from the manifest to avoid the duplicate detection. The field is now removed. Content-integrity test that previously enforced the bug (`it("hooks フィールドで hooks.json を指している", () => expect(pluginJson["hooks"]).toBe("./hooks/hooks.json"))`) is flipped to a regression guard (`hooks field が auto-load standard path (./hooks/hooks.json) を参照しない`) that rejects future reintroduction of the auto-load-path duplicate while still permitting legitimate future additional hook file references via the same field. No other shipped behavior changes; existing hook handlers remain intact and resume working after upgrade.
+
 ## [0.3.2] - 2026-04-23
 
 ### Added
@@ -98,8 +104,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.2...HEAD
-[0.3.2]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.1...v0.3.2
+[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.2
 [0.3.1]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.1
 [0.3.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.2.0
