@@ -163,7 +163,7 @@ describe("UserPromptSubmit handler — context injection", () => {
     expect(result.additionalContext).not.toContain("rules/missing.md");
   });
 
-  it("fenceContext: true (default) → fence marker で囲まれる", async () => {
+  it("fenceContext: true (default) → per-request nonce 付き fence marker で囲まれる", async () => {
     const root = makeTempProject({
       files: { "x.md": "X" },
       harnessConfig: {
@@ -171,8 +171,39 @@ describe("UserPromptSubmit handler — context injection", () => {
       },
     });
     const result = await callHandler(root);
-    expect(result.additionalContext).toMatch(/^===== HARNESS PROJECT-LOCAL CONTEXT =====/);
-    expect(result.additionalContext).toMatch(/===== END HARNESS CONTEXT =====$/);
+    // 12 hex 文字の nonce (48-bit entropy) で spoofing 困難
+    expect(result.additionalContext).toMatch(
+      /^===== HARNESS PROJECT-LOCAL CONTEXT [a-f0-9]{12} =====\n/,
+    );
+    expect(result.additionalContext).toMatch(
+      /\n===== END HARNESS CONTEXT [a-f0-9]{12} =====$/,
+    );
+    // open / close fence は同一 nonce (request scope で整合)
+    const openMatch = result.additionalContext!.match(
+      /^===== HARNESS PROJECT-LOCAL CONTEXT ([a-f0-9]{12}) =====/,
+    );
+    const closeMatch = result.additionalContext!.match(
+      /===== END HARNESS CONTEXT ([a-f0-9]{12}) =====$/,
+    );
+    expect(openMatch?.[1]).toBeDefined();
+    expect(openMatch?.[1]).toBe(closeMatch?.[1]);
+  });
+
+  it("fence nonce は 2 回連続 invocation で異なる (per-request randomness)", async () => {
+    const root = makeTempProject({
+      files: { "x.md": "X" },
+      harnessConfig: {
+        userPromptSubmit: { contextFiles: ["x.md"] },
+      },
+    });
+    const r1 = await callHandler(root);
+    const r2 = await callHandler(root);
+    const nonceRe = /===== HARNESS PROJECT-LOCAL CONTEXT ([a-f0-9]{12}) =====/;
+    const n1 = r1.additionalContext!.match(nonceRe)?.[1];
+    const n2 = r2.additionalContext!.match(nonceRe)?.[1];
+    expect(n1).toBeDefined();
+    expect(n2).toBeDefined();
+    expect(n1).not.toBe(n2);
   });
 
   it("fenceContext: false → fence marker なし", async () => {
@@ -189,7 +220,7 @@ describe("UserPromptSubmit handler — context injection", () => {
 });
 
 describe("UserPromptSubmit handler — size cap", () => {
-  it("maxTotalBytes 超過分は truncate + marker", async () => {
+  it("maxTotalBytes 超過分は nonce 付き truncate marker で告知", async () => {
     const big = "X".repeat(2000);
     const root = makeTempProject({
       files: { "big.md": big },
@@ -203,9 +234,12 @@ describe("UserPromptSubmit handler — size cap", () => {
     });
     const result = await callHandler(root);
     expect(result.additionalContext).toBeDefined();
-    expect(result.additionalContext).toContain("[harness] context truncated at 512 bytes");
+    // truncation marker も nonce 付き (fake truncate 告知 injection 防御)
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] context truncated at 512 bytes/,
+    );
     // header (`--- big.md ---\n`) + slice ≤ 512 bytes (handler 内 totalBytes 計算)、
-    // 加えて truncation marker `\n\n[harness] context truncated at N bytes` (~42 chars)。
+    // 加えて truncation marker `\n\n[harness <nonce>] context truncated at N bytes` (~56 chars)。
     // marker 自体は cap 計算外 (可読性優先) なので cap + 100 chars 程度の余裕で評価。
     expect(result.additionalContext!.length).toBeLessThan(512 + 100);
   });
@@ -220,7 +254,9 @@ describe("UserPromptSubmit handler — size cap", () => {
     });
     const result = await callHandler(root);
     expect(result.additionalContext).toBeDefined();
-    expect(result.additionalContext).toContain("[harness] context truncated at 16384 bytes");
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] context truncated at 16384 bytes/,
+    );
   });
 
   it("malformed maxTotalBytes (string) → default が適用される", async () => {
@@ -236,7 +272,33 @@ describe("UserPromptSubmit handler — size cap", () => {
     });
     const result = await callHandler(root);
     // default fallback (16 KiB) で truncate
-    expect(result.additionalContext).toContain("[harness] context truncated at 16384 bytes");
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] context truncated at 16384 bytes/,
+    );
+  });
+
+  it("fence + truncation marker が同一 nonce を共有 (request 整合)", async () => {
+    const big = "Z".repeat(30000);
+    const root = makeTempProject({
+      files: { "big.md": big },
+      harnessConfig: {
+        userPromptSubmit: { contextFiles: ["big.md"] },
+        // fenceContext default true
+      },
+    });
+    const result = await callHandler(root);
+    const openNonce = result.additionalContext!.match(
+      /===== HARNESS PROJECT-LOCAL CONTEXT ([a-f0-9]{12}) =====/,
+    )?.[1];
+    const truncNonce = result.additionalContext!.match(
+      /\[harness ([a-f0-9]{12})\] context truncated/,
+    )?.[1];
+    const closeNonce = result.additionalContext!.match(
+      /===== END HARNESS CONTEXT ([a-f0-9]{12}) =====/,
+    )?.[1];
+    expect(openNonce).toBeDefined();
+    expect(openNonce).toBe(truncNonce);
+    expect(openNonce).toBe(closeNonce);
   });
 });
 

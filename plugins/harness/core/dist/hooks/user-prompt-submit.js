@@ -27,15 +27,20 @@
  *   (decision: "approve" + additionalContext 未設定)
  * - **Path-traversal guard**: `..` 含む or absolute path は reject (silently skip)
  * - **Size cap**: `maxTotalBytes` (default 16 KiB) を超えた分は truncate
- *   + 末尾 marker `[harness] context truncated at N bytes`
- * - **Fence wrap**: `fenceContext: true` (default) で
- *   `===== HARNESS PROJECT-LOCAL CONTEXT =====` / `===== END HARNESS CONTEXT =====`
- *   marker で囲む (Claude / 読み手が harness 由来コンテンツと識別可能)
+ *   + 末尾 marker `[harness <nonce>] context truncated at N bytes`
+ * - **Fence wrap + per-request nonce**: `fenceContext: true` (default) で
+ *   `===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` /
+ *   `===== END HARNESS CONTEXT <nonce> =====` marker で囲む。
+ *   nonce は 12 hex 文字 (48-bit entropy) を request ごとに生成し、
+ *   open / close / truncation marker で共有する。攻撃者は次回 nonce を予測
+ *   できないため、content 内に埋め込んだ fake fence marker / fake truncate
+ *   告知 では context boundary spoofing が成立しない。
  *
  * ## 関連 doc
  * - docs/maintainer/research-anthropic-official-2026-04-22.md (公式 hook 仕様調査)
  * - CHANGELOG.md (feature history)
  */
+import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 import { loadConfigSafe } from "../config.js";
@@ -166,12 +171,14 @@ export async function handleUserPromptSubmit(input, options) {
         }
         // Newline sanitization (internal security review): newline sanitize で
         // fake section-boundary injection を防ぐ。project-local rule file に
-        // `===== END HARNESS CONTEXT =====` のような fence marker を仕込まれた
-        // 場合、元 file の `\n` が preserved だと fence が機能せず Claude の
-        // context 解釈に attacker-controlled boundary を作れる。`\r\n` / `\n`
-        // / `\r` を 2 文字 literal `\\n` に置換することで、fence marker が
-        // 独立行として現れる余地を排除する。readability は低下するが、
-        // security を優先する strict 防御。content 内容は意味的に残る。
+        // fence marker 類似 pattern を仕込まれた場合、元 file の `\n` が
+        // preserved だと fence が機能せず Claude の context 解釈に
+        // attacker-controlled boundary を作れる。`\r\n` / `\n` / `\r` を
+        // 2 文字 literal `\\n` に置換することで、fence marker が独立行として
+        // 現れる余地を排除する。加えて open / close fence と truncation marker
+        // に per-request nonce を付与することで、literal fence 混入による
+        // spoofing も無効化する (外側レイヤで hardening)。content 内容は
+        // 意味的に残り、readability はわずかに低下する。
         const content = rawContent.replace(/\r\n|[\n\r]/g, "\\n");
         // Byte-based size cap (internal code review): string.length は UTF-16
         // code unit 数、`maxTotalBytes` は byte 意味。Buffer.byteLength で
@@ -211,12 +218,20 @@ export async function handleUserPromptSubmit(input, options) {
     if (sections.length === 0) {
         return { decision: "approve" };
     }
+    // Per-request nonce (internal security review — fence spoofing & fake
+    // truncate marker injection 対策):
+    //   content 内に `===== END HARNESS CONTEXT =====` 等の literal fence が
+    //   埋め込まれていても、attacker は次回 nonce を予測できないため、Claude
+    //   が見る open / close fence とは別 nonce となり spoofing が成立しない。
+    //   同じ nonce を truncation marker にも付与し、fake truncate 告知による
+    //   misinformation を防ぐ。12 hex 文字 = 48-bit entropy (衝突確率 1/2^48)。
+    const nonce = randomBytes(6).toString("hex");
     let body = sections.join("\n\n");
     if (truncated) {
-        body += `\n\n[harness] context truncated at ${maxTotalBytes} bytes`;
+        body += `\n\n[harness ${nonce}] context truncated at ${maxTotalBytes} bytes`;
     }
     const additionalContext = fenceContext
-        ? `===== HARNESS PROJECT-LOCAL CONTEXT =====\n${body}\n===== END HARNESS CONTEXT =====`
+        ? `===== HARNESS PROJECT-LOCAL CONTEXT ${nonce} =====\n${body}\n===== END HARNESS CONTEXT ${nonce} =====`
         : body;
     return { decision: "approve", additionalContext };
 }

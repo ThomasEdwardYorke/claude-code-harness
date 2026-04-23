@@ -217,10 +217,14 @@ export interface UserPromptSubmitConfig {
      */
     maxTotalBytes: number;
     /**
-     * When true, the injected context block is wrapped in fence markers
-     * (`===== HARNESS PROJECT-LOCAL CONTEXT =====` / `===== END HARNESS CONTEXT =====`)
+     * When true, the injected context block is wrapped in fence markers with
+     * a per-request nonce (12 hex chars, 48-bit entropy):
+     * `===== HARNESS PROJECT-LOCAL CONTEXT <nonce> =====` /
+     * `===== END HARNESS CONTEXT <nonce> =====`
      * so the user / reader can attribute the content to the harness rather
-     * than mistaking it for their own prompt.
+     * than mistaking it for their own prompt. The nonce prevents context
+     * boundary spoofing by literal fence markers embedded in rule file
+     * content (attackers cannot predict the per-request value).
      */
     fenceContext: boolean;
 }
