@@ -154,6 +154,13 @@ MIT. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
    unpacked again in `index.ts`. Current behaviour is correct and
    tested, but the layering is fragile. Avoid adding new behaviour to
    that path until a refactor is completed in a future release.
+5. **Author metadata note**: commits authored prior to the v0.3.0
+   release reference the maintainer's personal email in the `author`
+   field. From v0.3.0 onward the repository uses the GitHub noreply
+   alias (`<userid>+<handle>@users.noreply.github.com`) so no further
+   personal email is introduced. History rewriting was deliberately
+   avoided to preserve commit SHA stability across already-published
+   releases and CHANGELOG references.
 
 Maintainer notes and implementation logs are kept under
 `docs/maintainer/` (excluded from marketplace distribution). See
