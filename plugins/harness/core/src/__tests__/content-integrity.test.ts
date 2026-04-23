@@ -1292,19 +1292,19 @@ describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
     expect(readme).toMatch(/claude plugin install harness@cc-triad-relay\b/);
   });
 
-  it("README marketplace add uses the full owner/repo path", () => {
-    // Tight match: owner must be `ThomasEdwardYorke` so a fork / owner drift fails here.
-    expect(readme).toMatch(
-      /claude plugin marketplace add ThomasEdwardYorke\/cc-triad-relay\b/,
-    );
+  it("README marketplace add uses the new repo name", () => {
+    // Intentionally loose on the owner segment: README uses the `<owner>`
+    // placeholder form (CONTRIBUTING.md §2.3 approved placeholders) so forks
+    // can substitute their own owner. The stale-reference guard below covers
+    // the converse invariant (absence of the old repo name).
+    expect(readme).toMatch(/claude plugin marketplace add .+\/cc-triad-relay\b/);
   });
 
-  it("install-project.sh header points at the full owner/repo path", () => {
-    // Tight match: require `ThomasEdwardYorke/cc-triad-relay/scripts/install-project.sh`
-    // so an owner drift (e.g. fork path) is caught by this assertion.
-    expect(installScript).toMatch(
-      /ThomasEdwardYorke\/cc-triad-relay\/scripts\/install-project\.sh/,
-    );
+  it("install-project.sh header points at a cc-triad-relay path", () => {
+    // install-project.sh uses local filesystem paths (e.g. `~/dev/cc-triad-relay`
+    // or `/path/to/cc-triad-relay`), not GitHub `<owner>/<repo>` paths, so the
+    // assertion matches on the repo-name segment only.
+    expect(installScript).toMatch(/cc-triad-relay\/scripts\/install-project\.sh/);
   });
 
   it("harness.config.schema.json $id references the new repo URL", () => {
