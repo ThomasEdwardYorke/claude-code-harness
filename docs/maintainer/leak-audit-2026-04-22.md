@@ -42,9 +42,10 @@ Blocklist with 5 series:
 - **B-4** Project-local required refs (`CLAUDE.local.md`, `next-session-prompt.md`)
 - **B-5** Python web stack hardcoded as mandatory checklist (`psycopg`, `defusedxml`, `WeasyPrint`, `openpyxl`, `Tabulator`, `Y.js`)
 
-Exemption mechanism:
-- File-level: `<!-- generality-exemption: <pattern-id>, <reason> -->` (MD) / `/* generality-exemption: ... */` (TS)
-- Line-level: `// generality-ok: <reason>` / `<!-- generality-ok: ... -->`
+Exemption mechanism (Phase ε unified grammar — see [CONTRIBUTING §3.1](../../CONTRIBUTING.md#31-unified-exemption-grammar)):
+- File-level (MD): `<!-- generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason> -->`
+- File-level (TS): `/* generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason> */`
+- Line-level: `// generality-exemption: B-1 | HARNESS-42 | v0.5.0 | fixture` (short form `// generality-exemption: B-1` 可)
 
 Scope:
 - BLOCKLIST_TARGETS: `plugins/harness/agents/*.md`, `commands/*.md`, `core/src/hooks/*.ts`

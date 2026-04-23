@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 — HARNESS-generality-self, detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -19,10 +19,20 @@
  *   - WARN_TARGETS (soft): core/src/__tests__/*.ts (テスト describe 文に混入しやすいため)
  *   - ALLOWLIST (対象外): docs/maintainer/**, CHANGELOG.md, .github/**, node_modules/**, dist/**
  *
- * 例外許容 (exemption):
- *   - Markdown: <!-- generality-exemption: <reason> -->
- *   - TypeScript: /* generality-exemption: <reason> *\/   (* を \ でエスケープ済)
- *   - 行単位: // generality-ok: <reason>   (TS)  /  <!-- generality-ok: <reason> --> (MD)
+ * 例外許容 (exemption) — Phase ε 統一文法 (pipe-separated, 4 required fields):
+ *   Format: `generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>`
+ *     - pattern-ids: B-\d+[a-z]? CSV list (`all` prohibited)
+ *     - issue-key:   [A-Z][A-Z0-9_]*-[A-Za-z0-9_-]+ (e.g. HARNESS-42, HARNESS-generality-self, PARTS-12)
+ *     - expiry:      vX.Y.Z (semver) | YYYY-MM-DD (ISO date) | YYYY-Qn (quarter)
+ *     - reason:      free text
+ *   Placement:
+ *     - File-head Markdown: <!-- generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | rationale -->
+ *     - File-head TS:       /* generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | rationale *\/
+ *     - Line-level (TS):    // generality-exemption: B-1 | HARNESS-42 | v0.5.0 | fixture
+ *     - Line-level (MD):    <!-- generality-exemption: B-1 -->  (short form: pattern-ids のみ許容)
+ *   Legacy forms (deprecated & rejected):
+ *     - em dash + comma separators (`B-1 — HARNESS-42, v0.5.0, reason`) → throws
+ *     - `generality-ok` keyword at line level                          → no longer recognized
  *
  * 公式仕様参照:
  *   - https://code.claude.com/docs/en/plugins : plugin は shared/reusable、project-specific は .claude/ 側
@@ -313,71 +323,186 @@ const BLOCK_PATTERNS: BlockPattern[] = [
 // ---------------------------------------------------------------------------
 
 // Markdown / TS コメント形式から exemption 宣言を抽出する regex。
-// Codex C-2 minor 指摘対応: 旧 regex は `*` や空文字を capture できず、
-// 無効 form (空 / アスタリスク単独 / whitespace) を throw でなく null 素通りにしていた。
-// 新 regex は generality-exemption keyword を探し、body は非貪欲に closing marker まで。
+// 統一文法 (Phase ε): file-level と line-level で同一 keyword `generality-exemption` を使用。
+// 旧 `generality-ok` keyword は廃止 (line-level でも受理されない)。
 const EXEMPTION_FILE_HEAD_PATTERNS = [
-  // Markdown: HTML comment (body は --> まで)
+  // Markdown: HTML comment (body は --> まで非貪欲)
   /<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
-  // TypeScript / JavaScript: block comment (body は block-comment の closing marker まで)
+  // TypeScript / JavaScript: block comment (body は block-comment closing marker まで)
   /\/\*\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*\*\//,
 ];
 
+// Line-level exemption: TS 行コメント or 単一行 MD コメント
+const EXEMPTION_LINE_PATTERNS: RegExp[] = [
+  // TS line-comment: `// generality-exemption: ...` (行末まで body)
+  /\/\/\s*generality-exemption\b\s*(?::\s*(.*?))?\s*$/,
+  // MD inline comment: `<!-- generality-exemption: ... -->`
+  /<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
+];
+
+interface ExemptionDeclaration {
+  patternIds: Set<string>;
+  issueKey: string;
+  expiry: string;
+  reason: string;
+}
+
+// Validation regex (Codex B hybrid design): semantic-slug issue keys を許容、
+// expiry は semver / ISO date / quarter の 3 書式を許容。
+// Issue key: uppercase PREFIX, then hyphen, then alphanumeric / underscore / hyphen body.
+// Slug forms (e.g. HARNESS-generality-self) are allowed for self-reference cases.
+const ISSUE_KEY_RE = /^[A-Z][A-Z0-9_]*-[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+const EXPIRY_SEMVER_RE = /^v\d+\.\d+\.\d+$/;
+const EXPIRY_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const EXPIRY_QUARTER_RE = /^\d{4}-Q[1-4]$/;
+// `\d+` allows future expansion to 2+ digit pattern IDs (e.g. B-10, B-99a, B-123).
+const PATTERN_ID_EXTRACT_RE = /\bB-\d+[a-z]?\b/g;
+// Subword-safe: requires non-word boundary around `all` so `wall` / `fallback` do not match.
+const ALL_KEYWORD_RE = /(?:^|\W)['"`]?all['"`]?(?:$|\W)/i;
+
 /**
- * Parse an exemption declaration from a file head.
- * Codex [C-2] 対応: `all` を禁止し、pattern-id list を必須化する。
- * 形式: `generality-exemption: B-1,B-2a,... — <issue-key>, <reason>`
- * - patternIds: 明示的な pattern-id list (B-\d[a-z]? 形式)
- * - issueKey: `HARNESS-\d+` など (推奨、必須ではない)
- * 返却: { patternIds, reason } or null (exemption 無し)。形式違反時は throw。
+ * Parse an exemption body (everything after `generality-exemption:` up to closing marker).
+ *
+ * Canonical form: `<pattern-ids> | <issue-key> | <expiry> | <reason>` (4 pipe-separated fields).
+ * Line-level short form (pattern-ids only; metadata inherited from file-head declaration) is
+ * also permitted when `kind === "line"`. Any format violation throws; absence of an exemption
+ * comment returns null (null is only reachable from the outer `parseExemption` / line matcher).
  */
-function parseExemption(
-  content: string,
-): { patternIds: Set<string>; reason: string } | null {
+function parseExemptionBody(
+  rawBody: string | undefined,
+  kind: "file" | "line",
+): ExemptionDeclaration | null {
+  if (rawBody === undefined) {
+    throw new Error(
+      "generality-exemption declaration body is required and cannot be undefined. " +
+        "Form: `generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | short reason`.",
+    );
+  }
+  const body = rawBody.trim();
+  if (!body || /^[\s*]+$/.test(body)) {
+    throw new Error(
+      "generality-exemption declaration requires explicit fields. " +
+        "Form: `generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | reason`. " +
+        "Empty / whitespace-only body found (all characters were whitespace or `*`): '" +
+        rawBody +
+        "'",
+    );
+  }
+  // `all` は構造的欠陥なので禁止 (Codex [C-2] 継承)
+  if (ALL_KEYWORD_RE.test(body)) {
+    throw new Error(
+      "generality-exemption `all` is prohibited. " +
+        "Declare explicit pattern IDs (e.g. `B-1,B-2a,B-3c`). Found: " +
+        body,
+    );
+  }
+  // Phase ε migration: legacy 形式 (em-dash / multi-comma / file-level の pipe 無し) を reject
+  if (!body.includes("|")) {
+    // file-level では pipe + 4 fields が必須
+    if (kind === "file") {
+      throw new Error(
+        "file-level generality-exemption must use pipe (`|`) as separator with 4 fields. " +
+          "Form: `generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | reason`. Found: " +
+          body,
+      );
+    }
+    // line-level でも em-dash 混入は legacy として reject
+    if (/[—–]/.test(body)) {
+      throw new Error(
+        "generality-exemption must use pipe (`|`) as separator. " +
+          "Legacy em-dash form is no longer accepted. Found: " +
+          body,
+      );
+    }
+  }
+
+  const parts = body
+    .split("|")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (parts.length === 0) {
+    throw new Error(
+      "generality-exemption body is empty after parsing. Found: " + body,
+    );
+  }
+
+  // pattern-ids 抽出 (必須)
+  const idsPart = parts[0];
+  const ids = Array.from(idsPart.matchAll(PATTERN_ID_EXTRACT_RE)).map(
+    (m) => m[0],
+  );
+  if (ids.length === 0) {
+    throw new Error(
+      "generality-exemption must list explicit pattern IDs " +
+        "(e.g. `B-1,B-2a`). None found in: " +
+        idsPart,
+    );
+  }
+
+  // Line-level short form (pattern-ids only; metadata inherited from file-head declaration).
+  // Valid only when file-head already declares the full 4-field metadata; if file-head is absent,
+  // the caller (`findHits`) scope still blocks a match via the plain file-level parser — we do
+  // NOT perform an inheritance-integrity check here because exemption evaluation is per-file,
+  // per-pattern at the call site. Future contributors: do NOT add parse-time strict checks here
+  // since that would break the designed inheritance semantics (Phase ε, 2026-04-24).
+  if (kind === "line" && parts.length === 1) {
+    return {
+      patternIds: new Set(ids),
+      issueKey: "",
+      expiry: "",
+      reason: "",
+    };
+  }
+
+  // 4-field 厳格モード
+  if (parts.length !== 4) {
+    throw new Error(
+      "generality-exemption must have exactly 4 pipe-separated fields: " +
+        "`<pattern-ids> | <issue-key> | <expiry> | <reason>`. " +
+        "Found " +
+        parts.length +
+        " field(s): [" +
+        parts.map((p) => JSON.stringify(p)).join(", ") +
+        "]",
+    );
+  }
+
+  const [, issueKey, expiry, reason] = parts;
+
+  if (!ISSUE_KEY_RE.test(issueKey)) {
+    throw new Error(
+      "generality-exemption issue-key must match `[A-Z][A-Z0-9_]*-[A-Za-z0-9_-]+` " +
+        "(e.g. HARNESS-42, HARNESS-generality-self, PARTS-12). Found: " +
+        JSON.stringify(issueKey),
+    );
+  }
+  const expiryOk =
+    EXPIRY_SEMVER_RE.test(expiry) ||
+    EXPIRY_ISO_DATE_RE.test(expiry) ||
+    EXPIRY_QUARTER_RE.test(expiry);
+  if (!expiryOk) {
+    throw new Error(
+      "generality-exemption expiry must be semver (`vX.Y.Z`), ISO date (`YYYY-MM-DD`), " +
+        "or quarter (`YYYY-Qn`). Found: " +
+        JSON.stringify(expiry),
+    );
+  }
+  if (!reason) {
+    throw new Error(
+      "generality-exemption reason is required and cannot be empty. Body: " +
+        body,
+    );
+  }
+
+  return { patternIds: new Set(ids), issueKey, expiry, reason };
+}
+
+function parseExemption(content: string): ExemptionDeclaration | null {
   const head = content.slice(0, 800);
   for (const re of EXEMPTION_FILE_HEAD_PATTERNS) {
     const match = re.exec(head);
     if (!match) continue;
-    const rawBody = match[1];
-    // keyword match はしたが body 欠落 (`<!-- generality-exemption -->`) → throw
-    if (rawBody === undefined) {
-      throw new Error(
-        "generality-exemption declaration has no body. " +
-          "Required form: `generality-exemption: B-1,B-2a — HARNESS-42, short reason`. " +
-          "Empty declaration is prohibited.",
-      );
-    }
-    const reason = rawBody.trim();
-    // 空 / whitespace-only / `*` 単独 等の無効 body を reject
-    if (!reason || /^[\s*]+$/.test(reason)) {
-      throw new Error(
-        "generality-exemption declaration requires an explicit pattern-id list " +
-          "(e.g. `generality-exemption: B-1,B-2a — HARNESS-42, short reason`). " +
-          "Empty / whitespace-only / `*`-only body is prohibited. Found: '" +
-          reason +
-          "'",
-      );
-    }
-    // Codex [C-2]: `all` は構造的欠陥なので禁止 (quoted / backticked variants も禁止)
-    if (/(?:^|\W)['"`]?all['"`]?(?:$|\W)/i.test(reason)) {
-      throw new Error(
-        "generality-exemption `all` is prohibited (Codex adversarial review [C-2]). " +
-          "Declare explicit pattern IDs (e.g. `B-1,B-2a,B-3c`) so the exemption is scoped. " +
-          "Found: " +
-          reason,
-      );
-    }
-    // pattern-id を抽出 (B-\d[a-z]? 形式)
-    const ids = Array.from(reason.matchAll(/\bB-\d+[a-z]?\b/g)).map((m) => m[0]);
-    if (ids.length === 0) {
-      throw new Error(
-        "generality-exemption must explicitly list pattern IDs " +
-          "(e.g. `B-1,B-2a` — issue key, reason). " +
-          "None found in: " +
-          reason,
-      );
-    }
-    return { patternIds: new Set(ids), reason };
+    return parseExemptionBody(match[1], "file");
   }
   return null;
 }
@@ -388,8 +513,15 @@ function hasFileExemption(content: string, patternId: string): boolean {
   return parsed.patternIds.has(patternId);
 }
 
-function hasLineExemption(line: string): boolean {
-  return /(?:\/\/|<!--)\s*generality-ok\b/.test(line);
+function hasLineExemption(line: string, patternId: string): boolean {
+  for (const re of EXEMPTION_LINE_PATTERNS) {
+    const match = re.exec(line);
+    if (!match) continue;
+    const parsed = parseExemptionBody(match[1], "line");
+    if (!parsed) return false;
+    return parsed.patternIds.has(patternId);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -468,7 +600,7 @@ function findHits(
   const re = new RegExp(pattern.pattern.source, pattern.pattern.flags);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (hasLineExemption(line)) continue;
+    if (hasLineExemption(line, pattern.id)) continue;
     // 各行で regex match (g フラグなので reset 不要に lastIndex=0)
     re.lastIndex = 0;
     const lineMatches = line.match(re);
@@ -585,14 +717,150 @@ describe("generality test harness 自体の健全性", () => {
   });
 
   it("exemption 検出が正しく動作する (file-head + line)", () => {
-    const exemptedMd = `<!-- generality-exemption: B-1, example only -->\n\nfeature/new-partslist`;
+    const exemptedMd = `<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | example only -->\n\nfeature/new-partslist`;
     expect(hasFileExemption(exemptedMd, "B-1")).toBe(true);
     expect(hasFileExemption(exemptedMd, "B-2a")).toBe(false);
 
-    const lineExempted = `const branch = "feature/new-partslist"; // generality-ok: fixture`;
-    expect(hasLineExemption(lineExempted)).toBe(true);
+    const lineExempted = `const branch = "feature/new-partslist"; // generality-exemption: B-1 | HARNESS-42 | v0.5.0 | fixture`;
+    expect(hasLineExemption(lineExempted, "B-1")).toBe(true);
+    expect(hasLineExemption(lineExempted, "B-2a")).toBe(false);
+
+    const lineExemptedShort = `const branch = "feature/new-partslist"; // generality-exemption: B-1`;
+    expect(hasLineExemption(lineExemptedShort, "B-1")).toBe(true);
 
     const nonExempted = `const branch = "feature/new-partslist";`;
-    expect(hasLineExemption(nonExempted)).toBe(false);
+    expect(hasLineExemption(nonExempted, "B-1")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 統一文法 (Phase ε) — `|` separator + 4 必須フィールド
+// ---------------------------------------------------------------------------
+
+describe("exemption grammar (unified, pipe-separated)", () => {
+  describe("file-level", () => {
+    it("accepts valid syntax with 4 fields (semver expiry)", () => {
+      const md = `<!-- generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | rationale -->`;
+      expect(hasFileExemption(md, "B-1")).toBe(true);
+      expect(hasFileExemption(md, "B-2a")).toBe(true);
+      expect(hasFileExemption(md, "B-3")).toBe(false);
+    });
+
+    it("accepts ISO date expiry", () => {
+      const md = `<!-- generality-exemption: B-4a | HARNESS-99 | 2026-12-31 | time-bound rationale -->`;
+      expect(hasFileExemption(md, "B-4a")).toBe(true);
+    });
+
+    it("accepts quarterly expiry (YYYY-Qn)", () => {
+      const md = `<!-- generality-exemption: B-5 | HARNESS-10 | 2026-Q2 | quarter-bound rationale -->`;
+      expect(hasFileExemption(md, "B-5")).toBe(true);
+    });
+
+    it("accepts TS block-comment form", () => {
+      const content = `/* generality-exemption: B-6 | HARNESS-7 | v1.0.0 | block-comment form */`;
+      expect(hasFileExemption(content, "B-6")).toBe(true);
+    });
+
+    it("accepts semantic slug issue-key (backward-compat for HARNESS-generality-self)", () => {
+      const md = `<!-- generality-exemption: B-1 | HARNESS-generality-self | 2099-12-31 | detector self-reference -->`;
+      expect(hasFileExemption(md, "B-1")).toBe(true);
+    });
+
+    it("accepts cross-project issue-key prefix (e.g. PARTS-12)", () => {
+      const md = `<!-- generality-exemption: B-1 | PARTS-12 | v1.0.0 | multi-project tracking -->`;
+      expect(hasFileExemption(md, "B-1")).toBe(true);
+    });
+
+    it("throws when issue-key field is missing (only 3 fields present)", () => {
+      const md = `<!-- generality-exemption: B-1 | v0.5.0 | reason text -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+    });
+
+    it("throws when expiry field is missing", () => {
+      const md = `<!-- generality-exemption: B-1 | HARNESS-42 | just a reason here -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+    });
+
+    it("throws when reason field is missing (only 3 fields)", () => {
+      const md = `<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/reason/i);
+    });
+
+    it("throws when issue-key format is invalid (bare digits, no PREFIX-)", () => {
+      const md = `<!-- generality-exemption: B-1 | 42 | v0.5.0 | reason -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/issue[- ]?key/i);
+    });
+
+    it("throws when expiry is freeform text (not semver / ISO / quarter)", () => {
+      const md = `<!-- generality-exemption: B-1 | HARNESS-42 | someday | reason -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/expir/i);
+    });
+
+    it("throws when `all` appears in pattern-id field (existing guard preserved)", () => {
+      const md = `<!-- generality-exemption: all | HARNESS-42 | v0.5.0 | reason -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/all/i);
+    });
+
+    it("throws when legacy em-dash + comma form is used (pipe is mandatory)", () => {
+      const md = `<!-- generality-exemption: B-1 — HARNESS-42, v0.5.0, legacy format -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/pipe|\|/i);
+    });
+
+    it("throws when legacy 2-field form (`B-1, reason`) is used", () => {
+      const md = `<!-- generality-exemption: B-1, example only -->`;
+      expect(() => hasFileExemption(md, "B-1")).toThrow(/pipe|\|/i);
+    });
+  });
+
+  describe("line-level", () => {
+    it("accepts full 4-field form at line level", () => {
+      const line = `const x = "feature/foo"; // generality-exemption: B-1 | HARNESS-42 | v0.5.0 | fixture`;
+      expect(hasLineExemption(line, "B-1")).toBe(true);
+      expect(hasLineExemption(line, "B-2")).toBe(false);
+    });
+
+    it("accepts short form with pattern-ids only (metadata inherits from file-head)", () => {
+      const line = `const x = "feature/foo"; // generality-exemption: B-1,B-2a`;
+      expect(hasLineExemption(line, "B-1")).toBe(true);
+      expect(hasLineExemption(line, "B-2a")).toBe(true);
+      expect(hasLineExemption(line, "B-3")).toBe(false);
+    });
+
+    it("throws when line-level exemption lacks any pattern-id", () => {
+      const line = `const x = "feature/foo"; // generality-exemption: free text only`;
+      expect(() => hasLineExemption(line, "B-1")).toThrow(/pattern[- ]?id/i);
+    });
+
+    it("rejects `all` at line level as well", () => {
+      const line = `const x = "feature/foo"; // generality-exemption: all | reason`;
+      expect(() => hasLineExemption(line, "B-1")).toThrow(/all/i);
+    });
+
+    it("legacy `generality-ok` keyword is no longer accepted (unified to generality-exemption)", () => {
+      const line = `const x = "feature/foo"; // generality-ok: legacy reason`;
+      expect(hasLineExemption(line, "B-1")).toBe(false);
+    });
+
+    it("MD-form line-level exemption (<!-- ... -->) works too", () => {
+      const line = `feature/foo <!-- generality-exemption: B-1 -->`;
+      expect(hasLineExemption(line, "B-1")).toBe(true);
+    });
+  });
+
+  describe("parser return shape", () => {
+    it("parseExemption returns { patternIds, issueKey, expiry, reason } on success", () => {
+      const md = `<!-- generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | rationale -->`;
+      const parsed = parseExemption(md);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.patternIds.has("B-1")).toBe(true);
+      expect(parsed!.patternIds.has("B-2a")).toBe(true);
+      expect(parsed!.issueKey).toBe("HARNESS-42");
+      expect(parsed!.expiry).toBe("v0.5.0");
+      expect(parsed!.reason).toBe("rationale");
+    });
+
+    it("returns null when no exemption present", () => {
+      expect(parseExemption("plain content without exemption")).toBeNull();
+    });
   });
 });
