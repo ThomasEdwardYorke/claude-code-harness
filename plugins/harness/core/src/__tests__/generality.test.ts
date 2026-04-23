@@ -19,7 +19,7 @@
  *   - WARN_TARGETS (soft): core/src/__tests__/*.ts (テスト describe 文に混入しやすいため)
  *   - ALLOWLIST (対象外): docs/maintainer/**, CHANGELOG.md, .github/**, node_modules/**, dist/**
  *
- * 例外許容 (exemption) — Phase ε 統一文法 (pipe-separated, 4 required fields):
+ * 例外許容 (exemption) — unified exemption grammar (pipe-separated, 4 required fields):
  *   Format: `generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>`
  *     - pattern-ids: B-\d+[a-z]? CSV list (`all` prohibited)
  *     - issue-key:   [A-Z][A-Z0-9_]*-[A-Za-z0-9_-]+ (e.g. HARNESS-42, HARNESS-generality-self, PARTS-12)
@@ -150,7 +150,7 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     // `--test-pipeline` は business-specific flag (前身 project の CSV schema 検証 +
     // `scripts/check-pipeline.sh` を前提) で、汎用 plugin から除去する。project-local
     // な pipeline 検証は `.claude/skills/<project-name>-local-rules/references/pipeline-check.md`
-    // 経由で実施する (test-bed 側は Phase ε で移管済み)。
+    // 経由で実施する (test-bed 側は unified exemption grammar で移管済み)。
     //
     // Codex [A-N-1] 対応: 旧 regex `/--test-pipeline\b/` は `\b` が `\w\W` 境界で成立するため
     // `--test-pipeline-foo` にも false positive でヒットした。`(?![\w-])` で
@@ -323,7 +323,7 @@ const BLOCK_PATTERNS: BlockPattern[] = [
 // ---------------------------------------------------------------------------
 
 // Markdown / TS コメント形式から exemption 宣言を抽出する regex。
-// 統一文法 (Phase ε): file-level と line-level で同一 keyword `generality-exemption` を使用。
+// Unified exemption grammar: file-level と line-level で同一 keyword `generality-exemption` を使用。
 // 旧 `generality-ok` keyword は廃止 (line-level でも受理されない)。
 const EXEMPTION_FILE_HEAD_PATTERNS = [
   // Markdown: HTML comment (body は --> まで非貪欲)
@@ -357,6 +357,9 @@ const EXPIRY_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EXPIRY_QUARTER_RE = /^\d{4}-Q[1-4]$/;
 // `\d+` allows future expansion to 2+ digit pattern IDs (e.g. B-10, B-99a, B-123).
 const PATTERN_ID_EXTRACT_RE = /\bB-\d+[a-z]?\b/g;
+// Full-string CSV match for short-form idsPart: rejects any trailing/non-ID text
+// so legacy fragments like "B-1, legacy reason" cannot bypass 4-field requirement.
+const PATTERN_ID_CSV_RE = /^B-\d+[a-z]?(?:,B-\d+[a-z]?)*$/;
 // Subword-safe: requires non-word boundary around `all` so `wall` / `fallback` do not match.
 const ALL_KEYWORD_RE = /(?:^|\W)['"`]?all['"`]?(?:$|\W)/i;
 
@@ -396,7 +399,7 @@ function parseExemptionBody(
         body,
     );
   }
-  // Phase ε migration: legacy 形式 (em-dash / multi-comma / file-level の pipe 無し) を reject
+  // Unified exemption grammar migration: legacy 形式 (em-dash / multi-comma / file-level の pipe 無し) を reject
   if (!body.includes("|")) {
     // file-level では pipe + 4 fields が必須
     if (kind === "file") {
@@ -440,12 +443,22 @@ function parseExemptionBody(
   }
 
   // Line-level short form (pattern-ids only; metadata inherited from file-head declaration).
-  // Valid only when file-head already declares the full 4-field metadata; if file-head is absent,
-  // the caller (`findHits`) scope still blocks a match via the plain file-level parser — we do
-  // NOT perform an inheritance-integrity check here because exemption evaluation is per-file,
-  // per-pattern at the call site. Future contributors: do NOT add parse-time strict checks here
-  // since that would break the designed inheritance semantics (Phase ε, 2026-04-24).
+  // Syntactic strictness: `idsPart` must be an exact CSV of `B-\d+[a-z]?` identifiers with
+  // no trailing/interleaved non-ID text. Legacy fragments like `B-1, legacy reason` are
+  // rejected at parse-time so they cannot bypass the 4-field requirement via the short-form
+  // escape hatch. Semantic file-head inheritance check is performed by the caller
+  // (`hasLineExemption`) when `fileContent` is supplied — this parser only rejects malformed
+  // short forms, while the semantic void case (short form without a file-head declaration)
+  // is handled one layer up. (CodeRabbit review on PR #17, 2026-04-24.)
   if (kind === "line" && parts.length === 1) {
+    if (!PATTERN_ID_CSV_RE.test(idsPart)) {
+      throw new Error(
+        "generality-exemption short form must be an exact CSV of pattern IDs " +
+          "(e.g. `B-1,B-2a`). Trailing/non-ID text is not allowed in short form; " +
+          "use the full 4-field pipe form instead. Found: " +
+          JSON.stringify(idsPart),
+      );
+    }
     return {
       patternIds: new Set(ids),
       issueKey: "",
@@ -513,13 +526,44 @@ function hasFileExemption(content: string, patternId: string): boolean {
   return parsed.patternIds.has(patternId);
 }
 
-function hasLineExemption(line: string, patternId: string): boolean {
+/**
+ * Check whether `line` carries a valid generality-exemption comment that
+ * covers `patternId`.
+ *
+ * When `fileContent` is supplied, short-form line-level exemptions (where only
+ * pattern-ids are given on the line itself) additionally require the
+ * surrounding file to carry a valid 4-field file-head declaration that also
+ * covers `patternId`. Without a file-head declaration the short form is
+ * semantically void and is rejected so it cannot be used as an escape hatch.
+ * If `fileContent` is omitted (parse-only call sites — existing unit tests),
+ * the short form is accepted on purely syntactic validity — the caller
+ * accepts responsibility for inheritance semantics.
+ */
+function hasLineExemption(
+  line: string,
+  patternId: string,
+  fileContent?: string,
+): boolean {
   for (const re of EXEMPTION_LINE_PATTERNS) {
     const match = re.exec(line);
     if (!match) continue;
     const parsed = parseExemptionBody(match[1], "line");
     if (!parsed) return false;
-    return parsed.patternIds.has(patternId);
+    if (!parsed.patternIds.has(patternId)) return false;
+
+    // Short-form detection: a short-form declaration is syntactically a line-level
+    // comment where only pattern-ids are given (no `|` separators were present,
+    // so `issueKey` / `expiry` / `reason` were initialised to empty strings by
+    // `parseExemptionBody`). Any of those empties being truthy means the full
+    // 4-field form was used at line level and no inheritance check is needed.
+    const isShortForm =
+      parsed.issueKey === "" && parsed.expiry === "" && parsed.reason === "";
+    if (isShortForm && fileContent !== undefined) {
+      const fileHead = parseExemption(fileContent);
+      if (!fileHead) return false;
+      if (!fileHead.patternIds.has(patternId)) return false;
+    }
+    return true;
   }
   return false;
 }
@@ -600,7 +644,9 @@ function findHits(
   const re = new RegExp(pattern.pattern.source, pattern.pattern.flags);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (hasLineExemption(line, pattern.id)) continue;
+    // Pass full `content` so short-form line exemptions are validated against
+    // the file-head 4-field declaration (inheritance semantics).
+    if (hasLineExemption(line, pattern.id, content)) continue;
     // 各行で regex match (g フラグなので reset 不要に lastIndex=0)
     re.lastIndex = 0;
     const lineMatches = line.match(re);
@@ -734,7 +780,7 @@ describe("generality test harness 自体の健全性", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 統一文法 (Phase ε) — `|` separator + 4 必須フィールド
+// Unified exemption grammar — `|` separator + 4 必須フィールド
 // ---------------------------------------------------------------------------
 
 describe("exemption grammar (unified, pipe-separated)", () => {
@@ -844,6 +890,48 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     it("MD-form line-level exemption (<!-- ... -->) works too", () => {
       const line = `feature/foo <!-- generality-exemption: B-1 -->`;
       expect(hasLineExemption(line, "B-1")).toBe(true);
+    });
+
+    // ------------------------------------------------------------
+    // Regression: short-form parser strictness (CodeRabbit issue #4)
+    // ------------------------------------------------------------
+    // Short form (pattern-ids only) must:
+    //   (1) Accept ONLY an exact CSV of B-\d+[a-z]? pattern IDs.
+    //       Any trailing / interleaved non-ID text MUST be rejected
+    //       so legacy fragments like "B-1, legacy reason" cannot bypass
+    //       the 4-field requirement via the short-form escape hatch.
+    //   (2) Require that the surrounding file has a valid 4-field
+    //       file-head declaration when `fileContent` is supplied
+    //       (the short-form metadata is defined to *inherit* from the
+    //       file head; without one the short form is semantically void).
+    // Signature note: `hasLineExemption(line, patternId, fileContent?)`
+    // keeps `fileContent` optional so the existing parse-only tests
+    // above (no surrounding file context) keep their meaning — those
+    // check syntactic parseability only. Production scan (`findHits`)
+    // always passes `fileContent` and gets the full semantic check.
+    it("short form rejects malformed idsPart with trailing non-ID text ('B-1, legacy reason')", () => {
+      const line = `const x = "foo"; // generality-exemption: B-1, legacy reason`;
+      expect(() => hasLineExemption(line, "B-1")).toThrow(
+        /short form|exact CSV|pattern ID/i,
+      );
+    });
+
+    it("short form rejects when fileContent has no valid file-head declaration", () => {
+      const line = `const x = "foo"; // generality-exemption: B-1`;
+      const fileContent = `plain content without any file-head generality-exemption comment`;
+      expect(hasLineExemption(line, "B-1", fileContent)).toBe(false);
+    });
+
+    it("short form accepts when fileContent carries a valid 4-field file-head declaration", () => {
+      const line = `const x = "foo"; // generality-exemption: B-1`;
+      const fileContent = `/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | inherited metadata */\nconst x = "foo";`;
+      expect(hasLineExemption(line, "B-1", fileContent)).toBe(true);
+    });
+
+    it("short form rejects when fileContent file-head declaration does NOT cover requested patternId", () => {
+      const line = `const x = "foo"; // generality-exemption: B-2`;
+      const fileContent = `/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | only B-1 exempted */\nconst x = "foo";`;
+      expect(hasLineExemption(line, "B-2", fileContent)).toBe(false);
     });
   });
 

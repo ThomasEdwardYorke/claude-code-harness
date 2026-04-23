@@ -157,7 +157,7 @@ const branch = "feature/example-feature"; // generality-exemption: B-1 | HARNESS
 
 **Line-level short form** (may omit metadata when the file head already declares it): `// generality-exemption: B-1` or `// generality-exemption: B-1,B-2a`.
 
-**Legacy forms rejected** (Phase ε unification):
+**Legacy forms rejected** (unified exemption grammar):
 
 - em dash (`—`) + comma separators
 - bare `generality-ok` keyword at line level (now unified to `generality-exemption`)
