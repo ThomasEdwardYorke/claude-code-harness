@@ -325,11 +325,16 @@ const BLOCK_PATTERNS: BlockPattern[] = [
 // Markdown / TS コメント形式から exemption 宣言を抽出する regex。
 // Unified exemption grammar: file-level と line-level で同一 keyword `generality-exemption` を使用。
 // 旧 `generality-ok` keyword は廃止 (line-level でも受理されない)。
+// File-head declarations must start at a line boundary (optionally indented
+// by whitespace / shebang) — docstring samples such as
+// ` * - File-head Markdown: <!-- generality-exemption: ... -->` must not be
+// misread as actual declarations once the head slice is wide enough to include
+// the docstring body (see `EXEMPTION_HEAD_SLICE_BYTES` and Codex MAJOR-1).
 const EXEMPTION_FILE_HEAD_PATTERNS = [
   // Markdown: HTML comment (body は --> まで非貪欲)
-  /<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
+  /(?:^|\n)\s*<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
   // TypeScript / JavaScript: block comment (body は block-comment closing marker まで)
-  /\/\*\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*\*\//,
+  /(?:^|\n)\s*\/\*\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*\*\//,
 ];
 
 // Line-level exemption: TS 行コメント or 単一行 MD コメント
@@ -510,8 +515,16 @@ function parseExemptionBody(
   return { patternIds: new Set(ids), issueKey, expiry, reason };
 }
 
+// Head slice size: 2048 bytes gives ~10x buffer over a realistic file-head
+// declaration (typical length ~200 chars for a 19-ID self-reference exemption).
+// Raised from 800 after Codex adversarial review MAJOR-1: block-comment
+// declarations whose closing `*/` sat beyond the 800-byte boundary were
+// silently dropped by the non-greedy regex, causing exemptions to appear
+// valid to humans while being ignored by the parser.
+const EXEMPTION_HEAD_SLICE_BYTES = 2048;
+
 function parseExemption(content: string): ExemptionDeclaration | null {
-  const head = content.slice(0, 800);
+  const head = content.slice(0, EXEMPTION_HEAD_SLICE_BYTES);
   for (const re of EXEMPTION_FILE_HEAD_PATTERNS) {
     const match = re.exec(head);
     if (!match) continue;
@@ -932,6 +945,66 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       const line = `const x = "foo"; // generality-exemption: B-2`;
       const fileContent = `/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | only B-1 exempted */\nconst x = "foo";`;
       expect(hasLineExemption(line, "B-2", fileContent)).toBe(false);
+    });
+
+    // ------------------------------------------------------------
+    // Codex adversarial review follow-up (2026-04-24, Codex B second-opinion).
+    //
+    // Codex adversarial review flagged 4 attack vectors as CRITICAL / MINOR.
+    // Empirical verification showed 3 are ALREADY rejected by the current
+    // implementation (false positives). The assertions below lock in those
+    // invariants so future refactoring cannot accidentally regress them,
+    // and document the verified-safe status in-tree.
+    // ------------------------------------------------------------
+    it("invariant: Cyrillic look-alike `В-` (U+0412) is rejected — ASCII-only pattern IDs", () => {
+      const line = `const x = "foo"; // generality-exemption: В-1`;
+      // Cyrillic В is not matched by \b B-\d+ \b; parser finds no pattern IDs → throws.
+      expect(() => hasLineExemption(line, "B-1")).toThrow(/pattern[- ]?id/i);
+    });
+
+    it("invariant: zero-width space (U+200B) inside idsPart is rejected", () => {
+      const zwsp = "​";
+      const line = `const x = "foo"; // generality-exemption: B${zwsp}-1`;
+      // ZWSP between B and - breaks the \b B- boundary; parser finds no pattern IDs → throws.
+      expect(() => hasLineExemption(line, "B-1")).toThrow(/pattern[- ]?id/i);
+    });
+
+    it("invariant: leading / trailing comma in CSV idsPart is rejected", () => {
+      const lineLead = `const x = "foo"; // generality-exemption: ,B-1`;
+      const lineTrail = `const x = "foo"; // generality-exemption: B-1,`;
+      expect(() => hasLineExemption(lineLead, "B-1")).toThrow(/short form|exact CSV|pattern ID/i);
+      expect(() => hasLineExemption(lineTrail, "B-1")).toThrow(/short form|exact CSV|pattern ID/i);
+    });
+
+    it("invariant: fullwidth pipe `｜` (U+FF5C) does not bypass the ASCII pipe requirement", () => {
+      const content = `/* generality-exemption: B-1｜HARNESS-42｜v0.5.0｜reason */`;
+      // body.includes("|") treats ASCII pipe only; fullwidth form drops into
+      // short-form branch and is then rejected by PATTERN_ID_CSV_RE.
+      expect(() => hasFileExemption(content, "B-1")).toThrow();
+    });
+
+    // ------------------------------------------------------------
+    // Codex adversarial MAJOR-1: file-head slice boundary hardening.
+    // A file-head block comment (`/* generality-exemption: ... */`) can start
+    // before the 800-byte slice boundary and close *after* it, causing the
+    // non-greedy `[\s\S]*?` regex to fail match silently — the declaration
+    // becomes ineffective. Widen the slice so realistic file headers remain
+    // detected even when padded with lengthy shebangs / banner comments.
+    // ------------------------------------------------------------
+    it("file-head declaration that spans the prior 800-byte boundary remains detected (MAJOR-1)", () => {
+      const padding = "x".repeat(790);
+      const content = `${padding}\n/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | hardened boundary */\n`;
+      expect(hasFileExemption(content, "B-1")).toBe(true);
+    });
+
+    it("docstring sample with exemption-like text must NOT be misread as a declaration", () => {
+      // Regression: when the head slice was widened from 800 to 2048 bytes to
+      // fix MAJOR-1, a non-anchored regex would greedily match documentation
+      // samples inside an adjacent docstring (e.g. ` * Sample: <!-- generality-exemption: ... -->`).
+      // The line-start anchor on EXEMPTION_FILE_HEAD_PATTERNS must prevent that.
+      const content = `/**\n * Format reference:\n * - File-head Markdown: <!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | sample -->\n */\nconst something = 1;\n`;
+      // There is no real file-head declaration here — only a docstring sample.
+      expect(hasFileExemption(content, "B-1")).toBe(false);
     });
   });
 
