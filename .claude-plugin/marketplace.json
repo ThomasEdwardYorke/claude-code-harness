@@ -5,7 +5,7 @@
   },
   "metadata": {
     "description": "Portable TypeScript guardrail + agent harness for Claude Code",
-    "version": "0.3.0"
+    "version": "0.3.1"
   },
   "strict": true,
   "allowCrossMarketplaceDependenciesOn": [
@@ -17,7 +17,7 @@
       "source": "./plugins/harness",
       "description": "Guardrails R01-R13, 6 agents (worker / reviewer / scaffolder / security-auditor / codex-sync / coderabbit-mimic), 13 commands (5 verb skills + 8 workflow skills), 13 lifecycle hook events, zero native dependencies. `codex-sync` / `coderabbit-mimic` agents invoke the companion `openai-codex` plugin when present — install it for full functionality.",
       "license": "MIT",
-      "version": "0.3.0"
+      "version": "0.3.1"
     }
   ]
 }
