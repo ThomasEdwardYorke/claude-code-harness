@@ -90,6 +90,42 @@ function formatHint(error) {
     return null;
 }
 // ============================================================
+// Sanitization (Codex security review Issue #2 — error injection)
+//
+// 問題: raw `error` / `tool_name` 文字列が `additionalContext` へ unsanitized
+// で inject されると、attacker-controlled tool (e.g. 任意 Bash script) の
+// 出力で Claude context を混乱させることができる:
+//   - Multi-line error で `===== END HARNESS CONTEXT =====` 相当の fence
+//     boundary を偽造し、以降の prompt injection につなげる
+//   - ANSI escape sequence / control char で terminal rendering を破壊
+//   - Secrets (API key / password) が log に inject されると model-visible
+//
+// 対策 (UserPromptSubmit の content sanitize と同じ思想):
+//   1. newline / CR を literal `\\n` に escape (fence injection 防御)
+//   2. その他 control char (TAB 以外の C0 + DEL) を `\x{NN}` escape
+//   3. tool_name は identifier 属性なので厳格: `[A-Za-z0-9_-]` 以外は `?`
+//
+// 関連: user-prompt-submit.ts の newline sanitize (CodeRabbit PR #13 指摘)
+// ============================================================
+function sanitizeErrorLine(s) {
+    // 1. `\r\n` / `\n` / `\r` → `\\n` (visible literal)
+    // 2. その他 C0 control char (TAB \x09 は残す) + DEL \x7F → `\x{HH}`
+    //    tab は logs / stack trace で一般的なので可読性を優先
+    return s
+        .replace(/\r\n|[\n\r]/g, "\\n")
+        .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, (ch) => {
+        const hex = ch.charCodeAt(0).toString(16).padStart(2, "0");
+        return `\\x${hex}`;
+    });
+}
+function sanitizeToolName(s) {
+    // Tool name は Claude Code 公式の identifier 属性。`[A-Za-z0-9_-]` 以外が
+    // 現れたら injection attempt (e.g. `Bash\n==== END HARNESS ====`) とみなし
+    // 最大 64 chars に制限 + 無効文字を `?` に置換。
+    const clean = s.replace(/[^A-Za-z0-9_\-]/g, "?");
+    return clean.length > 64 ? clean.slice(0, 64) + "…" : clean;
+}
+// ============================================================
 // Handler
 // ============================================================
 /**
@@ -108,20 +144,26 @@ export async function handlePostToolUseFailure(input, options) {
         return { decision: "approve" };
     }
     const toolName = typeof input.tool_name === "string" && input.tool_name.length > 0
-        ? input.tool_name
+        ? sanitizeToolName(input.tool_name)
         : "unknown";
     const rawError = typeof input.error === "string" ? input.error : "";
     if (rawError.length === 0) {
         // No diagnostic available — fail-open no-op
         return { decision: "approve" };
     }
-    const truncatedError = rawError.length > cfg.maxErrorLength
+    // Truncate first (byte-safe), then sanitize for injection defence
+    // Note: truncate uses char length not byte length — acceptable trade-off
+    // for error strings which are typically ASCII-heavy (stack traces / exit
+    // messages). UserPromptSubmit takes byte-level care for user-controlled
+    // content files; error payloads are system-generated and short.
+    const truncatedErrorRaw = rawError.length > cfg.maxErrorLength
         ? rawError.slice(0, cfg.maxErrorLength) +
             `\n[harness] error truncated at ${cfg.maxErrorLength} chars`
         : rawError;
+    const sanitizedError = sanitizeErrorLine(truncatedErrorRaw);
     const lines = [
         `[harness PostToolUseFailure] tool=${toolName}`,
-        `error: ${truncatedError}`,
+        `error: ${sanitizedError}`,
     ];
     if (input.is_interrupt === true) {
         lines.push("(interrupted)");
