@@ -10,14 +10,14 @@
 ## Marketplace からインストール
 
 ```bash
-claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
-claude plugin install harness@claude-code-harness --scope project
+claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay
+claude plugin install harness@cc-triad-relay --scope project
 ```
 
 ## ローカル開発用ロード
 
 ```bash
-claude --plugin-dir /path/to/claude-code-harness/plugins/harness
+claude --plugin-dir /path/to/cc-triad-relay/plugins/harness
 ```
 
 セッション内で `/reload-plugins` を実行すると編集が反映されます。
@@ -48,5 +48,5 @@ plugins/harness/bin/harness doctor
 ## アンインストール
 
 ```bash
-claude plugin uninstall harness@claude-code-harness
+claude plugin uninstall harness@cc-triad-relay
 ```

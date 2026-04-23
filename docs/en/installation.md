@@ -10,8 +10,8 @@ No native toolchain is required. This plugin has zero native dependencies.
 ## Install from the marketplace
 
 ```bash
-claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
-claude plugin install harness@claude-code-harness --scope project
+claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay
+claude plugin install harness@cc-triad-relay --scope project
 ```
 
 ## Local development (no marketplace)
@@ -19,7 +19,7 @@ claude plugin install harness@claude-code-harness --scope project
 Point Claude Code directly at your working copy:
 
 ```bash
-claude --plugin-dir /path/to/claude-code-harness/plugins/harness
+claude --plugin-dir /path/to/cc-triad-relay/plugins/harness
 ```
 
 Inside a session, run `/reload-plugins` to pick up edits.
@@ -50,7 +50,7 @@ plugins/harness/bin/harness doctor
 ## Uninstall
 
 ```bash
-claude plugin uninstall harness@claude-code-harness
+claude plugin uninstall harness@cc-triad-relay
 ```
 
 `harness.config.json` stays in place — remove it manually if you no longer

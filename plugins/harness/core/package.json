@@ -1,5 +1,5 @@
 {
-  "name": "@claude-code-harness/core",
+  "name": "@cc-triad-relay/core",
   "version": "0.3.3",
   "description": "TypeScript core for Claude Code Harness: guardrails, state store, lifecycle.",
   "type": "module",

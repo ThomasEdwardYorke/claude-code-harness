@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-harness",
+  "name": "cc-triad-relay",
   "version": "0.3.3",
   "private": true,
   "description": "Portable guardrail and agent harness for Claude Code",

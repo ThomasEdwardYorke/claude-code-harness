@@ -44,9 +44,9 @@ for f in "${FILES[@]}"; do
   if [ -f "$f" ]; then
     # macOS and BSD sed require `-i ''`; Linux accepts `-i`.
     if sed --version >/dev/null 2>&1; then
-      sed -i "s|OWNER/claude-code-harness|${OWNER}/claude-code-harness|g" "$f"
+      sed -i "s|OWNER/cc-triad-relay|${OWNER}/cc-triad-relay|g" "$f"
     else
-      sed -i '' "s|OWNER/claude-code-harness|${OWNER}/claude-code-harness|g" "$f"
+      sed -i '' "s|OWNER/cc-triad-relay|${OWNER}/cc-triad-relay|g" "$f"
     fi
     echo "rewrote $f"
   fi

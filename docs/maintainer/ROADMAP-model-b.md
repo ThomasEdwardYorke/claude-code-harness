@@ -1,4 +1,4 @@
-# claude-code-harness: Model B 進化ロードマップ
+# cc-triad-relay: Model B 進化ロードマップ
 
 > **Maintainer-only notes.** This file lives under `docs/maintainer/` and is **excluded from the public plugin surface**. It references the concrete test-bed project used during development. Public contributors and plugin consumers do not need to read this. See `CONTRIBUTING.md` Section 5 for the test-bed policy (test-bed project = proving ground, not specification). Reusable invariants extracted from the test-bed are documented separately in shipped specs under `plugins/harness/`.
 
@@ -7,7 +7,7 @@
 **発端プロジェクト (test-bed)**: `parts-management` (maintainer-side reference only)
 **関連 doc (test-bed side)**: `docs/harness-model-b-plan.md` (external, test-bed repo)
 
-本 doc は claude-code-harness plugin を Model A (coordinator + subagent) から
+本 doc は cc-triad-relay plugin を Model A (coordinator + subagent) から
 Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進化させる
 技術ロードマップ。**plugin 単体**の観点で必要な改修を記述。
 
@@ -180,7 +180,7 @@ harness plugin は single working tree のため、branch 切替すると全 act
 作業中にハーネスが壊れた場合:
 
 ```bash
-cd ~/.claude/plugins/marketplaces/claude-code-harness
+cd ~/.claude/plugins/marketplaces/cc-triad-relay
 git checkout main  # v4.1 動作確認済 main に戻る
 # 他 session 再開 OK
 ```

@@ -26,8 +26,8 @@
 cp -R .claude .claude.v2.bak
 
 # 2. Install the v3 plugin
-claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
-claude plugin install harness@claude-code-harness --scope project
+claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay
+claude plugin install harness@cc-triad-relay --scope project
 
 # 3. Migrate state
 plugins/harness/bin/harness migrate

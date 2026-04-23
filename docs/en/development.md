@@ -3,8 +3,8 @@
 ## Local setup
 
 ```bash
-git clone https://github.com/ThomasEdwardYorke/claude-code-harness
-cd claude-code-harness
+git clone https://github.com/ThomasEdwardYorke/cc-triad-relay
+cd cc-triad-relay
 npm install
 npm run build
 npm test

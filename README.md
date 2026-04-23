@@ -12,24 +12,24 @@ A portable, TypeScript-powered guardrail and agent harness for [Claude Code](htt
 ## Installation
 
 ```bash
-claude plugin marketplace add <owner>/claude-code-harness
-claude plugin install harness@claude-code-harness --scope project
+claude plugin marketplace add <owner>/cc-triad-relay
+claude plugin install harness@cc-triad-relay --scope project
 ```
 
 Or use the bundled helper script from any git checkout of this repo:
 
 ```bash
 # Harness only (default — recommended baseline):
-bash /path/to/claude-code-harness/scripts/install-project.sh
+bash /path/to/cc-triad-relay/scripts/install-project.sh
 
 # Harness + Codex companion (opt-in, enables codex-sync / coderabbit-mimic):
-bash /path/to/claude-code-harness/scripts/install-project.sh --with-codex
+bash /path/to/cc-triad-relay/scripts/install-project.sh --with-codex
 ```
 
 Or for local development:
 
 ```bash
-claude --plugin-dir /path/to/claude-code-harness/plugins/harness
+claude --plugin-dir /path/to/cc-triad-relay/plugins/harness
 ```
 
 Then in your project root:

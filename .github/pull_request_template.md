@@ -1,6 +1,6 @@
 <!-- generality-exemption: all, PR template references leak patterns it guards against -->
 <!--
-  Thank you for contributing to claude-code-harness!
+  Thank you for contributing to cc-triad-relay!
   Please fill in all sections below. PR without this template will be held for review.
 -->
 

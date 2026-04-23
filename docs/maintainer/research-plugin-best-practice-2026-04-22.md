@@ -2,7 +2,7 @@
 
 **調査者**: Codex Worker B (Synchronous Foreground Mode)
 **調査日**: 2026-04-22
-**対象プラグイン**: `~/.claude/plugins/marketplaces/claude-code-harness/` (branch: `feature/model-b-evolution`)
+**対象プラグイン**: `~/.claude/plugins/marketplaces/cc-triad-relay/` (branch: `feature/model-b-evolution`)
 **調査目的**: 公式仕様との差分を特定し、Harness を最強のプラグインへ進化させるための具体的改善案を提示する。
 
 ---
@@ -154,7 +154,7 @@ Source: [plugins-reference](https://code.claude.com/docs/en/plugins-reference)
 
 **現状の Harness install-project.sh の実際の動作**:
 1. `claude plugin marketplace add <slug>` でマーケットプレイス登録
-2. `claude plugin install harness@claude-code-harness --scope project` でプラグイン登録
+2. `claude plugin install harness@cc-triad-relay --scope project` でプラグイン登録
 3. `harness.config.json` をテンプレートから生成
 
 これは「コマンドをコピーする」方式ではなく「プラグインとして登録する」方式。スクリプト名が `install-project.sh` であっても、実際は marketplace インストールを実行する。
@@ -181,7 +181,7 @@ Source: [plugins-reference](https://code.claude.com/docs/en/plugins-reference)
 ```json
 {
   "source": "github",
-  "repo": "ThomasEdwardYorke/claude-code-harness",
+  "repo": "ThomasEdwardYorke/cc-triad-relay",
   "ref": "v1.2.3",
   "sha": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"  // 40文字フルSHA
 }
@@ -449,11 +449,11 @@ Source: [common-workflows](https://code.claude.com/docs/en/common-workflows), [i
 
 Harness は以下の 2 つのインストールモードをサポートする必要がある:
 
-1. **Global（ユーザーレベル）**: `claude plugin install harness@claude-code-harness --scope user`
+1. **Global（ユーザーレベル）**: `claude plugin install harness@cc-triad-relay --scope user`
    - `~/.claude/settings.json` の `enabledPlugins` で有効化
    - 全プロジェクトに自動適用
 
-2. **Local（プロジェクトレベル）**: `claude plugin install harness@claude-code-harness --scope project`
+2. **Local（プロジェクトレベル）**: `claude plugin install harness@cc-triad-relay --scope project`
    - プロジェクト `.claude/settings.json` の `enabledPlugins` で有効化
    - そのプロジェクトのみに適用
 
@@ -520,7 +520,7 @@ if [ ! -f "${PROJECT_SETTINGS}" ]; then
   mkdir -p "${PROJECT_ROOT}/.claude"
   echo '{
     "enabledPlugins": {
-      "harness@claude-code-harness": true
+      "harness@cc-triad-relay": true
     }
   }' > "${PROJECT_SETTINGS}"
 fi
