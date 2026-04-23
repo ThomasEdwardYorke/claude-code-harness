@@ -36,7 +36,7 @@
  * - docs/maintainer/research-anthropic-official-2026-04-22.md (公式 hook 仕様調査)
  * - CHANGELOG.md (feature history)
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 import { loadConfigSafe } from "../config.js";
 // ============================================================
@@ -94,25 +94,74 @@ export async function handleUserPromptSubmit(input, options) {
             continue;
         }
         const fullPath = resolve(projectRoot, relPath);
-        // Defence-in-depth: after resolve, confirm the path stays under projectRoot.
-        // (handles symlinks / unusual segment normalisation that escape the prefix)
+        // Codex security review (PR #14) — Issue #1 Symlink Escape:
+        //   lexical path confinement (startsWith) だけでは `readFileSync()` が
+        //   symlink を follow するため、repo-controlled symlink で任意 file
+        //   (例: `/etc/passwd` への symlink) を読まれるリスクがある。
+        //   対策: (a) `realpathSync` で projectRoot と target を両方 canonical
+        //   化して接頭辞比較、(b) `lstatSync` で個別 entry が symlink なら
+        //   reject (symlink-free directory tree を強制)。
         //
-        // Platform-aware separator: Windows native path uses `\` after `resolve`,
-        // POSIX uses `/`. Hardcoding `/` would cause false-positive rejection on
-        // Windows. `node:path.sep` resolves per-platform (Codex Worker review 指摘)。
-        const rootPrefix = resolve(projectRoot) + sep;
-        const normFull = resolve(fullPath);
-        if (!normFull.startsWith(rootPrefix) && normFull !== resolve(projectRoot)) {
+        //   原 lexical check (`startsWith(rootPrefix)`) も残し defence-in-depth。
+        let realRoot;
+        try {
+            realRoot = realpathSync(projectRoot);
+        }
+        catch {
+            // projectRoot 自体が見えない (test fixture 削除等) — silent skip
             continue;
         }
         if (!existsSync(fullPath))
             continue;
+        // Symlink rejection: `lstatSync` は symlink を follow しないので、
+        // target file 自体が symlink なら即 reject。親 directory path に
+        // symlink がある場合も realpath で吸収され prefix check で検出される。
+        let lstat;
+        try {
+            lstat = lstatSync(fullPath);
+        }
+        catch {
+            continue;
+        }
+        if (lstat.isSymbolicLink()) {
+            continue;
+        }
+        // Codex review Issue #5 File Read Safety Gaps:
+        //   - `isFile()` 未 gate: FIFO / socket / char device で `readFileSync`
+        //     が block する可能性 → `statSync().isFile()` で通常 file のみ許可
+        //   - byte vs char: `string.length` は UTF-16 code unit count、
+        //     `maxTotalBytes` は byte 意味 → `Buffer.byteLength()` で byte
+        //     cap を正確に
+        let stat;
+        try {
+            stat = statSync(fullPath);
+        }
+        catch {
+            continue;
+        }
+        if (!stat.isFile()) {
+            continue;
+        }
+        // realpath + canonical prefix 比較: symlink を経由した後の実 path が
+        // projectRoot 内に収まっているかを canonical form で検証。
+        // platform-aware separator (Windows `\` vs POSIX `/`) は sep で吸収。
+        let realFull;
+        try {
+            realFull = realpathSync(fullPath);
+        }
+        catch {
+            continue;
+        }
+        const realRootPrefix = realRoot + sep;
+        if (!realFull.startsWith(realRootPrefix) && realFull !== realRoot) {
+            continue;
+        }
         let rawContent;
         try {
             rawContent = readFileSync(fullPath, "utf-8");
         }
         catch {
-            // Read error (perms / FIFO / etc.) — silent skip per fail-open
+            // Read error (perms / unusual entry) — silent skip per fail-open
             continue;
         }
         // CodeRabbit security review (PR #13): newline sanitize で fake
@@ -124,18 +173,36 @@ export async function handleUserPromptSubmit(input, options) {
         // 独立行として現れる余地を排除する。readability は低下するが、
         // security を優先する strict 防御。content 内容は意味的に残る。
         const content = rawContent.replace(/\r\n|[\n\r]/g, "\\n");
+        // Byte-based size cap (Codex review Issue #5): string.length は UTF-16
+        // code unit 数、`maxTotalBytes` は byte 意味。Buffer.byteLength で
+        // UTF-8 encode 後の byte 数を使う。slice 時も byte 境界で safe に cut。
+        const contentBytes = Buffer.byteLength(content, "utf-8");
         const remaining = maxTotalBytes - totalBytes;
         if (remaining <= 0) {
             truncated = true;
             break;
         }
-        const slice = content.length > remaining ? content.slice(0, remaining) : content;
-        if (slice.length < content.length) {
+        let slice;
+        let sliceBytes;
+        if (contentBytes > remaining) {
+            // Binary-safe truncate: byte 単位で cut し UTF-8 boundary を尊重。
+            // Buffer に encode → slice → 再度 decode。slice 境界が multi-byte
+            // char の中なら末尾の壊れた bytes を弾いて valid UTF-8 を保つ。
+            const buf = Buffer.from(content, "utf-8").subarray(0, remaining);
+            // Node の toString("utf-8") は invalid trailing bytes を replacement char 化
+            // するので、replace で取り除いて clean な string を得る。
+            slice = buf.toString("utf-8").replace(/�+$/, "");
+            sliceBytes = Buffer.byteLength(slice, "utf-8");
             truncated = true;
         }
+        else {
+            slice = content;
+            sliceBytes = contentBytes;
+        }
         const header = `--- ${relPath} ---\n`;
+        const headerBytes = Buffer.byteLength(header, "utf-8");
         sections.push(header + slice);
-        totalBytes += header.length + slice.length;
+        totalBytes += headerBytes + sliceBytes;
         if (totalBytes >= maxTotalBytes) {
             truncated = true;
             break;
