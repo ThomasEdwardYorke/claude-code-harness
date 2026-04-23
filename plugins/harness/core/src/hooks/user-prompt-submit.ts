@@ -146,13 +146,23 @@ export async function handleUserPromptSubmit(
 
     if (!existsSync(fullPath)) continue;
 
-    let content: string;
+    let rawContent: string;
     try {
-      content = readFileSync(fullPath, "utf-8");
+      rawContent = readFileSync(fullPath, "utf-8");
     } catch {
       // Read error (perms / FIFO / etc.) — silent skip per fail-open
       continue;
     }
+
+    // CodeRabbit security review (PR #13): newline sanitize で fake
+    // section-boundary injection を防ぐ。project-local rule file に
+    // `===== END HARNESS CONTEXT =====` のような fence marker を仕込まれた
+    // 場合、元 file の `\n` が preserved だと fence が機能せず Claude の
+    // context 解釈に attacker-controlled boundary を作れる。`\r\n` / `\n`
+    // / `\r` を 2 文字 literal `\\n` に置換することで、fence marker が
+    // 独立行として現れる余地を排除する。readability は低下するが、
+    // security を優先する strict 防御。content 内容は意味的に残る。
+    const content = rawContent.replace(/\r\n|[\n\r]/g, "\\n");
 
     const remaining = maxTotalBytes - totalBytes;
     if (remaining <= 0) {
