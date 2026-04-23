@@ -2,7 +2,7 @@
 name: harness-work
 description: "Plans.md 駆動の実装ディスパッチャ (v4)。タスク数で Auto Mode Detection し内部的に `/tdd-implement` v2 (Solo) or `/parallel-worktree` v1 (Parallel/Breezing) に委譲、TDD + Codex チーム並列 + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオンの完全品質ゲートを常時強制する。バグ修正・機能追加のサブフローを統合。Use when user mentions: implement, execute, fix bug, add feature, /harness-work, /work, /breezing, /fix-bug, /add-feature, --parallel. Do NOT load for: planning (use harness-plan), code review (use harness-review), release (use harness-release)."
 description-ja: "Harness v4 統合実行ディスパッチャ。Plans.md 駆動で Auto Mode Detection (1件=Solo、2-3件=Parallel、4件以上=Breezing) し、内部的に /tdd-implement v2 or /parallel-worktree v1 に委譲することで TDD + Codex チーム + 疑似 CodeRabbit + 本物 CodeRabbit + Codex セカンドオピニオン (Phase 7) の完全品質ゲートを常時強制。以下で起動: 実装して、バグ修正、機能追加、/harness-work、/work、/breezing、/fix-bug、/add-feature、--parallel。プランニング・レビュー・リリース・セットアップには使わない。"
-allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Task", "Skill"]
+allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput", "Skill"]
 argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>] [--parallel N] [--breezing] [--sequential] [--no-commit] [--dry-run]"
 ---
 
@@ -75,7 +75,7 @@ elif args.sequential: mode = "sequential"
 elif "wt:avoid" in wt_labels and "wt:recommended" not in wt_labels:
     # wt:avoid 混在、worktree 使えない
     if n_groups <= 1: mode = "solo"
-    elif n_groups <= 3: mode = "parallel-task-tool"   # Task ツールで並列
+    elif n_groups <= 3: mode = "parallel-agent-tool"  # Agent ツールで並列 (公式 tool 名、旧称 Task)
     else: mode = "breezing-phase-fanout"              # Turbo 流 Phase fan-out
 else:
     # worktree 利用可
@@ -92,7 +92,7 @@ else:
 | 0 | — | 報告のみ | — (`/harness-plan` 提案) |
 | 1 | wt:avoid | **Solo (avoid)** | `/tdd-implement` v2 直接 |
 | 1 | wt:recommended | **Solo (worktree)** | `/parallel-worktree --max-parallel=1` (縮退モード) |
-| 2-3 | wt:avoid | **Parallel (Task tool)** | Task ツール N 個 + TDD 強制節埋込 |
+| 2-3 | wt:avoid | **Parallel (Agent tool)** | Agent ツール N 個 + TDD 強制節埋込 |
 | 2-3 | wt:recommended | **Parallel (worktree)** | `/parallel-worktree --max-parallel=N` |
 | 4+ | wt:avoid | **Breezing (Phase fan-out)** | Turbo 流: 独立グループ → 依存グループの 2 相並列 |
 | 4+ | wt:recommended | **Breezing (worktree)** | `/parallel-worktree --max-parallel=min(N,4)` |
@@ -102,14 +102,14 @@ else:
 wt:avoid タスクが 4+ で worktree 使えない場合、Turbo 流に**位相分離**して並列化:
 
 ```
-Phase A: 独立タスク群 (depends_on=[]) を Task ツール並列
-  ├─ Task A1 (TDD 強制節埋込)
-  ├─ Task A2 (TDD 強制節埋込)
-  └─ Task A3 (TDD 強制節埋込)
+Phase A: 独立タスク群 (depends_on=[]) を Agent ツール並列
+  ├─ Agent A1 (TDD 強制節埋込)
+  ├─ Agent A2 (TDD 強制節埋込)
+  └─ Agent A3 (TDD 強制節埋込)
       ↓ 全完了まで同期
 Phase B: 依存タスク群 (depends_on=[A1,A2]) を並列
-  ├─ Task B1 (TDD 強制節埋込)
-  └─ Task B2 (TDD 強制節埋込)
+  ├─ Agent B1 (TDD 強制節埋込)
+  └─ Agent B2 (TDD 強制節埋込)
       ↓
 全完了後 Coordinator が Plans.md 一括更新 + cross-task Reviewer レビュー 1 回
 ```
@@ -323,7 +323,7 @@ done
 export NO_COMMIT
 echo "NO_COMMIT: ${NO_COMMIT:-<not set>}"
 
-# Handoff 規約 (Skill / Task tool いずれでも同じ):
+# Handoff 規約 (Skill / Agent tool いずれでも同じ):
 # coordinator が解決した $PROFILE / $NO_COMMIT を **materialize して** downstream に渡す。
 # 例 (Solo → /tdd-implement):
 #   `/tdd-implement ${TASK_ID} --profile=${PROFILE} ${NO_COMMIT}`
@@ -452,11 +452,11 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feat
 - 各 worktree で `harness:worker` agent 起動、内部で `/tdd-implement` v2 強制実行
 - coordinator が本物 CodeRabbit + マージ順序 + コンフリクト解消 + 担当表クリア
 
-#### 4.2b Parallel (Task tool) モード — wt:avoid 混在、worktree 使えない
+#### 4.2b Parallel (Agent tool) モード — wt:avoid 混在、worktree 使えない
 
-`Task` ツールで N タスクを並列起動。各 Task プロンプトには以下を必須埋込する:
+`Agent` ツール (公式 tools-reference の `Agent`、旧称 `Task` は現行 catalog 未掲載) で N タスクを並列起動。各 Agent プロンプトには以下を必須埋込する:
 - TDD 強制節
-- **profile を materialize 済み実値で埋め込む** (Skill handoff と同じ規約)。`tdd_enforced_prompt(task)` を組み立てる段階で coordinator が `$PROFILE` を実値 (chill / assertive / strict) に置換してから Task prompt 文字列に入れる。literal `$PROFILE` のまま渡すと subagent 側で slot 展開されず profile が失われる (Anthropic 公式の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` 0-based のみ保証)。
+- **profile を materialize 済み実値で埋め込む** (Skill handoff と同じ規約)。`tdd_enforced_prompt(task)` を組み立てる段階で coordinator が `$PROFILE` を実値 (chill / assertive / strict) に置換してから Agent prompt 文字列に入れる。literal `$PROFILE` のまま渡すと subagent 側で slot 展開されず profile が失われる (Anthropic 公式の動的置換は `$ARGUMENTS` / `$ARGUMENTS[N]` / `$N` 0-based のみ保証)。
 
 ```markdown
 本タスクは TDD + 品質ゲート必須。以下の Phase を省略なく実行:
@@ -476,23 +476,23 @@ Skill({skill: "parallel-worktree", args: "--max-parallel=3 --feature-branch=feat
 - Phase 5.5 疑似 CodeRabbit: `/pseudo-coderabbit-loop --local --profile=assertive` で actionable=0 まで反復
 ```
 
-**注**: `harness:worker` は `disallowedTools: [Task]` のため worker 内から更に agent 起動不可。**TDD 強制は worker プロンプト本文で実現**する。
+**注**: `harness:worker` は `disallowedTools: [Agent]` のため worker 内から更に subagent 起動不可 (`Agent` tool が公式 subagent spawn tool、`Task` 単独は公式 catalog 未掲載)。**TDD 強制は worker プロンプト本文で実現**する。
 
 #### 4.2c Breezing (Phase fan-out) モード — wt:avoid 混在、4+ タスク
 
 Turbo 流の位相分離:
 
 ```bash
-# Phase A: 独立タスク群を Task ツール並列 (全て TDD 強制節埋込)
+# Phase A: 独立タスク群を Agent ツール並列 (全て TDD 強制節埋込)
 coordinator_plans = compute_phases(tasks, dependencies)
 for task in coordinator_plans["phase_a"]:
-    Task({description: task.title, prompt: tdd_enforced_prompt(task), run_in_background: true})
+    Agent({description: task.title, prompt: tdd_enforced_prompt(task), run_in_background: true})
 
 # 全 Phase A 完了まで同期
 
-# Phase B: 依存タスク群を Task ツール並列
+# Phase B: 依存タスク群を Agent ツール並列
 for task in coordinator_plans["phase_b"]:
-    Task({description: task.title, prompt: tdd_enforced_prompt(task), run_in_background: true})
+    Agent({description: task.title, prompt: tdd_enforced_prompt(task), run_in_background: true})
 
 # 全完了後 coordinator が:
 # - Plans.md 一括更新
@@ -713,7 +713,7 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 
 3. **`disable-model-invocation: true` の挙動**: ユーザー明示呼出のみを許可する frontmatter フィールド。現状の `/harness-work` / `/tdd-implement` には設定していないが、循環呼出リスク軽減のために追加を検討 (ただし description で自動選択制御する方が柔軟)。
 
-4. **`harness:worker` plugin-scoped agent 名の Task 引数**: `Task({subagent_type: "harness:worker"})` 形式が実際に動作するか要検証。現状の `/parallel-worktree` は `subagent_type: "harness:worker"` を指定しているが、plugin-scoped name 解決が v2.1+ Claude Code で正しく動くか未確認。
+4. **`harness:worker` plugin-scoped agent 名の Agent 引数**: `Agent({subagent_type: "harness:worker"})` 形式が実際に動作するか要検証。現状の `/parallel-worktree` は `subagent_type: "harness:worker"` を指定しているが、plugin-scoped name 解決が v2.1+ Claude Code で正しく動くか未確認 (公式 subagent spawn tool は `Agent`、旧称 `Task` は現行 catalog 未掲載)。
 
 5. **SessionMode 拡張**: `core/src/types.ts` の `SessionMode` に `"tdd"` / `"parallel-worktree"` を追加するかは設計判断待ち。既存の `"work"` / `"breezing"` を継続利用で運用上問題ないなら変更不要。
 
@@ -731,8 +731,8 @@ Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が
 |---|---|
 | `Skill({skill: "tdd-implement"})` が動作しない | harness-work が tdd-implement の内容をインライン展開してプロンプトに埋込 (品質ゲート節を必須埋込) |
 | `harness:codex-sync` agent 起動失敗 | `Bash` で `codex exec ...` を直接呼ぶ (同じ品質確保) |
-| `/pseudo-coderabbit-loop` Skill 呼出失敗 | `coderabbit-mimic` agent を直接 Task で起動 |
-| `/parallel-worktree` Skill 呼出失敗 | harness-work が直接 worktree 生成 + harness:worker を Task 並列起動 (各 Task で TDD 強制節埋込) |
+| `/pseudo-coderabbit-loop` Skill 呼出失敗 | `coderabbit-mimic` agent を直接 Agent tool で起動 |
+| `/parallel-worktree` Skill 呼出失敗 | harness-work が直接 worktree 生成 + harness:worker を Agent ツール並列起動 (各 Agent で TDD 強制節埋込) |
 | Codex CLI 未インストール | Codex Phase をスキップ、その旨を Plans.md / 完了報告に明示 |
 | CodeRabbit 設定なし (`.coderabbit.yaml` なし) | Phase 5.5/6 をスキップ、その旨を明示。プロジェクト側で `.coderabbit.yaml` + GitHub App install を推奨 |
 

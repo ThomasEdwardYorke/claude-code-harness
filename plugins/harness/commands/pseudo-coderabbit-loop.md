@@ -1,7 +1,7 @@
 ---
 name: pseudo-coderabbit-loop
 description: "Codex による疑似 CodeRabbit レビューを内部ループで回し、本物 CodeRabbit へは絞り込んだ状態で push する統合スキル。CodeRabbit の rate limit (Pro: 5/h) を回避しつつレビュー品質を維持する。Use after implementing a feature, before requesting real CodeRabbit review, especially in parallel worktree workflows. Also used to resume a loop when CodeRabbit is rate-limited."
-allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "Task"]
+allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
 argument-hint: "[pr-number|--local] [--profile=chill|assertive|strict] [--worktree=<path>]"
 ---
 
@@ -270,7 +270,7 @@ fi  # Step 1.2 is PR-mode only
 
 ### Step 2. Codex 疑似レビュー実行
 
-`coderabbit-mimic` agent を Task tool で呼び出し。入力:
+`coderabbit-mimic` agent を Agent tool で呼び出し。入力 (公式 tools-reference: `Agent` tool が subagent spawn 用、旧称 `Task` は現行 catalog 未掲載):
 
 ```json
 {

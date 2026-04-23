@@ -2,7 +2,7 @@
 name: harness-review
 description: "Unified review skill for Harness v3. Multi-angle code, plan, and scope review. Integrates troubleshoot, maintenance, harness integrity check, and CodeRabbit review loop. Use when user mentions: review, code review, plan review, troubleshoot, maintenance, harness check, coderabbit, /harness-review, /troubleshoot, /maintenance. Do NOT load for: implementation, new features, bug fixes, setup, or release."
 description-ja: "Harness v3 統合レビュースキル。コード・プラン・スコープの多角的レビュー、トラブルシュート、保守作業、ハーネス整合性確認、CodeRabbitレビューループを統合。以下で起動: レビュー、コードレビュー、プランレビュー、トラブルシュート、保守、ハーネス確認、coderabbit、/harness-review、/troubleshoot、/maintenance。実装・新機能・バグ修正・セットアップ・リリースには使わない。"
-allowed-tools: ["Read", "Grep", "Glob", "Bash", "Task"]
+allowed-tools: ["Read", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
 argument-hint: "[code|plan|scope|troubleshoot|maintenance|integrity|coderabbit]"
 context: fork
 ---

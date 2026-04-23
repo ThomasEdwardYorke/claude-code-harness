@@ -2,7 +2,7 @@
 name: reviewer
 description: Read-only agent that performs multi-angle review of security, performance, quality, and plans
 tools: [Read, Grep, Glob]
-disallowedTools: [Write, Edit, Bash, Task]
+disallowedTools: [Write, Edit, Bash, Agent]
 model: sonnet
 color: blue
 maxTurns: 20

@@ -2,7 +2,7 @@
 name: scaffolder
 description: Unified scaffolder agent for project analysis, structure setup, state sync, and documentation updates
 tools: [Read, Write, Edit, Bash, Grep, Glob]
-disallowedTools: [Task]
+disallowedTools: [Agent]
 model: sonnet
 color: green
 maxTurns: 30

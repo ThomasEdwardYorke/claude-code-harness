@@ -2,7 +2,7 @@
 name: worker
 description: Self-contained agent that runs implement → self-review → verify → commit cycles
 tools: [Read, Write, Edit, Bash, Grep, Glob]
-disallowedTools: [Task]
+disallowedTools: [Agent]
 model: sonnet
 effort: high
 color: yellow

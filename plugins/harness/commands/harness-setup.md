@@ -196,7 +196,8 @@ Consumed by `/harness-work`, `/tdd-implement`, `/parallel-worktree`, and
 - `work.changeLogFile` — optional change log scanned by
   `/harness-plan sync`.
 - `work.maxParallel` (1-16, default 4) — fan-out cap for in-process
-  `Task`-tool parallelism.
+  `Agent`-tool parallelism (official tool name per tools-reference; the
+  legacy alias `Task` is not in the current catalog).
 - `work.labelPriority` / `work.criticalLabels` — task-label ordering and
   labels that force full quality gates.
 - `work.testCommand` — canonical test step (overrides per-stack
