@@ -10,7 +10,7 @@ An example with every field populated:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/ThomasEdwardYorke/claude-code-harness/main/plugins/harness/schemas/harness.config.schema.json",
+  "$schema": "https://raw.githubusercontent.com/ThomasEdwardYorke/cc-triad-relay/main/plugins/harness/schemas/harness.config.schema.json",
   "projectName": "my-app",
   "language": "en",
   "protectedDirectories": ["datasets", "fixtures/gold"],
@@ -61,7 +61,7 @@ An example with every field populated:
 
 This is the default installation: the harness ships with guardrails that do
 NOT block a single thing until you enable them. That makes `claude plugin
-install harness@claude-code-harness` safe to run on any project without
+install harness@cc-triad-relay` safe to run on any project without
 surprise blocks.
 
 ## Where to put the file

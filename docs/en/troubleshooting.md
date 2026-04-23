@@ -7,7 +7,7 @@ Run `npm run build` inside `plugins/harness/core`. The dispatcher needs
 
 ## Hooks don't fire
 
-1. `claude plugin list --json` — is `harness@claude-code-harness` enabled?
+1. `claude plugin list --json` — is `harness@cc-triad-relay` enabled?
 2. `claude --plugin-dir plugins/harness` — can the plugin load at all?
 3. Check `$CLAUDE_PLUGIN_ROOT` inside a hook (run `harness doctor`). If it
    doesn't end with the plugin directory, something is wrong with your

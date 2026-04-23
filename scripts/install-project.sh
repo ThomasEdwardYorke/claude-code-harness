@@ -3,9 +3,9 @@
 # companion) into the caller's current project directory.
 #
 # Usage (run from inside your project root):
-#   bash ~/dev/claude-code-harness/scripts/install-project.sh
-#   bash ~/dev/claude-code-harness/scripts/install-project.sh --with-codex
-#   bash ~/dev/claude-code-harness/scripts/install-project.sh --help
+#   bash ~/dev/cc-triad-relay/scripts/install-project.sh
+#   bash ~/dev/cc-triad-relay/scripts/install-project.sh --with-codex
+#   bash ~/dev/cc-triad-relay/scripts/install-project.sh --help
 #
 # Flags:
 #   --with-codex   Also install openai-codex companion plugin (enables the
@@ -14,7 +14,7 @@
 #
 # Steps performed:
 #   1. Register the harness marketplace (idempotent)
-#   2. Install harness@claude-code-harness at project scope
+#   2. Install harness@cc-triad-relay at project scope
 #   3. [opt-in] Register the codex marketplace + install codex@openai-codex
 #   4. Scaffold harness.config.json from the repo template if missing
 #
@@ -59,7 +59,7 @@ done
 
 PROJECT_ROOT="$(pwd)"
 HARNESS_REPO="$(cd "$(dirname "$0")/.." && pwd)"
-HARNESS_SLUG="ThomasEdwardYorke/claude-code-harness"
+HARNESS_SLUG="ThomasEdwardYorke/cc-triad-relay"
 CODEX_SLUG="openai/codex-plugin-cc"
 
 if ! command -v claude >/dev/null 2>&1; then
@@ -87,8 +87,8 @@ fi
 echo ""
 
 # 2. Harness plugin
-echo "==> Installing harness@claude-code-harness (scope: project)..."
-claude plugin install harness@claude-code-harness --scope project
+echo "==> Installing harness@cc-triad-relay (scope: project)..."
+claude plugin install harness@cc-triad-relay --scope project
 
 # 3. Codex companion (opt-in)
 if [ "${WITH_CODEX}" -eq 1 ]; then

@@ -21,8 +21,8 @@ Then edit the `{{PROJECT_NAME}}` / `{{PROJECT_DESCRIPTION}}` /
 For most projects, installing the plugin is simpler:
 
 ```bash
-claude plugin marketplace add ThomasEdwardYorke/claude-code-harness
-claude plugin install harness@claude-code-harness --scope project
+claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay
+claude plugin install harness@cc-triad-relay --scope project
 ```
 
 See [../docs/en/installation.md](../docs/en/installation.md).

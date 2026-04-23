@@ -13,7 +13,7 @@ Codex / CodeRabbit レビュー全件対応済。
 
 1. **annotated tag 作成** (GPG 署名があれば `-s` 付与):
    ```bash
-   cd ~/.claude/plugins/marketplaces/claude-code-harness
+   cd ~/.claude/plugins/marketplaces/cc-triad-relay
    git checkout main && git pull --ff-only
    git tag -a v{NEW_VERSION} -m "release: v{NEW_VERSION}"
    ```
@@ -118,9 +118,9 @@ git push origin main
 ```
 
 **利用者側の cache 対処** (plugin cache に古い version が残っている場合):
-- `/plugin uninstall harness@claude-code-harness`
-- `/plugin install harness@claude-code-harness`
-- それでも解消しない場合: `rm -rf ~/.claude/plugins/cache/claude-code-harness/` (最終手段、公式 docs には明記なし)
+- `/plugin uninstall harness@cc-triad-relay`
+- `/plugin install harness@cc-triad-relay`
+- それでも解消しない場合: `rm -rf ~/.claude/plugins/cache/cc-triad-relay/` (最終手段、公式 docs には明記なし)
 
 ---
 

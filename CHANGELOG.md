@@ -5,6 +5,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Repository rename `claude-code-harness` → `cc-triad-relay`** — the plugin repository on GitHub is renamed from `ThomasEdwardYorke/claude-code-harness` to `ThomasEdwardYorke/cc-triad-relay` to eliminate naming collisions with at least 4 other public repositories sharing the exact `claude-code-harness` name (most visibly `Chachamaru127/claude-code-harness` at 583 stars, which is also credited in `NOTICE` for the original guardrail rule structure, skill taxonomy, and agent composition — that credit line is intentionally preserved verbatim because it references a different project and must not drift). The new name brand-signals the plugin's actual differentiators: the Claude Code + Codex + CodeRabbit **triad** review loop and the session-handoff-based **relay** continuity. All manifest identifiers are updated in lock-step: root `package.json` `"name"` → `cc-triad-relay`, workspace `plugins/harness/core/package.json` `"name"` → `@cc-triad-relay/core`, marketplace catalog `.claude-plugin/marketplace.json` `"name"` → `cc-triad-relay`, and plugin manifest `plugins/harness/.claude-plugin/plugin.json` `homepage` / `repository` URLs. The plugin component name inside the marketplace stays `harness`, so the install command becomes `claude plugin install harness@cc-triad-relay` (previously `harness@claude-code-harness`). `plugins/harness/schemas/harness.config.schema.json` `$id` points at the new `raw.githubusercontent.com/ThomasEdwardYorke/cc-triad-relay/main/...` path. A new `describe("repo identity — cc-triad-relay (post-rename 2026-04-24)")` block in `content-integrity.test.ts` adds 9 lock-in assertions for root-pkg / workspace-pkg / marketplace / plugin-manifest names, `homepage` / `repository` URLs, README install command and marketplace-add line, and `scripts/install-project.sh` header path, plus a stale-reference guard that asserts none of the four anchor manifests still contain `claude-code-harness` substring — so any future drift is caught at CI before PR. All `README.md` / `template/README.md` / `docs/en/**` / `docs/ja/**` / `docs/maintainer/**` / `scripts/install-project.sh` / `scripts/set-owner.sh` / `.github/pull_request_template.md` self-references are updated. `CHANGELOG.md` release URLs at the bottom now point at the new repo path; GitHub's permanent 301 redirect keeps the old URLs working indefinitely but maintainer-side links are clean. `package-lock.json` regenerated via `npm install` — verified post-generation at 2 `@cc-triad-relay` references and 0 `@claude-code-harness` references. **`NOTICE` is explicitly not touched**: the upstream credit `Chachamaru127/claude-code-harness v3.1.0 (guardrail rule structure, skill taxonomy, and agent composition were informed by this work)` is a reference to a distinct third-party project and must keep its exact repo path to avoid misattributing the credit to our renamed fork. **Migration notes for downstream consumers**: (1) `claude plugin marketplace update` should auto-follow via GitHub's permanent redirect, but explicit `claude plugin marketplace remove claude-code-harness` → `claude plugin marketplace add ThomasEdwardYorke/cc-triad-relay` is the clean path. (2) Hand-written `harness@claude-code-harness` references must be rewritten to `harness@cc-triad-relay` — plugin-install catalog names are direct identifiers and do not auto-migrate even with the URL redirect. (3) The local marketplace cache directory `~/.claude/plugins/marketplaces/claude-code-harness/` can be renamed to `cc-triad-relay/` or left alone (`claude plugin marketplace update` will re-sync on next refresh; Anthropic plugin cache is read-only from the user's perspective). Full plugin `npm test` passes at 2065/2065 on this branch (main-base; the concurrent feature/model-b-evolution branch for PR #17 Phase ε exemption grammar work carries +15 additional generality-related assertions independently and will pick up this rename on rebase). Rationale source: GitHub naming collision audit on 2026-04-24 identified 4 public repositories sharing the exact `claude-code-harness` name, Codex A public-docs survey confirmed GitHub's permanent-redirect policy (URLs redirect indefinitely; old name re-claim is possible but we choose to retire it) + Anthropic Claude Code plugin marketplace catalog semantics (direct-identifier for install, not URL-based), and Codex B exhaustive 65-reference enumeration across both the plugin repository and the `parts-management` test-bed consumer drove the migration plan.
+
 ## [0.3.3] - 2026-04-23
 
 ### Fixed
@@ -104,13 +108,13 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.3...HEAD
-[0.3.3]: https://github.com/ThomasEdwardYorke/claude-code-harness/compare/v0.3.2...v0.3.3
-[0.3.2]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.2
-[0.3.1]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.1
-[0.3.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.3.0
-[0.2.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.2.0
-[0.1.0]: https://github.com/ThomasEdwardYorke/claude-code-harness/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.2
+[0.3.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.1
+[0.3.0]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.0
+[0.2.0]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.2.0
+[0.1.0]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.1.0
 
 [anthropic-memory]: https://code.claude.com/docs/en/memory
 [anthropic-skills]: https://code.claude.com/docs/en/skills

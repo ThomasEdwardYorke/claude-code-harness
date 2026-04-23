@@ -1219,6 +1219,91 @@ describe("marketplace.json のクロスマーケットプレイス依存宣言 (
   });
 });
 
+// ---------------------------------------------------------------------------
+// Repo rename (Phase ζ+1): cc-triad-relay identity lock
+// ---------------------------------------------------------------------------
+// Naming convention after the 2026-04-24 repository rename:
+// - marketplace catalog name: `cc-triad-relay`
+// - root npm package name: `cc-triad-relay`
+// - workspace package name: `@cc-triad-relay/core`
+// - plugin component name: `harness` (unchanged; internal identifier)
+// - GitHub remote URL segment: `ThomasEdwardYorke/cc-triad-relay`
+// These four anchors must stay consistent; drift indicates a missed rename.
+describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
+  const rootPkg = JSON.parse(
+    readFileSync(resolve(PLUGIN_ROOT, "../../package.json"), "utf-8"),
+  ) as Record<string, unknown>;
+  const corePkg = JSON.parse(
+    readFileSync(resolve(PLUGIN_ROOT, "core/package.json"), "utf-8"),
+  ) as Record<string, unknown>;
+  const marketplaceJson = JSON.parse(
+    readFileSync(
+      resolve(PLUGIN_ROOT, "../../.claude-plugin/marketplace.json"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+  const pluginManifest = JSON.parse(
+    readFileSync(
+      resolve(PLUGIN_ROOT, ".claude-plugin/plugin.json"),
+      "utf-8",
+    ),
+  ) as Record<string, unknown>;
+  const readme = readFileSync(
+    resolve(PLUGIN_ROOT, "../../README.md"),
+    "utf-8",
+  );
+  const installScript = readFileSync(
+    resolve(PLUGIN_ROOT, "../..", "scripts/install-project.sh"),
+    "utf-8",
+  );
+
+  it("root package.json name === 'cc-triad-relay'", () => {
+    expect(rootPkg["name"]).toBe("cc-triad-relay");
+  });
+
+  it("workspace package.json name === '@cc-triad-relay/core'", () => {
+    expect(corePkg["name"]).toBe("@cc-triad-relay/core");
+  });
+
+  it("marketplace.json name === 'cc-triad-relay'", () => {
+    expect(marketplaceJson["name"]).toBe("cc-triad-relay");
+  });
+
+  it("plugin.json homepage references the new repo URL", () => {
+    expect(pluginManifest["homepage"]).toBe(
+      "https://github.com/ThomasEdwardYorke/cc-triad-relay",
+    );
+  });
+
+  it("plugin.json repository references the new repo URL", () => {
+    expect(pluginManifest["repository"]).toBe(
+      "https://github.com/ThomasEdwardYorke/cc-triad-relay",
+    );
+  });
+
+  it("README install command uses harness@cc-triad-relay", () => {
+    expect(readme).toMatch(/claude plugin install harness@cc-triad-relay\b/);
+  });
+
+  it("README marketplace add uses new repo path", () => {
+    expect(readme).toMatch(/claude plugin marketplace add .+\/cc-triad-relay\b/);
+  });
+
+  it("install-project.sh header points at cc-triad-relay path", () => {
+    expect(installScript).toMatch(/cc-triad-relay\/scripts\/install-project\.sh/);
+  });
+
+  it("no stale `claude-code-harness` reference remains in shipped manifests", () => {
+    // Self-reference guard: all four anchor files must be clean post-rename.
+    // NOTE: this test is intentionally stricter than the grep-based audit — if
+    // any shipped manifest still contains the old name, the rename is incomplete.
+    expect(JSON.stringify(rootPkg)).not.toMatch(/claude-code-harness/);
+    expect(JSON.stringify(corePkg)).not.toMatch(/claude-code-harness/);
+    expect(JSON.stringify(marketplaceJson)).not.toMatch(/claude-code-harness/);
+    expect(JSON.stringify(pluginManifest)).not.toMatch(/claude-code-harness/);
+  });
+});
+
 describe("install-project.sh — Codex companion opt-in (Phase ζ)", () => {
   const src = readFileSync(
     resolve(PLUGIN_ROOT, "../..", "scripts/install-project.sh"),

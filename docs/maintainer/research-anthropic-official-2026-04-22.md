@@ -1,13 +1,13 @@
 # Anthropic 公式ドキュメント監査レポート — 2026-04-22
 
-**監査対象**: Claude Code Harness Plugin (`~/.claude/plugins/marketplaces/claude-code-harness/`)
+**監査対象**: Claude Code Harness Plugin (`~/.claude/plugins/marketplaces/cc-triad-relay/`)
 **監査ブランチ**: `feature/model-b-evolution`
 **監査日**: 2026-04-22
 **調査者**: Codex Worker A (Automated background search)
 
 ## 0. 監査方法と前提
 
-- ローカル実装は `~/.claude/plugins/marketplaces/claude-code-harness/` を直接調査した。
+- ローカル実装は `~/.claude/plugins/marketplaces/cc-triad-relay/` を直接調査した。
 - 公式仕様は Anthropic / Claude Code の公開ドキュメントを優先した。
 - 主参照 URL:
   - Subagents: https://code.claude.com/docs/en/sub-agents
