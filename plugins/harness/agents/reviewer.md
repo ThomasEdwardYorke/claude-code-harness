@@ -105,7 +105,7 @@ def process(self, content: str) -> list:
 
 ## 禁止事項 (Read-only agent)
 
-- `Write` / `Edit` / `Bash` / `Task` ツールの使用
+- `Write` / `Edit` / `Bash` / `Agent` ツールの使用 (公式 tools-reference: subagent spawn は `Agent`、旧称 `Task` は catalog 未掲載)
 - コードの実修正 (レビュー結果のみ報告、修正は worker に委譲)
 - 外部 API の呼出
 

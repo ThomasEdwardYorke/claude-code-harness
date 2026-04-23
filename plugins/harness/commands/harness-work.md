@@ -699,7 +699,7 @@ v3 のコマンド互換は維持される (`--parallel N` / `--breezing` / `--f
 | Gate 6: 本物 CodeRabbit | `/coderabbit-review` (coordinator) | APPROVED or unresolved=0 まで反復 | 禁止 |
 | Gate 7: Codex セカンドオピニオン | `/codex-team adversarial` | critical 発見 → Gate 1 に差し戻し | 強く推奨 (プロジェクト設定で無効化可) |
 
-Gate 1-5 は worktree / Task 内で blocking 実行、Gate 6 は coordinator が非同期監視、Gate 7 は PR merge 前に 1 回。
+Gate 1-5 は worktree / Agent 内で blocking 実行、Gate 6 は coordinator が非同期監視、Gate 7 は PR merge 前に 1 回 (`Agent` は公式 subagent spawn tool、旧称 `Task` は現行 catalog 未掲載)。
 
 ---
 

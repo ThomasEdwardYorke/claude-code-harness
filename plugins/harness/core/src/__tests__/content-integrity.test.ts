@@ -2167,7 +2167,13 @@ describe("slash command allowed-tools / subagent tools — 公式 tool catalog w
       if (Array.isArray(value)) return value.map((v) => String(v));
       if (typeof value === "string") return splitFlatToolList(value);
       if (value == null) return [];
-      return [];
+      // 公式 slash-commands / sub-agents spec に反する frontmatter 型 (object / number
+      // 等) は silent pass すると guard が偽陽性になるため loud に throw する。
+      // (real CodeRabbit 2026-04-23 inline review L2177 指摘、malformed frontmatter は
+      // CI 停止させる)
+      throw new Error(
+        `frontmatter field '${key}' has invalid type (expected array or space-separated string): ${JSON.stringify(value)}`,
+      );
     }
     // parseYaml 失敗 (catch で doc=undefined) or key 不在 → null を返し caller に skip させる。
     // 以前は key 存在時に空配列を返していたが、malformed YAML を silent に通すため
@@ -2228,8 +2234,15 @@ describe("slash command allowed-tools / subagent tools — 公式 tool catalog w
     (name) => {
       const fm = extractFrontmatter(readCommand(name));
       const list = parseToolListField(fm, "allowed-tools");
-      if (list === null) return; // allowed-tools 省略は公式 slash-commands で optional
-      assertToolListOfficial(`${name} command`, "allowed-tools", list);
+      // `allowed-tools` は本プロジェクトの coding guidelines で command frontmatter の
+      // 必須 field (plugins/harness/commands/**/*.md: name / description / description-ja
+      // / allowed-tools / argument-hint)。欠落は CI で止める (real CodeRabbit 2026-04-23
+      // inline review L2234 指摘、false negative 防止)。
+      expect(
+        list,
+        `${name} command is missing required 'allowed-tools' frontmatter field (coding guidelines)`,
+      ).not.toBeNull();
+      assertToolListOfficial(`${name} command`, "allowed-tools", list!);
     },
   );
 
@@ -2260,6 +2273,15 @@ describe("slash command allowed-tools / subagent tools — 公式 tool catalog w
     expect(stripGranularSpec("Bash(git:*)")).toBe("Bash");
     expect(stripGranularSpec("Bash()")).toBe("Bash");
     expect(stripGranularSpec("Bash(git (nested))")).toBe("Bash");
+  });
+
+  it("parseToolListField は不正型 (object / number) を silent pass せず throw する", () => {
+    expect(() =>
+      parseToolListField("allowed-tools: {foo: bar}", "allowed-tools"),
+    ).toThrow(/invalid type/);
+    expect(() => parseToolListField("tools: 123", "tools")).toThrow(
+      /invalid type/,
+    );
   });
 
   it("parseToolListField は 5 公式書式 (array / CSV / space / block / granular) を全て parse 可", () => {
