@@ -1421,7 +1421,7 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 });
 
 // ============================================================
-// UserPromptSubmit hook 登録 invariant (initial phase, P0 — harness v0.3.2)
+// UserPromptSubmit hook 登録 invariant (observability + context bridge)
 //
 // 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
 //  - Trigger: user が prompt を submit した直後 / Claude 処理開始前
@@ -1440,7 +1440,7 @@ describe("WorktreeCreate / WorktreeRemove hook 登録 invariant", () => {
 //
 // 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
 // ============================================================
-describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
+describe("UserPromptSubmit hook 登録 invariant", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const handlerPath = resolve(
     PLUGIN_ROOT,
@@ -1505,7 +1505,7 @@ describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
 
 
 // ============================================================
-// PostToolUseFailure hook 登録 invariant (initial phase P0, part 2 — harness v0.3.2)
+// PostToolUseFailure hook 登録 invariant (observability + corrective feedback)
 //
 // 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
 //  - Trigger: tool 失敗 (exception / non-zero exit / interrupt)。PostToolUse と
@@ -1524,7 +1524,7 @@ describe("UserPromptSubmit hook 登録 invariant (initial phase, P0)", () => {
 //
 // 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
 // ============================================================
-describe("PostToolUseFailure hook 登録 invariant (initial phase P0, part 2)", () => {
+describe("PostToolUseFailure hook 登録 invariant", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const handlerPath = resolve(
     PLUGIN_ROOT,
@@ -1576,7 +1576,11 @@ describe("PostToolUseFailure hook 登録 invariant (initial phase P0, part 2)", 
     expect(src).toMatch(/permission\\s\+denied/i);
     expect(src).toMatch(/no\\s\+such\\s\+file/i);
     expect(src).toMatch(/command\\s\+not\\s\+found/i);
-    expect(src).toMatch(/exit\\s\+\(\?:status\|code\)\\s\+\(\?:130\|137\|143\)/i);
+    // Signal abort: `exit(ed)? ... (status code|status|code) (130|137|143)` を許容する
+    // broader regex (旧 `exit (status|code) N` のみから拡張)。
+    // `exited` suffix + 間に ≤50 chars の text を挟める形に緩和した痕跡を確認。
+    expect(src).toMatch(/exit\(\?:ed\)\?/);
+    expect(src).toMatch(/\(\?:130\|137\|143\)/);
     expect(src).toMatch(/timed\\s\+out/i);
     expect(src).toMatch(/connection\\s\+refused/i);
   });
@@ -1896,8 +1900,8 @@ describe("session-handoff skill — harness-setup check 統合", () => {
  *   も検出して false-fail する。歴史的言及を残す場合はバッククォート表現を変更すること。
  */
 describe("release guard — version consistency (Phase μ)", () => {
-  const EXPECTED_VERSION = "0.3.1";
-  const EXPECTED_PREV_VERSION = "0.3.0";
+  const EXPECTED_VERSION = "0.3.2";
+  const EXPECTED_PREV_VERSION = "0.3.1";
   const EXPECTED_RELEASE_DATE = "2026-04-23";
 
   // SemVer X.Y.Z 形状検証 (shape validation のみ、leading-zero 等の細部検査は省略)

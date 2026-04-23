@@ -1,6 +1,6 @@
 {
   "name": "claude-code-harness",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Portable guardrail and agent harness for Claude Code",
   "workspaces": ["plugins/harness/core"],

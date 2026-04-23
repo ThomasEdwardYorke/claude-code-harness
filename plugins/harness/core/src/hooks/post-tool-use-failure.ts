@@ -125,7 +125,12 @@ function formatHint(error: string): string | null {
     return "hint: the command is not installed or not on PATH; install or use an alternative";
   }
   // Signal-induced abort: 128+N (shell convention) — 130 (SIGINT), 137 (SIGKILL / OOM), 143 (SIGTERM)
-  if (/\bexit\s+(?:status|code)\s+(?:130|137|143)\b/i.test(error)) {
+  // Matches:
+  //   - `exit status 130` / `exit code 137`
+  //   - `exited with status code 130` / `Command exited with non-zero status code 130`
+  //   - `Subprocess exited abnormally with code 143`
+  // Non-matching example: `status 130 is informational`（`exit` / `exited` が先行しない）
+  if (/\bexit(?:ed)?\b[\s\S]{0,50}?(?:status\s+code|status|code)\s+(?:130|137|143)\b/i.test(error)) {
     return "hint: signal-based abort (interrupt / OOM / termination); inspect stderr and consider retry";
   }
   if (/\btimed\s+out\b|\bdeadline\s+exceeded\b/i.test(error)) {

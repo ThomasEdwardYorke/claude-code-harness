@@ -215,28 +215,33 @@ export type ReleaseStrategy = "two-branch" | "three-branch";
 /**
  * PostToolUseFailure hook configuration.
  *
- * 公式仕様 (https://code.claude.com/docs/en/hooks): tool が失敗した (exception /
- * non-zero exit / interrupt) 時に PostToolUse とは別経路で発火する non-blocking
- * observability hook。`additionalContext` に失敗内容 + 簡易 corrective hint を
- * 載せて Claude が次 turn で修復判断する材料を増やす。
+ * Official spec (https://code.claude.com/docs/en/hooks): this hook fires
+ * when tool execution fails (exception / non-zero exit / interrupt) on a
+ * path separate from `PostToolUse`. Non-blocking observability hook that
+ * adds failure diagnostics and optional corrective hints to
+ * `additionalContext` so Claude has material for next-turn recovery.
  *
- * `correctiveHints: true` (default) で harness built-in の一般的 error pattern
- * (permission denied / no such file / command not found / signal abort /
- * timeout / network unreachable) にマッチする軽量 hint を付与する。
+ * When `correctiveHints` is true (default), the harness built-in hint
+ * matchers cover common error patterns (permission denied / no such file /
+ * command not found / signal abort / timeout / network unreachable) and
+ * append a short suggestion string.
  *
- * `enabled: false` または config malformed → silent skip で approve (fail-open)。
+ * When `enabled` is false or the config is malformed, the handler
+ * silently returns `decision: "approve"` with no `additionalContext`
+ * (fail-open).
  */
 export interface PostToolUseFailureConfig {
-  /** Hook 全体の on/off switch。false にすると additionalContext 未設定で approve 返す。 */
+  /** Global on/off switch. When false the handler returns `approve` with no `additionalContext`. */
   enabled: boolean;
   /**
-   * error 文字列の最大長。これを超えたぶんは truncate + marker。
-   * 256-16384 の範囲、default 1024。
+   * Maximum length of the raw error string before truncation. Excess is
+   * cut with an inline marker. Range: 256-16384 chars, default 1024.
    */
   maxErrorLength: number;
   /**
-   * true の時、既知の error pattern にマッチする corrective hint を
-   * additionalContext 末尾に自動付与する。false で無効 (raw error のみ inject)。
+   * When true (default), append a corrective hint for the first matching
+   * built-in error pattern. Set false to inject the raw error only
+   * (no hint lookup).
    */
   correctiveHints: boolean;
 }

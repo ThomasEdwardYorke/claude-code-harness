@@ -242,6 +242,24 @@ describe("PostToolUseFailure — corrective hints", () => {
     expect(result.additionalContext).toContain("signal-based abort");
   });
 
+  it("`Command exited with non-zero status code 130` 形式 → signal-based abort hint", async () => {
+    // 実運用で多い形式: shell / CI runner が `exited with ... status code N` で
+    // emit するケース。regex は `exit(ed)? ... status|code N` を許容すべき。
+    const root = makeTempProject();
+    const result = await call(root, {
+      error: "Command exited with non-zero status code 130",
+    });
+    expect(result.additionalContext).toContain("signal-based abort");
+  });
+
+  it("`exited ... code 143` 形式 (SIGTERM) → signal-based abort hint", async () => {
+    const root = makeTempProject();
+    const result = await call(root, {
+      error: "Subprocess exited abnormally with code 143",
+    });
+    expect(result.additionalContext).toContain("signal-based abort");
+  });
+
   it("timed out → raise the timeout hint", async () => {
     const root = makeTempProject();
     const result = await call(root, { error: "Operation timed out after 30 seconds" });
@@ -327,28 +345,50 @@ describe("PostToolUseFailure — truncation", () => {
 // ============================================================
 // Shipped-spec generality invariant (same pattern as user-prompt-submit.test.ts)
 //
-// harness-plugin-dev.md R2 rule は shipped hook source file
-// (plugins/harness/core/src/hooks/*.ts) に内部トラッカー ID
-// (`PR #N` / `Issue #N`) を書かないことを要求する。本 assertion は
-// post-tool-use-failure.ts 限定のローカルガード。plugin 全体への拡張
-// (generality.test.ts B-10) は future work。
+// Per coding guidelines, shipped hook source file
+// (plugins/harness/core/src/hooks/*.ts) must not embed internal tracker IDs
+// (PR numbers / Issue numbers / Task IDs / parenthesized classifiers /
+// dev-phase labels). commit message / CHANGELOG / docs/maintainer/ には
+// 書いてよいが、shipped code comment には書かない — git blame で辿れる。
+//
+// 検出 regex は **内部 tracker パターンを広くカバー**:
+//   - `PR #N` / `Issue #N` / `Task #N` / `Task ID N`
+//   - parenthesized classifiers: `(C-N)` / `(M-N)` / `(m-N)`
+//   - review-round labels: `A-N rN` / `Round N` / `Phase N 申送` 等 (literal only)
+//   - severity labels: `Major-N` / `Minor-N` / `Critical-N`
 // ============================================================
 describe("post-tool-use-failure.ts — shipped-spec generality", () => {
-  it("ソース file に内部トラッカー ID (PR #N / Issue #N) を含まない", () => {
+  it("ソース file に内部トラッカー ID を含まない (broad pattern set)", () => {
     const handlerPath = resolve(
       __dirname,
       "../hooks/post-tool-use-failure.ts",
     );
     const src = readFileSync(handlerPath, "utf-8");
 
-    const matches = src.match(/\b(PR|Issue)\s*#\d+/g);
-    if (matches && matches.length > 0) {
+    // Broad pattern set mirroring internal tracker IDs:
+    const patterns: { label: string; re: RegExp }[] = [
+      { label: "PR/Issue/Task #N", re: /\b(?:PR|Issue|Task)\s*#\d+\b/g },
+      // parenthesized classifier (avoid false-positive: requires `(<letter>-<digits>)`)
+      { label: "(C-N) / (M-N) / (m-N)", re: /\((?:[CM]|m)-\d+(?:\s+[^)]*)?\)/g },
+      { label: "A-N rN review round", re: /\b[Aa]-\d+\s*(?:r\d+|round\s*\d+)(?:\s*[A-Z][a-z]+-\d+)?/g },
+      { label: "Round N", re: /\bRound\s*\d+\b/g },
+      { label: "severity-labels", re: /\b(?:Major|Minor|Trivial|Critical)-\d+\b/g },
+    ];
+
+    const hits: string[] = [];
+    for (const { label, re } of patterns) {
+      const m = src.match(re);
+      if (m) {
+        hits.push(`[${label}] ${m.join(", ")}`);
+      }
+    }
+    if (hits.length > 0) {
       throw new Error(
-        `post-tool-use-failure.ts contains internal tracker IDs: ${matches.join(", ")}. ` +
+        `post-tool-use-failure.ts contains internal tracker IDs:\n  ${hits.join("\n  ")}\n` +
           `Replace with generic wording (e.g. "internal security review") ` +
-          `and move PR/Issue references to CHANGELOG.md or commit messages.`,
+          `and move tracker references to CHANGELOG.md or commit messages.`,
       );
     }
-    expect(matches).toBeNull();
+    expect(hits).toEqual([]);
   });
 });
