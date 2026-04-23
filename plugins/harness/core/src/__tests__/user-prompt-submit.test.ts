@@ -277,6 +277,32 @@ describe("UserPromptSubmit handler — size cap", () => {
     );
   });
 
+  it("strict byte cap — header bytes を remaining から差し引き content+header ≤ maxTotalBytes", async () => {
+    // header (`--- big.md ---\n` = 16 bytes) を pre-allocate し、
+    // 残余分だけ content に割り当てる。truncation marker は cap 計算外。
+    const big = "X".repeat(5000);
+    const maxBytes = 512;
+    const root = makeTempProject({
+      files: { "big.md": big },
+      harnessConfig: {
+        userPromptSubmit: {
+          contextFiles: ["big.md"],
+          maxTotalBytes: maxBytes,
+          fenceContext: false,
+        },
+      },
+    });
+    const result = await callHandler(root);
+    expect(result.additionalContext).toBeDefined();
+    // truncation marker を除いた本体 (header + content) が strict cap を守る
+    const body = result.additionalContext!.replace(
+      /\n\n\[harness [a-f0-9]{12}\] context truncated at \d+ bytes$/,
+      "",
+    );
+    const bodyBytes = Buffer.byteLength(body, "utf-8");
+    expect(bodyBytes).toBeLessThanOrEqual(maxBytes);
+  });
+
   it("fence + truncation marker が同一 nonce を共有 (request 整合)", async () => {
     const big = "Z".repeat(30000);
     const root = makeTempProject({
@@ -387,8 +413,8 @@ describe("UserPromptSubmit handler — input contract", () => {
 // shipped code comment には書かない — git blame で十分辿れる。
 //
 // 本 assertion は user-prompt-submit.ts に限定したローカルガード。
-// plugin 全体への拡張 (generality.test.ts B-10) は follow-up PR で
-// 扱う (backlog #5e)。本 PR の変更範囲を最小に保つため。
+// plugin 全体への拡張 (generality.test.ts B-10) は future work で
+// 扱う (internal backlog 参照)。本 PR の変更範囲を最小に保つため。
 // ============================================================
 describe("user-prompt-submit.ts — shipped-spec generality", () => {
   it("ソース file に内部トラッカー ID (PR #N / Issue #N) を含まない", () => {

@@ -223,6 +223,12 @@ export async function handleUserPromptSubmit(
     // Byte-based size cap (internal code review): string.length は UTF-16
     // code unit 数、`maxTotalBytes` は byte 意味。Buffer.byteLength で
     // UTF-8 encode 後の byte 数を使う。slice 時も byte 境界で safe に cut。
+    //
+    // Strict byte cap (internal code review follow-up): header (`--- ${relPath} ---\n`)
+    // の bytes を content slice 前に remaining から差し引くことで、
+    // header + content の合計が必ず `maxTotalBytes` 以下に収まる。
+    // これをしないと per-file header 分 (通常 <50 bytes) だけ cap を
+    // 超過する可能性があった。
     const contentBytes = Buffer.byteLength(content, "utf-8");
     const remaining = maxTotalBytes - totalBytes;
     if (remaining <= 0) {
@@ -230,13 +236,22 @@ export async function handleUserPromptSubmit(
       break;
     }
 
+    const header = `--- ${relPath} ---\n`;
+    const headerBytes = Buffer.byteLength(header, "utf-8");
+    const contentBudget = remaining - headerBytes;
+    if (contentBudget <= 0) {
+      // header だけで cap 超過 → このファイルは skip、以降 truncated 告知
+      truncated = true;
+      break;
+    }
+
     let slice: string;
     let sliceBytes: number;
-    if (contentBytes > remaining) {
+    if (contentBytes > contentBudget) {
       // Binary-safe truncate: byte 単位で cut し UTF-8 boundary を尊重。
       // Buffer に encode → slice → 再度 decode。slice 境界が multi-byte
       // char の中なら末尾の壊れた bytes を弾いて valid UTF-8 を保つ。
-      const buf = Buffer.from(content, "utf-8").subarray(0, remaining);
+      const buf = Buffer.from(content, "utf-8").subarray(0, contentBudget);
       // Node の toString("utf-8") は invalid trailing bytes を replacement char 化
       // するので、replace で取り除いて clean な string を得る。
       slice = buf.toString("utf-8").replace(/�+$/, "");
@@ -247,8 +262,6 @@ export async function handleUserPromptSubmit(
       sliceBytes = contentBytes;
     }
 
-    const header = `--- ${relPath} ---\n`;
-    const headerBytes = Buffer.byteLength(header, "utf-8");
     sections.push(header + slice);
     totalBytes += headerBytes + sliceBytes;
 
