@@ -34,6 +34,7 @@
  * - docs/maintainer/research-anthropic-official-2026-04-22.md (hook 仕様調査)
  * - CHANGELOG.md (feature history)
  */
+import { randomBytes } from "node:crypto";
 import { loadConfigSafe } from "../config.js";
 function resolveConfig(projectRoot) {
     try {
@@ -151,6 +152,15 @@ export async function handlePostToolUseFailure(input, options) {
         // No diagnostic available — fail-open no-op
         return { decision: "approve" };
     }
+    // Per-request nonce (internal security review — fake marker injection 対策、
+    // UserPromptSubmit と同一 pattern):
+    //   attacker-controlled tool output 内に `[harness PostToolUseFailure]` /
+    //   `[harness] error truncated at N chars` 相当の literal を仕込まれると、
+    //   header / 告知 を偽装 spoofing できる。48-bit 乱数 nonce を付与し、
+    //   attacker は次回 nonce を予測不能 (2^-48 ≈ 3.5e-15 衝突確率) なため
+    //   spoofing が成立しない。同 request の header / truncate marker は同じ
+    //   nonce を共有 (request 整合)。
+    const nonce = randomBytes(6).toString("hex");
     // Truncate first (byte-safe), then sanitize for injection defence
     // Note: truncate uses char length not byte length — acceptable trade-off
     // for error strings which are typically ASCII-heavy (stack traces / exit
@@ -158,11 +168,11 @@ export async function handlePostToolUseFailure(input, options) {
     // content files; error payloads are system-generated and short.
     const truncatedErrorRaw = rawError.length > cfg.maxErrorLength
         ? rawError.slice(0, cfg.maxErrorLength) +
-            `\n[harness] error truncated at ${cfg.maxErrorLength} chars`
+            `\n[harness ${nonce}] error truncated at ${cfg.maxErrorLength} chars`
         : rawError;
     const sanitizedError = sanitizeErrorLine(truncatedErrorRaw);
     const lines = [
-        `[harness PostToolUseFailure] tool=${toolName}`,
+        `[harness ${nonce} PostToolUseFailure] tool=${toolName}`,
         `error: ${sanitizedError}`,
     ];
     if (input.is_interrupt === true) {

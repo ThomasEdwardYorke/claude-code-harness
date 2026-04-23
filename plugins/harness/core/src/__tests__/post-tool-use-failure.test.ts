@@ -108,15 +108,30 @@ describe("PostToolUseFailure — fail-open and enable/disable", () => {
 });
 
 describe("PostToolUseFailure — context injection", () => {
-  it("error ある → [harness PostToolUseFailure] + tool name + error を含む", async () => {
+  it("error ある → [harness <nonce> PostToolUseFailure] + tool name + error を含む", async () => {
     const root = makeTempProject();
     const result = await call(root, {
       tool_name: "Bash",
       error: "Command exited with non-zero status code 1",
     });
-    expect(result.additionalContext).toContain("[harness PostToolUseFailure]");
+    // header に 12 hex 文字 nonce (48-bit entropy) で spoofing 困難
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12} PostToolUseFailure\]/,
+    );
     expect(result.additionalContext).toContain("tool=Bash");
     expect(result.additionalContext).toContain("Command exited with non-zero status code 1");
+  });
+
+  it("per-request nonce — 2 回連続 invocation で異なる", async () => {
+    const root = makeTempProject();
+    const r1 = await call(root, { tool_name: "T", error: "E" });
+    const r2 = await call(root, { tool_name: "T", error: "E" });
+    const nonceRe = /\[harness ([a-f0-9]{12}) PostToolUseFailure\]/;
+    const n1 = r1.additionalContext!.match(nonceRe)?.[1];
+    const n2 = r2.additionalContext!.match(nonceRe)?.[1];
+    expect(n1).toBeDefined();
+    expect(n2).toBeDefined();
+    expect(n1).not.toBe(n2);
   });
 
   it("tool_name 未指定 → tool=unknown", async () => {
@@ -257,11 +272,14 @@ describe("PostToolUseFailure — corrective hints", () => {
 });
 
 describe("PostToolUseFailure — truncation", () => {
-  it("maxErrorLength 超過 → truncate + marker", async () => {
+  it("maxErrorLength 超過 → nonce 付き truncate marker", async () => {
     const big = "X".repeat(3000);
     const root = makeTempProject({ postToolUseFailure: { maxErrorLength: 512 } });
     const result = await call(root, { error: big });
-    expect(result.additionalContext).toContain("[harness] error truncated at 512 chars");
+    // truncate marker も header と同一 nonce (fake truncate 告知 injection 防御)
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] error truncated at 512 chars/,
+    );
     // raw full string 3000 は含まない
     expect(result.additionalContext!.length).toBeLessThan(2000);
   });
@@ -270,13 +288,31 @@ describe("PostToolUseFailure — truncation", () => {
     const big = "Y".repeat(2000);
     const root = makeTempProject();
     const result = await call(root, { error: big });
-    expect(result.additionalContext).toContain("[harness] error truncated at 1024 chars");
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] error truncated at 1024 chars/,
+    );
+  });
+
+  it("header と truncate marker が同一 nonce を共有 (request 整合)", async () => {
+    const big = "Z".repeat(2500);
+    const root = makeTempProject();
+    const result = await call(root, { tool_name: "Bash", error: big });
+    const headerNonce = result.additionalContext!.match(
+      /\[harness ([a-f0-9]{12}) PostToolUseFailure\]/,
+    )?.[1];
+    const truncNonce = result.additionalContext!.match(
+      /\[harness ([a-f0-9]{12})\] error truncated/,
+    )?.[1];
+    expect(headerNonce).toBeDefined();
+    expect(headerNonce).toBe(truncNonce);
   });
 
   it("maxErrorLength malformed → default 1024 fallback", async () => {
     const root = makeTempProject({ postToolUseFailure: { maxErrorLength: "huge" } });
     const result = await call(root, { error: "Z".repeat(2000) });
-    expect(result.additionalContext).toContain("[harness] error truncated at 1024 chars");
+    expect(result.additionalContext).toMatch(
+      /\[harness [a-f0-9]{12}\] error truncated at 1024 chars/,
+    );
   });
 
   it("maxErrorLength 下限 (256) より小さい → default 1024 fallback", async () => {
