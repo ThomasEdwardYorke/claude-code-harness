@@ -1,6 +1,6 @@
 {
   "name": "harness",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Portable TypeScript guardrail and agent harness for Claude Code. Provides 13 guardrail rules, 6 specialised agents (worker / reviewer / scaffolder / security-auditor / codex-sync / coderabbit-mimic), 13 commands = 5 verb skills (plan / work / review / release / setup) + 8 workflow skills (branch-merge / new-feature-branch / coderabbit-review / codex-team / parallel-worktree / pseudo-coderabbit-loop / session-handoff / tdd-implement), 12 of Claude Code's lifecycle hook events (pre-tool / post-tool / permission / session-start / session-end / pre-compact / subagent-stop / task-created / stop / worktree-create / worktree-remove / task-completed), and a pure-JS JSON state store with zero native dependencies.",
   "author": {
     "name": "Claude Code Harness Contributors"

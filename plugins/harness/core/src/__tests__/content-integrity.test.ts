@@ -1726,8 +1726,8 @@ describe("session-handoff skill — harness-setup check 統合", () => {
  *   も検出して false-fail する。歴史的言及を残す場合はバッククォート表現を変更すること。
  */
 describe("release guard — version consistency (Phase μ)", () => {
-  const EXPECTED_VERSION = "0.3.0";
-  const EXPECTED_PREV_VERSION = "0.2.0";
+  const EXPECTED_VERSION = "0.3.1";
+  const EXPECTED_PREV_VERSION = "0.3.0";
   const EXPECTED_RELEASE_DATE = "2026-04-23";
 
   // SemVer X.Y.Z 形状検証 (shape validation のみ、leading-zero 等の細部検査は省略)
