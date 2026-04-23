@@ -1292,12 +1292,19 @@ describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
     expect(readme).toMatch(/claude plugin install harness@cc-triad-relay\b/);
   });
 
-  it("README marketplace add uses new repo path", () => {
-    expect(readme).toMatch(/claude plugin marketplace add .+\/cc-triad-relay\b/);
+  it("README marketplace add uses the full owner/repo path", () => {
+    // Tight match: owner must be `ThomasEdwardYorke` so a fork / owner drift fails here.
+    expect(readme).toMatch(
+      /claude plugin marketplace add ThomasEdwardYorke\/cc-triad-relay\b/,
+    );
   });
 
-  it("install-project.sh header points at cc-triad-relay path", () => {
-    expect(installScript).toMatch(/cc-triad-relay\/scripts\/install-project\.sh/);
+  it("install-project.sh header points at the full owner/repo path", () => {
+    // Tight match: require `ThomasEdwardYorke/cc-triad-relay/scripts/install-project.sh`
+    // so an owner drift (e.g. fork path) is caught by this assertion.
+    expect(installScript).toMatch(
+      /ThomasEdwardYorke\/cc-triad-relay\/scripts\/install-project\.sh/,
+    );
   });
 
   it("harness.config.schema.json $id references the new repo URL", () => {
@@ -1306,14 +1313,18 @@ describe("repo identity — cc-triad-relay (post-rename 2026-04-24)", () => {
     );
   });
 
-  it("no stale `claude-code-harness` reference remains in shipped manifests", () => {
-    // Self-reference guard: all four anchor files must be clean post-rename.
-    // NOTE: this test is intentionally stricter than the grep-based audit — if
-    // any shipped manifest still contains the old name, the rename is incomplete.
+  it("no stale `claude-code-harness` reference remains in shipped manifests and surfaced artifacts", () => {
+    // Self-reference guard: every shipped artifact that a user or package
+    // manager can consume must be clean post-rename. This is intentionally
+    // stricter than the grep-based audit — if any surfaced file still
+    // contains the old name, the rename is incomplete.
     expect(JSON.stringify(rootPkg)).not.toMatch(/claude-code-harness/);
     expect(JSON.stringify(corePkg)).not.toMatch(/claude-code-harness/);
     expect(JSON.stringify(marketplaceJson)).not.toMatch(/claude-code-harness/);
     expect(JSON.stringify(pluginManifest)).not.toMatch(/claude-code-harness/);
+    expect(JSON.stringify(harnessSchema)).not.toMatch(/claude-code-harness/);
+    expect(readme).not.toMatch(/claude-code-harness/);
+    expect(installScript).not.toMatch(/claude-code-harness/);
   });
 });
 
