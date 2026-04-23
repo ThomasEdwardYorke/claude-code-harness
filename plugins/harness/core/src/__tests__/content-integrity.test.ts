@@ -1504,7 +1504,7 @@ describe("UserPromptSubmit hook 登録 invariant (Phase η P0)", () => {
 });
 
 // ============================================================
-// PostToolUseFailure hook 登録 invariant (Phase η P0 後半, harness v0.3.2)
+// PostToolUseFailure hook 登録 invariant (initial phase P0, part 2 — harness v0.3.2)
 //
 // 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-23):
 //  - Trigger: tool 失敗 (exception / non-zero exit / interrupt)。PostToolUse と
@@ -1523,7 +1523,7 @@ describe("UserPromptSubmit hook 登録 invariant (Phase η P0)", () => {
 //
 // 設計経緯は CHANGELOG.md と docs/maintainer/research-anthropic-official-2026-04-22.md 参照。
 // ============================================================
-describe("PostToolUseFailure hook 登録 invariant (Phase η P0 後半)", () => {
+describe("PostToolUseFailure hook 登録 invariant (initial phase P0, part 2)", () => {
   const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
   const handlerPath = resolve(
     PLUGIN_ROOT,
