@@ -171,13 +171,17 @@ describe("SubagentStart — sanitization", () => {
     const result = await call(root, {
       agent_type: "a".repeat(200),
     });
-    // 最終表示は 32 char cap 内 (marker 含む、一切 200 文字を漏らさない)
+    // CodeRabbit PR #23 actionable: `maxIdentifierLength: 32` は agent_type と
+    // agent_id の **各フィールド** に per-field で適用される (全体ではない)。
+    // 正規表現でキャプチャされる値は
+    //   `<truncatedAgentType> agent_id=<truncatedAgentId>`
+    // となり、32 + " agent_id=" (10) + 32 = 最大 74 文字。100 以下の assertion
+    // は per-field 32 の構造を前提にした 26 char のバッファ付き妥当値。
     const contextStr = result.additionalContext ?? "";
-    // agent_type= の直後から改行までの長さを測る
     const match = contextStr.match(/agent_type=([^\n]*)/);
     expect(match).not.toBeNull();
     expect(match![1].length).toBeLessThanOrEqual(100);
-    // truncate marker または short form が出現
+    // truncate marker または short form が出現 (per-field truncate の signal)
     expect(contextStr).toMatch(/truncated|\[harness .+?\]/);
   });
 
@@ -248,8 +252,12 @@ describe("SubagentStart — agentTypeNotes injection", () => {
     expect(ctx).toContain("line2");
   });
 
-  it("agentTypeNotes の key は sanitized agent_type でマッチ (raw string 完全一致)", async () => {
-    // agent_type が sanitized で "unknown" に畳まれる → key "unknown" にも fallback で当たらない
+  it("agent_type undefined は 'unknown' に coalesce されて config key 'unknown' にマッチ", async () => {
+    // CodeRabbit PR #23 nitpick: 旧テスト名 "sanitized agent_type でマッチ" は
+    // 挙動を誤解を招く書き方だった。実装は `input.agent_type ?? "unknown"` で
+    // **coalesce** しており、sanitize (control char escape) は key lookup に
+    // 介在しない。ここで検証するのは「undefined input → literal 'unknown' →
+    // config key 'unknown' match」という coalesce path。
     const root = makeTempProject({
       subagentStart: {
         agentTypeNotes: {
@@ -258,7 +266,6 @@ describe("SubagentStart — agentTypeNotes injection", () => {
       },
     });
     const result = await call(root, { agent_type: undefined });
-    // agent_type undefined の場合 sanitize 後 "unknown" になる → note が当たる
     expect(result.additionalContext).toContain("unknown-type note");
   });
 });

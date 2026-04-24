@@ -75,6 +75,8 @@ function resolveConfig(projectRoot) {
         const rawMaxTotal = ss["maxTotalBytes"];
         const rawNotes = ss["agentTypeNotes"];
         return {
+            // CodeRabbit PR #23 nitpick: drop redundant `as boolean` — the `typeof
+            // ... === "boolean"` guard already narrows the type.
             enabled: typeof ss["enabled"] === "boolean" ? ss["enabled"] : true,
             // Range 32-1024: reasonable bounds for identifier display.
             maxIdentifierLength: typeof rawMaxId === "number" &&
@@ -83,9 +85,7 @@ function resolveConfig(projectRoot) {
                 rawMaxId <= 1024
                 ? rawMaxId
                 : 128,
-            fenceContext: typeof ss["fenceContext"] === "boolean"
-                ? ss["fenceContext"]
-                : true,
+            fenceContext: typeof ss["fenceContext"] === "boolean" ? ss["fenceContext"] : true,
             // agentTypeNotes: shape-defensive per-entry validation —
             // non-string values and empty keys are silently dropped so a
             // malformed config never makes `sanitizeNote()` throw at runtime
@@ -244,11 +244,17 @@ export async function handleSubagentStart(input, options) {
     }
     lines.push(diagnosticLine);
     // Inject agentTypeNotes if agent_type matches a key in the config.
-    // Use the ORIGINAL unsanitized agent_type for key lookup (as per test
-    // expectation: agent_type undefined → sanitizes to "unknown" → matches
-    // config key "unknown" if present).
-    const originalAgentType = input.agent_type ?? "unknown";
-    const note = cfg.agentTypeNotes[originalAgentType];
+    // Lookup uses the COALESCED (pre-sanitize) agent_type — `undefined`
+    // collapses to the literal `"unknown"` so config authors can target
+    // the missing-input case via `{ "unknown": "<note>" }`. Sanitize is
+    // strictly for **rendering** (control-char escape in the diagnostic
+    // line); the key lookup must stay on the raw value so a config entry
+    // like `{ "Bash": "..." }` still matches an unsanitized Bash spawn.
+    // CodeRabbit PR #23 nitpick: renamed `originalAgentType` → `agentTypeKey`
+    // to make "coalesced key for lookup" intent explicit (the old name
+    // implied raw-without-any-transformation).
+    const agentTypeKey = input.agent_type ?? "unknown";
+    const note = cfg.agentTypeNotes[agentTypeKey];
     if (typeof note === "string" && note.length > 0) {
         const sanitizedNote = sanitizeNote(note);
         lines.push(sanitizedNote);
