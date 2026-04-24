@@ -33,11 +33,16 @@ export declare function route(hookType: HookType, input: HookInput | Record<stri
  */
 export declare function errorToResult(err: unknown): HookResult;
 /**
- * Maximum character length of a safe-fallback reason when surfaced via
- * stderr or lifted into `systemMessage`. Chosen empirically: 2000 chars
- * fits ~30 stack frames or a multi-line error message without crowding
- * Claude's context window on the next conversation turn (systemMessage is
- * "delivered to Claude as context on the next conversation turn" per
+ * Maximum Unicode code-point length of the safe-fallback reason body
+ * BEFORE appending a truncation suffix, when surfaced via stderr or
+ * lifted into `systemMessage`. The final emitted string may therefore be
+ * slightly longer than this constant — `sanitizeSafeFallbackReason()`
+ * appends `…[truncated]` (12 code units) when the body exceeds the cap.
+ *
+ * Chosen empirically: 2000 code points fits ~30 stack frames or a
+ * multi-line error message without crowding Claude's context window on
+ * the next conversation turn (systemMessage is "delivered to Claude as
+ * context on the next conversation turn" per
  * https://code.claude.com/docs/en/hooks).
  *
  * @internal
@@ -55,8 +60,11 @@ export declare const MAX_SAFE_FALLBACK_REASON_CHARS = 2000;
  *     sequences, terminal-clear tricks, and NUL-byte logging attacks.
  *   - Keep `\t` (0x09), `\n` (0x0A), `\r` (0x0D) so stack traces remain
  *     readable — these are non-hostile formatting characters.
- *   - Bound the length at MAX_SAFE_FALLBACK_REASON_CHARS Unicode code
- *     points so a multi-megabyte stack trace cannot spam the debug log
+ *   - Bound the BODY at MAX_SAFE_FALLBACK_REASON_CHARS Unicode code
+ *     points (the truncation suffix `…[truncated]` is appended AFTER
+ *     the cap, so the emitted string is at most 2012 code points — the
+ *     cap applies to the pre-suffix body, not the final output length).
+ *     A multi-megabyte stack trace can therefore not spam the debug log
  *     or crowd out Claude's context window.
  *   - Truncate at Unicode code-point boundaries (via `Array.from`) rather
  *     than UTF-16 code-unit boundaries (`String.prototype.slice`) so that
