@@ -38,8 +38,18 @@ personal default. Precedence is documented in
 `plugins/harness/core/src/models/resolver.ts` and summarised here:
 
 ```
-caller --model  >  harness model resolve codex-team  >  Codex config default
+caller -m / --model                (explicit arg on the codex invocation)
+  >  harness model resolve codex-team
+     (reads `harness.config.json` `models.agents["codex-team"].model`
+      → `models.codex.default` → compile-time `HARNESS_DEFAULT_MODEL`)
+  >  Codex config default from `~/.codex/config.toml`
 ```
+
+**Fallback-only semantics.** The resolver output is injected as
+`$MODEL_FLAG` *only when the caller has not already specified `-m` /
+`--model`*. If the user invoking `/codex-team` already supplied
+`-m <slug>` themselves, leave `MODEL_FLAG` empty so the explicit
+choice is preserved end-to-end.
 
 Resolve once at the top of the shell block and reuse the slug:
 

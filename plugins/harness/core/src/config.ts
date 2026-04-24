@@ -11,6 +11,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+// Re-use the compile-time model default from the resolver so
+// `DEFAULT_CONFIG.models.codex.default`, the schema default, and the
+// resolver's `HARNESS_DEFAULT_MODEL` cannot drift. Content-integrity
+// asserts `schema.properties.models.properties.codex.properties.default.default`
+// matches this constant at CI time.
+import {
+  HARNESS_DEFAULT_MODEL,
+  HARNESS_DEFAULT_REASONING_EFFORT,
+} from "./models/resolver.js";
+
 // ============================================================
 // Type definitions
 // ============================================================
@@ -467,8 +477,8 @@ export const DEFAULT_CONFIG: HarnessConfig = {
   },
   models: {
     codex: {
-      default: "gpt-5.5",
-      reasoningEffort: "medium",
+      default: HARNESS_DEFAULT_MODEL,
+      reasoningEffort: HARNESS_DEFAULT_REASONING_EFFORT,
     },
   },
 };
