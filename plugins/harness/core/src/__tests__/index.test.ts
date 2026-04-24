@@ -937,6 +937,40 @@ describe("main() safe-fallback diagnostic surfacing", () => {
   });
 
   it.skipIf(!distExists)(
+    "worktree-create failure path: stderr emitted exactly once (no fail-safe double-write)",
+    () => {
+      // worktree-create has its own blocking-protocol failure branch
+      // that writes `result.reason` to stderr on exit 1. The fail-safe
+      // stderr write must skip this hook type so the diagnostic is
+      // emitted exactly once — not twice.
+      //
+      // We trigger the fail-safe + worktree-create combination by
+      // sending malformed JSON to the worktree-create entry point.
+      // `parseSessionInput` throws, main() catches, `errorToResult()`
+      // produces `{decision: "approve", reason: "Core engine error ..."}`
+      // with no `worktreePath` set → worktree-create's own branch writes
+      // reason to stderr + exits 1. If the fail-safe path ALSO writes,
+      // stderr has two copies of the same message.
+      const result = spawnSync(
+        process.execPath,
+        [distPath, "worktree-create"],
+        {
+          input: "{not valid json}",
+          encoding: "utf-8",
+          timeout: 5_000,
+        },
+      );
+      // Blocking-protocol failure → exit non-zero
+      expect(result.status).not.toBe(0);
+      // The reason should appear in stderr exactly once — count
+      // occurrences of the prefix "Core engine error" (every emission
+      // carries it) and verify the count is 1, not 2+.
+      const occurrences = result.stderr.split("Core engine error").length - 1;
+      expect(occurrences).toBe(1);
+    },
+  );
+
+  it.skipIf(!distExists)(
     "classic branch sanitisation: JSON.stringify(result).reason also scrubbed (not only stderr / systemMessage)",
     () => {
       // When the safe-fallback path fires, the sanitised reason is now

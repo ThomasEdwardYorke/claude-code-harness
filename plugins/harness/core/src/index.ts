@@ -533,13 +533,21 @@ async function main(): Promise<void> {
       ? sanitizeSafeFallbackReason(result.reason)
       : undefined;
   if (safeFallbackSurface !== undefined) {
-    process.stderr.write(safeFallbackSurface + "\n");
-    // Propagate the sanitised form back into `result.reason` so the
-    // classic `JSON.stringify(result)` branch (pre-tool / post-tool /
-    // permission / session-* / pre-compact / subagent-stop / task-* /
-    // stop / worktree-remove) also emits the scrubbed text rather than
-    // the raw reason that could still carry ANSI escapes or other
-    // terminal-control bytes inside the JSON payload.
+    // `worktree-create` has its own blocking-protocol failure branch
+    // further down that writes `result.reason` to stderr on exit 1.
+    // Emitting here as well would duplicate the same diagnostic in the
+    // log. Skip the fail-safe stderr write for that hook and let the
+    // blocking branch own stderr — the propagation into `result.reason`
+    // below still ensures the blocking branch writes the scrubbed text.
+    if (hookType !== "worktree-create") {
+      process.stderr.write(safeFallbackSurface + "\n");
+    }
+    // Propagate the sanitised form back into `result.reason` so every
+    // downstream output path (the classic `JSON.stringify(result)`
+    // branch, the hookSpecificOutput `systemMessage` lift, and the
+    // worktree-create failure stderr write) emits the single scrubbed
+    // surface rather than a raw reason that could still carry ANSI
+    // escapes or other terminal-control bytes.
     result.reason = safeFallbackSurface;
   }
 
