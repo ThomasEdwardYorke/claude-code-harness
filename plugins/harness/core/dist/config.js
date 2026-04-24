@@ -103,6 +103,13 @@ export const DEFAULT_CONFIG = {
         detectSensitivePaths: true,
         blockOnSources: [],
     },
+    subagentStart: {
+        enabled: true,
+        maxIdentifierLength: 128,
+        fenceContext: true,
+        agentTypeNotes: {},
+        maxTotalBytes: 4096,
+    },
     // `models` is intentionally absent from DEFAULT_CONFIG. The compile-time
     // fallback lives in `src/models/resolver.ts` as `HARNESS_DEFAULT_MODEL`
     // so that an unconfigured project surfaces as `source: "harness-default"`
@@ -188,6 +195,16 @@ function mergeConfig(partial) {
         configChange: {
             ...DEFAULT_CONFIG.configChange,
             ...(partial.configChange ?? {}),
+        },
+        subagentStart: {
+            ...DEFAULT_CONFIG.subagentStart,
+            ...(partial.subagentStart ?? {}),
+            // agentTypeNotes は shallow merge だと `partial` の存在で default {} を上書きするのみ。
+            // ただし user 指定の key/value が残り、default の空 {} と union されるので実害なし。
+            agentTypeNotes: {
+                ...DEFAULT_CONFIG.subagentStart.agentTypeNotes,
+                ...(partial.subagentStart?.agentTypeNotes ?? {}),
+            },
         },
         ...(() => {
             const merged = mergeModelsConfig(partial.models);

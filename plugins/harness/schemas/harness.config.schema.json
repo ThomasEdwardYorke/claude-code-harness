@@ -312,6 +312,43 @@
         }
       }
     },
+    "subagentStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Settings consumed by the SubagentStart hook. Fires when the Task tool spawns a subagent (before the subagent runs). Per Anthropic official spec (https://code.claude.com/docs/en/hooks) SubagentStart is informational only — `decision: \"block\"` is NOT supported; blocking belongs to PreToolUse on the Task call. The handler emits `hookSpecificOutput.additionalContext` which is injected into the subagent's initial context, bridging global plugin defaults to per-type guidance (e.g. `harness:worker` → TDD reminder).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "If false, the hook returns approve with no additionalContext (silent skip). Default true."
+        },
+        "maxIdentifierLength": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 1024,
+          "default": 128,
+          "description": "Maximum character length for `agent_type` / `agent_id` rendering. Overlong identifiers are truncated with an inline marker containing the per-request nonce so attackers cannot pre-compute a spoofed variant."
+        },
+        "fenceContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "When true, wrap the diagnostic in fence markers with a per-request 12-hex-char nonce (`===== HARNESS SubagentStart <nonce> =====` / `===== END HARNESS SubagentStart <nonce> =====`) so the subagent can attribute the content to the harness. The nonce defeats context-boundary spoofing attempts by literal fence markers embedded in `agentTypeNotes` values (attackers cannot predict the per-request value, collision probability 2^-48)."
+        },
+        "agentTypeNotes": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {},
+          "description": "Per-agent-type guidance notes. Key matches `agent_type` verbatim (undefined input coalesces to `\"unknown\"` — use the key `\"unknown\"` to target it). When a note is present for the spawning agent type, the sanitized value is appended to `additionalContext`. Non-string values and empty keys are silently dropped (shape-defensive)."
+        },
+        "maxTotalBytes": {
+          "type": "integer",
+          "minimum": 256,
+          "maximum": 65536,
+          "default": 4096,
+          "description": "Total byte cap for the emitted `additionalContext`. Excess is truncated with an inline marker so the subagent can detect the boundary."
+        }
+      }
+    },
     "models": {
       "type": "object",
       "additionalProperties": false,

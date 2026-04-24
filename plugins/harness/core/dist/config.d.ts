@@ -357,6 +357,64 @@ export interface UserPromptSubmitConfig {
      */
     fenceContext: boolean;
 }
+/**
+ * SubagentStart hook configuration.
+ *
+ * Official spec (https://code.claude.com/docs/en/hooks): fires when the
+ * Task tool spawns a subagent, **before** the subagent runs. The handler
+ * emits `hookSpecificOutput.additionalContext` which is injected into
+ * the **subagent's** context (unidirectional). Analogous to
+ * UserPromptSubmit for the top-level prompt, but scoped to subagents.
+ *
+ * SubagentStart is informational-only — the official spec does **not**
+ * support `decision: "block"` (blocking belongs to the earlier
+ * PreToolUse hook on the Task tool call). The harness handler therefore
+ * always returns `"approve"`.
+ *
+ * Observability + opt-in per-type guidance: use `agentTypeNotes` to
+ * inject short reminders (e.g. `{ "harness:worker": "TDD first" }`)
+ * into the corresponding subagent's context.
+ *
+ * When `enabled` is false or the config is malformed, the handler
+ * silently returns `decision: "approve"` with no `additionalContext`
+ * (fail-open, matching the rest of the harness hook stack).
+ */
+export interface SubagentStartConfig {
+    /** Global on/off switch. When false the handler returns `approve` with no `additionalContext`. */
+    enabled: boolean;
+    /**
+     * Max character length for `agent_type` / `agent_id` display before
+     * truncation. Excess is cut with an inline marker containing the
+     * per-request nonce so spoofing is hard. Range 32-1024, default 128.
+     */
+    maxIdentifierLength: number;
+    /**
+     * When true (default), wrap the diagnostic in fence markers with a
+     * per-request nonce (12 hex chars, 48-bit entropy):
+     * `===== HARNESS SubagentStart <nonce> =====` /
+     * `===== END HARNESS SubagentStart <nonce> =====`.
+     * The nonce defeats context-boundary spoofing by literal fence
+     * markers embedded in `agentTypeNotes` values.
+     */
+    fenceContext: boolean;
+    /**
+     * Per-agent-type guidance notes injected into the subagent context
+     * as additional lines inside the fence. Key matches `agent_type`
+     * verbatim (undefined input coalesces to `"unknown"` — use the
+     * key `"unknown"` to target it). Missing keys / non-string values
+     * are silently dropped.
+     *
+     * Default `{}` (no notes — diagnostic header only).
+     */
+    agentTypeNotes: Record<string, string>;
+    /**
+     * Total byte cap for the emitted `additionalContext`. Excess is
+     * truncated with an inline marker so the subagent can detect the
+     * boundary. Range 256-65536, default 4096 (keeps subagent prompt
+     * overhead bounded).
+     */
+    maxTotalBytes: number;
+}
 export interface ReleaseConfig {
     /** Branch-merge strategy. Controls how /branch-merge walks feature → integration → production. */
     strategy: ReleaseStrategy;
@@ -434,6 +492,7 @@ export interface HarnessConfig {
     userPromptSubmit: UserPromptSubmitConfig;
     postToolUseFailure: PostToolUseFailureConfig;
     configChange: ConfigChangeConfig;
+    subagentStart: SubagentStartConfig;
     /**
      * Optional model registry. When absent, harness resolves to
      * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).

@@ -1861,11 +1861,118 @@ describe("ConfigChange hook 登録 invariant", () => {
     expect(src).toMatch(/"config-change"/);
     // main() 出力分岐: hookEventName lookup object に ConfigChange リテラルが
     // 並ぶこと (lookup テーブル drift を早期検出)。
-    // 窓幅 150: 3 entry lookup object では UserPromptSubmit (〜30) /
-    // PostToolUseFailure (〜86) / ConfigChange (〜131) の距離になるため、
-    // 将来 4 entry 追加に備えて余裕を持たせる。intent は「同じ lookup object
-    // に並ぶこと」で、100 vs 150 は実用上の drift 検出能力に差が無い。
-    expect(src).toMatch(/hookEventName[\s\S]{0,150}"ConfigChange"/);
+    // 窓幅 200: 4 entry lookup object では UserPromptSubmit (〜30) /
+    // PostToolUseFailure (〜86) / ConfigChange (〜131) / SubagentStart (〜176)
+    // の距離になるため、将来 5 entry 追加に備えて余裕を持たせる。intent は
+    // 「同じ lookup object に並ぶこと」で、150 vs 200 は実用上の drift 検出
+    // 能力に差が無い。
+    expect(src).toMatch(/hookEventName[\s\S]{0,200}"ConfigChange"/);
+  });
+});
+
+// ============================================================
+// SubagentStart hook 登録 invariant (observability + agent_type-based guidance)
+//
+// 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-24):
+//  - Trigger: Task tool が subagent を spawn する直前
+//  - Payload: agent_type (matcher: Bash / Explore / Plan / plugin-namespaced
+//    custom types like harness:worker) + agent_id + transcript_path + 共通
+//    (session_id / cwd / hook_event_name)
+//  - Output: `hookSpecificOutput.additionalContext` は **subagent 側** の
+//    context に inject される (unidirectional、coordinator には戻らない)
+//  - **block 非対応**: Anthropic spec は decision: "block" を受けない。
+//    blocking は PreToolUse (matcher=Task) の責務。handler は常に approve。
+//  - matcher: agent_type-based
+//
+// 現行の判断:
+//  - observability + opt-in per-type guidance (agentTypeNotes)
+//  - fail-open: config 読込失敗 / enabled=false → silent skip + approve
+//  - identifier sanitization: CR/LF/CRLF → `\n` literal、他 C0 (TAB 含む) + DEL → `\x{HH}`
+//  - note sanitization: LF preserve (multi-line)、CR/CRLF → `\n` literal、他 C0 + DEL → `\x{HH}`
+//  - per-request 48-bit nonce (spoofing defence)
+//  - agentTypeNotes key match on raw agent_type (undefined → "unknown" に fallback)
+//  - SubagentStartResult.decision は literal "approve" で type-level narrowing
+//
+// 設計経緯は CHANGELOG.md 参照。
+// ============================================================
+describe("SubagentStart hook 登録 invariant", () => {
+  const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
+  const handlerPath = resolve(
+    PLUGIN_ROOT,
+    "core/src/hooks/subagent-start.ts",
+  );
+  const indexPath = resolve(PLUGIN_ROOT, "core/src/index.ts");
+
+  it("hooks.json は SubagentStart を登録する (non-blocking observability, timeout 10s)", () => {
+    const raw = readFileSync(hooksJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ hooks: Array<{ command?: string; timeout?: number }> }>
+      >;
+    };
+    expect(parsed.hooks).toHaveProperty("SubagentStart");
+    const entry = parsed.hooks["SubagentStart"];
+    expect(Array.isArray(entry)).toBe(true);
+    expect(entry?.length).toBeGreaterThan(0);
+    expect(entry?.[0]?.hooks?.[0]?.command).toContain("subagent-start");
+    expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
+  });
+
+  it("subagent-start.ts が handleSubagentStart を export する", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/export\s+async\s+function\s+handleSubagentStart/);
+  });
+
+  it("subagent-start.ts は context 注入に additionalContext を使う", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/additionalContext/);
+    // systemMessage / reason を直接 lift する drift を拒否 (UserPromptSubmit /
+    // PostToolUseFailure / ConfigChange と同じ規約)
+    expect(src).not.toMatch(/systemMessage\s*:\s*lines/);
+  });
+
+  it("subagent-start.ts は fail-open 実装 (loadConfigSafe try-catch + enabled switch)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // config 読込失敗時の try-catch による defaults fallback
+    expect(src).toMatch(/loadConfigSafe/);
+    expect(src).toMatch(/try\s*\{[\s\S]*loadConfigSafe/);
+    // enabled: false の時 no-op
+    expect(src).toMatch(/enabled[\s\S]{0,120}return\s*\{\s*decision:\s*"approve"\s*\}/);
+  });
+
+  it("subagent-start.ts は per-request nonce を生成する (spoofing defence)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // 48-bit nonce = 6 bytes → 12 hex chars
+    expect(src).toMatch(/randomBytes\(6\)/);
+    expect(src).toMatch(/\.toString\("hex"\)/);
+  });
+
+  it("subagent-start.ts は block 非対応を型で強制 (decision: 'approve' literal)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // SubagentStartResult.decision は literal "approve" であり、block は型レベルで不可能
+    expect(src).toMatch(/decision:\s*"approve"/);
+    // SubagentStartResult.decision 型が union を含まないこと (block は拒否)
+    expect(src).not.toMatch(/decision:\s*"approve"\s*\|\s*"block"/);
+  });
+
+  it("subagent-start.ts は identifier (agent_type / agent_id) を sanitize + truncate する", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // サニタイザーの control char → \x{HH} 変換
+    expect(src).toMatch(/\[\\x00-\\x1F\\x7F\]/);
+    // identifier / note の 2 種類の sanitize path 存在
+    expect(src).toMatch(/sanitizeIdentifier|sanitize_identifier/);
+  });
+
+  it("index.ts main() に subagent-start 分岐があり hookSpecificOutput 形式で出力する", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    // HookType union に追加済
+    expect(src).toMatch(/"subagent-start"/);
+    // main() 出力分岐: hookEventName lookup object に SubagentStart リテラルが
+    // 並ぶこと (lookup テーブル drift を早期検出)。
+    // 窓幅 200: 4 entry object では SubagentStart は ConfigChange の次に並ぶため
+    // hookEventName から 〜180 chars の距離になる。
+    expect(src).toMatch(/hookEventName[\s\S]{0,200}"SubagentStart"/);
   });
 });
 
