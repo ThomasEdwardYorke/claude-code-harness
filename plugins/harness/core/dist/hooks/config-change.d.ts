@@ -47,7 +47,11 @@
  * corrupt terminal rendering, or (c) leak secrets via the injected context.
  * Mitigations:
  *   1. Replace newline / CR with the literal `\n` token.
- *   2. Replace other C0 control chars (TAB kept) + DEL with `\x{HH}` form.
+ *   2. Replace all other C0 control chars (including TAB `\x09`) + DEL `\x7F`
+ *      with `\x{HH}` form. TAB is escaped here (unlike post-tool-use-failure
+ *      which preserves TAB for error stack trace readability) because a
+ *      file_path legitimately never contains TAB and an unescaped TAB can
+ *      create visual alignment attacks in terminal rendering.
  *   3. Validate `source` against the 5-enum allowlist; anything else → "unknown".
  *   4. Per-request 48-bit nonce in the header + truncation marker so the
  *      attacker cannot pre-compute a spoofed literal.

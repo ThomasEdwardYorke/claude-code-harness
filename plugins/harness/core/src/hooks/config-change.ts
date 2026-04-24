@@ -47,7 +47,11 @@
  * corrupt terminal rendering, or (c) leak secrets via the injected context.
  * Mitigations:
  *   1. Replace newline / CR with the literal `\n` token.
- *   2. Replace other C0 control chars (TAB kept) + DEL with `\x{HH}` form.
+ *   2. Replace all other C0 control chars (including TAB `\x09`) + DEL `\x7F`
+ *      with `\x{HH}` form. TAB is escaped here (unlike post-tool-use-failure
+ *      which preserves TAB for error stack trace readability) because a
+ *      file_path legitimately never contains TAB and an unescaped TAB can
+ *      create visual alignment attacks in terminal rendering.
  *   3. Validate `source` against the 5-enum allowlist; anything else → "unknown".
  *   4. Per-request 48-bit nonce in the header + truncation marker so the
  *      attacker cannot pre-compute a spoofed literal.
@@ -190,12 +194,11 @@ function resolveConfig(projectRoot: string): ResolvedConfig {
 function sanitizePathLine(s: string): string {
   // CR / LF / CRLF → literal `\n` (fence-injection defence).
   // All other C0 (including TAB `\x09`) + DEL `\x7F` → `\x{HH}` form.
-  //
-  // Note (Codex adversarial review 2026-04-24): TAB is escaped too because a
-  // file_path is never expected to contain TAB legitimately, and an
-  // unescaped TAB can create visual alignment attacks in Claude's terminal
-  // rendering. Unlike error stack traces (post-tool-use-failure keeps TAB
-  // for readability), path strings don't gain anything from TAB preservation.
+  // Rationale for TAB escaping is documented in the handler docstring
+  // (Mitigations step 2): file_path legitimately never contains TAB, and
+  // unescaped TAB enables visual alignment attacks in terminal rendering.
+  // Contrast with post-tool-use-failure.ts which preserves TAB for error
+  // stack-trace readability — different payload, different trade-off.
   return s
     .replace(/\r\n|[\n\r]/g, "\\n")
     .replace(/[\x00-\x1F\x7F]/g, (ch) => {
@@ -240,9 +243,9 @@ function basenameOf(path: string): string {
  *   - `credentials.<ext>` / `credential.<ext>` (same extensions).
  *   - `*.pem` / `*.key` / `*.p12` / `*.pfx` (private-key / cert bundle).
  *
- * **Parent-directory patterns** (checked on full path, Codex review 2026-04-24
- * MAJOR #3 partial): `/secrets/` / `/credentials/` / `/keys/` / `/.ssh/`
- * — changes to ANY file inside these directories get the hint.
+ * **Parent-directory patterns** (checked on full path):
+ *   `/secrets/` / `/credentials/` / `/keys/` / `/.ssh/` — changes to ANY
+ *   file inside these directories get the hint.
  *
  * Intentionally conservative: `settings.json` and similar general-purpose
  * config files are NOT flagged by filename. Partial matches like
@@ -309,9 +312,9 @@ export async function handleConfigChange(
   // sanitizePathLine — intentional: the marker still reads sensibly in
   // the rendered output.
   //
-  // Codex review 2026-04-24 MAJOR #5 + CodeRabbit chill nitpick:
-  // The final string MUST NOT exceed `maxFilePathLength`. We compute
-  // `available = maxFilePathLength - markerSuffix.length`, and:
+  // Length contract: the final pre-sanitize string MUST NOT exceed
+  // `maxFilePathLength`. Compute `available = maxFilePathLength -
+  // markerSuffix.length`, then:
   //   - `available > 0` → slice to `available` chars + append marker
   //     (total = maxFilePathLength exactly).
   //   - `available <= 0` → maxFilePathLength is smaller than the marker
@@ -320,6 +323,10 @@ export async function handleConfigChange(
   //     declared max is honoured (the configured value was the user's
   //     choice). Practically reached only when maxFilePathLength ≈ 32-56,
   //     deep inside the configurable range floor.
+  //
+  // Post-sanitize, the displayed string may grow by ≤ 5 chars because
+  // the marker's leading `\n` becomes `\\n` etc. — callers that need a
+  // strict post-sanitize bound should budget accordingly.
   const markerSuffix = `\n[harness ${nonce}] file_path truncated at ${cfg.maxFilePathLength} chars`;
   const available = cfg.maxFilePathLength - markerSuffix.length;
   let truncatedPathRaw: string;

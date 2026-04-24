@@ -236,7 +236,7 @@ describe("ConfigChange — file_path sanitization", () => {
     expect(result.additionalContext).toContain(normalPath);
   });
 
-  // CodeRabbit chill nitpick 2026-04-24: declared max を pre-sanitize で honour する
+  // Declared max を pre-sanitize で honour する (length contract test)
   it("maxFilePathLength >= marker 長 → slice + marker が pre-sanitize で max に収まる", async () => {
     // markerSuffix 長 ~56 chars (nonce 含む)、max=256 → available=~200、
     // slice=available + marker=56 → pre-sanitize total = 256。
@@ -291,7 +291,7 @@ describe("ConfigChange — sensitive path detection", () => {
     expect(result.additionalContext).toMatch(/secret|sensitive/i);
   });
 
-  // Codex review 2026-04-24 MAJOR #3 partial: dir-level detection
+  // Dir-level heuristic: /secrets/ 配下のファイル変更も sensitive hint 対象
   it("/secrets/ 配下のファイル → sensitive hint 付く (dir-level heuristic)", async () => {
     const root = makeTempProject();
     const result = await call(root, {
@@ -421,7 +421,7 @@ describe("ConfigChange — block decision support (opt-in)", () => {
     expect(result.decision).toBe("approve");
   });
 
-  // Codex review 2026-04-24 NITPICK #11: solidify the merge invariant
+  // Config merge invariant: undefined と [] は同一挙動 (defaults vs explicit empty)
   it("blockOnSources: undefined (omitted) と [] (explicit empty) は同一挙動", async () => {
     const r1 = await call(makeTempProject({ configChange: {} }), {
       source: "policy_settings",
