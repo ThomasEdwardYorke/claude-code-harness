@@ -134,39 +134,49 @@ export function resolveModel(
   const agentCfg = config?.agents?.[normalizedAgent];
   const codexCfg = config?.codex;
 
-  // 1. Per-agent override
+  // Resolve the model tier independently of reasoningEffort so that an
+  // agent override which only supplies `reasoningEffort` (no `model`) is
+  // honoured rather than silently dropped at the `if (agentCfg?.model)`
+  // branch. Effort precedence still runs agent > codex > harness-default.
+  let model: string;
+  let modelSource: ResolutionSource;
+  let aliasName: string | undefined;
+
   if (agentCfg?.model) {
     const { concrete, alias } = resolveAlias(config, agentCfg.model);
-    return {
-      model: concrete,
-      reasoningEffort: pickReasoningEffort([
-        agentCfg.reasoningEffort,
-        codexCfg?.reasoningEffort,
-      ]),
-      source: "agent-override",
-      aliasResolved: alias !== undefined,
-      ...(alias !== undefined ? { aliasName: alias } : {}),
-    };
-  }
-
-  // 2. Harness-level codex default
-  if (codexCfg?.default) {
+    model = concrete;
+    modelSource = "agent-override";
+    aliasName = alias;
+  } else if (codexCfg?.default) {
     const { concrete, alias } = resolveAlias(config, codexCfg.default);
-    return {
-      model: concrete,
-      reasoningEffort: pickReasoningEffort([codexCfg.reasoningEffort]),
-      source: "codex-default",
-      aliasResolved: alias !== undefined,
-      ...(alias !== undefined ? { aliasName: alias } : {}),
-    };
+    model = concrete;
+    modelSource = "codex-default";
+    aliasName = alias;
+  } else {
+    model = HARNESS_DEFAULT_MODEL;
+    modelSource = "harness-default";
+    aliasName = undefined;
   }
 
-  // 3. Compile-time fallback
+  const reasoningEffort = pickReasoningEffort([
+    agentCfg?.reasoningEffort,
+    codexCfg?.reasoningEffort,
+  ]);
+
+  // When the only agent-side override is `reasoningEffort` (no `model`),
+  // promote the source to `agent-override` so `harness model resolve`
+  // output reflects that the caller explicitly customised this agent.
+  const source: ResolutionSource =
+    modelSource !== "agent-override" && agentCfg?.reasoningEffort
+      ? "agent-override"
+      : modelSource;
+
   return {
-    model: HARNESS_DEFAULT_MODEL,
-    reasoningEffort: HARNESS_DEFAULT_REASONING_EFFORT,
-    source: "harness-default",
-    aliasResolved: false,
+    model,
+    reasoningEffort,
+    source,
+    aliasResolved: aliasName !== undefined,
+    ...(aliasName !== undefined ? { aliasName } : {}),
   };
 }
 

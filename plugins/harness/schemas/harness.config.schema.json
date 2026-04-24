@@ -289,7 +289,7 @@
     "models": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Model registry consumed by every harness-dispatched Codex invocation (`codex-sync` / `codex-team` / `coderabbit-mimic` / `tdd-implement`). When this section is omitted, harness falls back to the compile-time default (`gpt-5.5`, see src/models/resolver.ts). Use `codex.default` for a single harness-wide pin, `codex.aliases` to name logical tiers, and `agents.*.model` to override per Codex agent.",
+      "description": "Model registry consumed by every harness-dispatched Codex invocation (`codex-sync` / `codex-team` / `coderabbit-mimic` / `tdd-implement`). When this section is omitted the resolver reports `source: \"harness-default\"` (compile-time fallback `HARNESS_DEFAULT_MODEL` in `src/models/resolver.ts`). Use `codex.default` for a single harness-wide pin, `codex.aliases` to name logical tiers, and `agents.*.model` / `agents.*.reasoningEffort` to override per Codex agent. Schema-level `default` annotations are deliberately omitted so schema-aware editors do not pre-populate these values — absence is semantically meaningful (distinguishes shipped behaviour from explicit pin).",
       "properties": {
         "codex": {
           "type": "object",
@@ -298,14 +298,12 @@
           "properties": {
             "default": {
               "type": "string",
-              "default": "gpt-5.5",
-              "description": "Default Codex model slug (e.g. `gpt-5.5`, `gpt-5.4`, `gpt-5.3-codex`). May reference a logical name declared in `aliases`. Resolved by `harness model resolve <agent>` and injected as `codex exec --model <slug>` at agent invocation time."
+              "description": "Codex model slug served by the Codex CLI (e.g. a `gpt-X.Y` or `gpt-X.Y-codex` variant). May reference a logical name declared in `aliases`. Resolved by `harness model resolve <agent>` and injected as `codex exec --model <slug>` at agent invocation time. When omitted the resolver falls back to `HARNESS_DEFAULT_MODEL`."
             },
             "reasoningEffort": {
               "type": "string",
               "enum": ["minimal", "low", "medium", "high", "xhigh"],
-              "default": "medium",
-              "description": "Default `codex exec --effort` value. The 5 levels match the Codex config-reference documentation. Per-agent overrides under `agents.*.reasoningEffort` take precedence."
+              "description": "`codex exec --effort` value. The 5 levels match the Codex config-reference documentation. Per-agent overrides under `agents.*.reasoningEffort` take precedence. When omitted the resolver falls back to `HARNESS_DEFAULT_REASONING_EFFORT`."
             },
             "aliases": {
               "type": "object",

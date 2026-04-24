@@ -2716,25 +2716,23 @@ describe("harness model registry (v0.4.0 resolver)", () => {
     expect(source).toMatch(/codex exec\s+\$MODEL_FLAG/);
   });
 
-  it("schema default for codex.default tracks the shipped HARNESS_DEFAULT_MODEL slug (gpt-5.5)", () => {
+  it("schema deliberately omits `default` annotations under models.codex so schema-aware editors do not populate them", () => {
+    // Rationale: a `default` at schema level would be used by editors /
+    // config-generators to pre-fill the user's `harness.config.json`.
+    // That would conflict with `DEFAULT_CONFIG.models = undefined` and
+    // defeat the `source: "harness-default"` semantic of `harness model
+    // resolve`. Absence of `default` at this schema path is intentional;
+    // this assertion locks it in against drift.
     const schema = JSON.parse(schemaSource);
-    expect(schema.properties.models.properties.codex.properties.default.default)
-      .toBe("gpt-5.5");
+    expect(
+      schema.properties.models.properties.codex.properties.default,
+    ).toBeDefined();
+    expect(
+      schema.properties.models.properties.codex.properties.default.default,
+    ).toBeUndefined();
     expect(
       schema.properties.models.properties.codex.properties.reasoningEffort
         .default,
-    ).toBe("medium");
-  });
-
-  it("schema default === resolver HARNESS_DEFAULT_MODEL (no 3-way drift)", async () => {
-    // Import the resolver's exported constant and assert that schema.json's
-    // `models.codex.default.default` literal matches it. This lock-in
-    // closes the 3-way drift vector (resolver.ts, config.ts, schema.json)
-    // flagged in the Codex adversarial review of the Model Registry epic.
-    const resolver = await import("../models/resolver.js");
-    const schema = JSON.parse(schemaSource);
-    expect(
-      schema.properties.models.properties.codex.properties.default.default,
-    ).toBe(resolver.HARNESS_DEFAULT_MODEL);
+    ).toBeUndefined();
   });
 });

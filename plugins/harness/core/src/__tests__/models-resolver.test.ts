@@ -78,6 +78,37 @@ describe("models/resolver — resolveModel", () => {
       const result = resolveModel(config, "codex-sync");
       expect(result.reasoningEffort).toBe(HARNESS_DEFAULT_REASONING_EFFORT);
     });
+
+    it("agents.*.reasoningEffort override applies even when model is not overridden", () => {
+      // Regression guard: previously the resolver only consulted
+      // `agentCfg.reasoningEffort` inside the `if (agentCfg?.model)`
+      // branch, so effort-only per-agent overrides were silently
+      // dropped.
+      const config: ModelsConfig = {
+        codex: { default: "gpt-5.5", reasoningEffort: "low" },
+        agents: {
+          "codex-team": { reasoningEffort: "high" },
+        },
+      };
+      const result = resolveModel(config, "codex-team");
+      expect(result.model).toBe("gpt-5.5");
+      expect(result.reasoningEffort).toBe("high");
+      // effort-only override promotes source to agent-override so
+      // `harness model resolve` surfaces the per-agent customisation.
+      expect(result.source).toBe("agent-override");
+    });
+
+    it("agents.*.reasoningEffort without codex.default still overrides the compile-time effort", () => {
+      const config: ModelsConfig = {
+        agents: {
+          "codex-team": { reasoningEffort: "xhigh" },
+        },
+      };
+      const result = resolveModel(config, "codex-team");
+      expect(result.model).toBe(HARNESS_DEFAULT_MODEL);
+      expect(result.reasoningEffort).toBe("xhigh");
+      expect(result.source).toBe("agent-override");
+    });
   });
 
   describe("alias resolution", () => {
