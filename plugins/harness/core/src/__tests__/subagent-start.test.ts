@@ -234,7 +234,7 @@ describe("SubagentStart — agentTypeNotes injection", () => {
     expect(result.additionalContext ?? "").not.toContain("worker-specific note");
   });
 
-  it("agentTypeNotes の値に control chars → escape される", async () => {
+  it("agentTypeNotes の値に control chars / LF → escape される (multi-line injection 防御)", async () => {
     const root = makeTempProject({
       subagentStart: {
         agentTypeNotes: {
@@ -244,10 +244,13 @@ describe("SubagentStart — agentTypeNotes injection", () => {
     });
     const result = await call(root, { agent_type: "harness:worker" });
     const ctx = result.additionalContext ?? "";
-    // control chars は escape されている
+    // ANSI escape (ESC \x1B) は escape されている
     expect(ctx).not.toMatch(/\x1B/);
-    // ただし改行は note 内で preserve される (multi-line note 運用想定)
-    // CRLF/CR のみ \n literal に統一、LF は preserve
+    // Raw LF は escape される (multi-line pseudo-section injection 阻止、
+    // config 経由の attacker-authored note に同じ policy を適用)。
+    // note 内の LF は literal "\n" (バックスラッシュ + n の 2 文字) 化。
+    expect(ctx).toContain("line1\\nline2");
+    // 中身自体は preserve (substring として line1 / line2 は読める)
     expect(ctx).toContain("line1");
     expect(ctx).toContain("line2");
   });
@@ -610,6 +613,57 @@ describe("SubagentStart — sanitizeNote TAB escape", () => {
     // before/after 内容は preserve
     expect(ctx).toContain("before");
     expect(ctx).toContain("after-tab");
+  });
+});
+
+// ============================================================
+// G6: UTF-8 byte boundary truncation (multi-byte safe)
+// ============================================================
+
+describe("SubagentStart — UTF-8 byte-safe truncation", () => {
+  it("Japanese + emoji の note が maxTotalBytes を超える → UTF-8 境界で正しく truncate (invalid byte 残存なし)", async () => {
+    // 「あ」 = 3 bytes (UTF-8)、"😀" = 4 bytes。25 文字で 75 + 4 = 79 bytes
+    // が 1 unit。これを 50 回繰り返して ~4000 bytes → maxTotalBytes=1024 で
+    // truncate する。
+    const root = makeTempProject({
+      subagentStart: {
+        maxTotalBytes: 1024,
+        fenceContext: true,
+        agentTypeNotes: {
+          "harness:worker": ("あいうえおかきくけこ😀".repeat(100)),
+        },
+      },
+    });
+    const result = await call(root, { agent_type: "harness:worker" });
+    const ctx = result.additionalContext ?? "";
+    // 実バイト長は 1024 に近いが、UTF-8 完全性は保たれる
+    const byteLen = Buffer.byteLength(ctx, "utf-8");
+    expect(byteLen).toBeLessThanOrEqual(1024 + 100); // +100 = fence + marker overhead bound
+    // replacement character (U+FFFD) が末尾に残っていない
+    expect(ctx).not.toMatch(/�/);
+    // fence は intact
+    expect(ctx).toMatch(/=====\s+HARNESS SubagentStart\s+[0-9a-f]{12}\s+=====/);
+    expect(ctx).toMatch(/=====\s+END HARNESS SubagentStart\s+[0-9a-f]{12}\s+=====/);
+    // truncate marker 含む
+    expect(ctx).toMatch(/truncated/);
+  });
+
+  it("multi-byte note (Japanese) が maxTotalBytes 内 → そのまま出力、byte 長整合", async () => {
+    const root = makeTempProject({
+      subagentStart: {
+        maxTotalBytes: 4096,
+        agentTypeNotes: {
+          "harness:worker": "日本語テスト",
+        },
+      },
+    });
+    const result = await call(root, { agent_type: "harness:worker" });
+    const ctx = result.additionalContext ?? "";
+    // 内容が preserve
+    expect(ctx).toContain("日本語テスト");
+    // byte 長は maxTotalBytes 内
+    expect(Buffer.byteLength(ctx, "utf-8")).toBeLessThanOrEqual(4096);
+    expect(ctx).not.toMatch(/truncated/);
   });
 });
 

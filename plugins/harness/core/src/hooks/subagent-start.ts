@@ -142,8 +142,7 @@ function resolveConfig(projectRoot: string): SubagentStartConfig {
     const rawNotes = ss["agentTypeNotes"];
 
     return {
-      // CodeRabbit PR #23 nitpick: drop redundant `as boolean` — the `typeof
-      // ... === "boolean"` guard already narrows the type.
+      // typeof guard narrows the type automatically — no `as boolean` needed.
       enabled: typeof ss["enabled"] === "boolean" ? ss["enabled"] : true,
       // Range 32-1024: reasonable bounds for identifier display.
       maxIdentifierLength:
@@ -219,25 +218,27 @@ function sanitizeIdentifier(s: string | undefined): string {
 }
 
 /**
- * Sanitize note content (from agentTypeNotes): CR/LF/CRLF → literal `\n`,
- * but preserve LF newlines for multi-line guidance. TAB (`\x09`) + other
- * C0 + DEL → `\x{HH}`.
+ * Sanitize note content (from agentTypeNotes): CR / LF / CRLF → literal
+ * `\n`, TAB (`\x09`) + all other C0 (0x00-0x1F) + DEL (0x7F) → `\x{HH}`.
  *
- * Unlike identifiers, notes are expected to be multi-line, so we preserve
- * LF but normalize CR variants to literal `\n`. TAB **is** escaped here
- * (unlike `post-tool-use-failure.ts` which preserves TAB for error stack
- * trace readability) — `agentTypeNotes` is prose authored by the config
- * owner; TAB has no readability value for prose and can enable visual
- * alignment attacks in terminal rendering. This matches the stricter
- * `config-change.ts` identifier policy (escape TAB) rather than the
- * lax stack-trace policy.
+ * **LF is escaped**: `agentTypeNotes` values come from config and are
+ * attack surface — a malicious / compromised config could inject
+ * multi-line content that spoofs pseudo-section boundaries inside
+ * `additionalContext`. Escaping LF to literal `\n` (same policy as
+ * `sanitizeIdentifier`) eliminates that vector. Notes render as a
+ * single line with `\n` literals, which is sufficient for short
+ * guidance ("TDD first") — operators with multi-line requirements
+ * should instead author multiple config entries or use a dedicated
+ * markdown-rendered skill.
+ *
+ * TAB is escaped for the same reason identifiers escape it (visual
+ * alignment attacks in terminal rendering); prose has no readability
+ * need for TAB.
  */
 function sanitizeNote(s: string): string {
   return s
-    .replace(/\r\n/g, "\n") // CRLF → LF
-    .replace(/\r/g, "\n") // CR → LF
-    // [\x00-\x09\x0B-\x1F\x7F] escapes TAB (\x09) but preserves LF (\x0A).
-    .replace(/[\x00-\x09\x0B-\x1F\x7F]/g, (ch) => {
+    .replace(/\r\n|[\n\r]/g, "\\n")
+    .replace(/[\x00-\x1F\x7F]/g, (ch) => {
       const hex = ch.charCodeAt(0).toString(16).padStart(2, "0");
       return `\\x${hex}`;
     });
@@ -251,6 +252,28 @@ function sanitizeNote(s: string): string {
  * minimum, where the 32-char marker exactly matches the limit).
  */
 const MIN_CONTENT_PREFIX = 8;
+
+/**
+ * UTF-8 byte length of a string (vs `s.length` which counts UTF-16 code
+ * units and mis-counts multi-byte characters like Japanese / emoji).
+ */
+function utf8ByteLength(s: string): number {
+  return Buffer.byteLength(s, "utf-8");
+}
+
+/**
+ * Truncate `s` to at most `maxBytes` UTF-8 bytes. Multi-byte characters
+ * (Japanese / emoji / combining marks) are kept whole — if a cut would
+ * fall mid-character the trailing invalid bytes are stripped via the
+ * replacement-character (U+FFFD) recovery that Node's UTF-8 decoder
+ * emits. This mirrors `user-prompt-submit.ts`'s byte-safe truncation.
+ */
+function truncateToUtf8Bytes(s: string, maxBytes: number): string {
+  const buf = Buffer.from(s, "utf-8");
+  if (buf.length <= maxBytes) return s;
+  if (maxBytes <= 0) return "";
+  return buf.subarray(0, maxBytes).toString("utf-8").replace(/�+$/, "");
+}
 
 /**
  * Truncate an identifier to maxLength chars, appending a truncation marker
@@ -348,9 +371,9 @@ export async function handleSubagentStart(
   // strictly for **rendering** (control-char escape in the diagnostic
   // line); the key lookup must stay on the raw value so a config entry
   // like `{ "Bash": "..." }` still matches an unsanitized Bash spawn.
-  // CodeRabbit PR #23 nitpick: renamed `originalAgentType` → `agentTypeKey`
-  // to make "coalesced key for lookup" intent explicit (the old name
-  // implied raw-without-any-transformation).
+  // The name `agentTypeKey` makes the "coalesced key for lookup" intent
+  // explicit (as opposed to a name like `rawAgentType` which would
+  // suggest the value is unmodified, which is not the case for undefined).
   const agentTypeKey = input.agent_type ?? "unknown";
   const note = cfg.agentTypeNotes[agentTypeKey];
   if (typeof note === "string" && note.length > 0) {
@@ -370,10 +393,16 @@ export async function handleSubagentStart(
   // context boundary even when the note has been over-long.
   //
   // When fenceContext is false (no wrapping), fall back to a straight
-  // slice with an inline marker — there's no fence to preserve.
+  // byte-safe slice with an inline marker — there's no fence to preserve.
+  //
+  // **UTF-8 aware**: `maxTotalBytes` is a byte cap (per schema docs), so
+  // all length comparisons and slices go through `utf8ByteLength` /
+  // `truncateToUtf8Bytes` rather than `s.length`. Multi-byte content
+  // (Japanese, emoji) is kept whole — a cut mid-character is recovered
+  // via the UTF-8 decoder's replacement-character drop.
   let additionalContext = lines.join("\n");
 
-  if (additionalContext.length > cfg.maxTotalBytes) {
+  if (utf8ByteLength(additionalContext) > cfg.maxTotalBytes) {
     if (cfg.fenceContext && lines.length >= 3) {
       // Structure: [open-fence, ...body, close-fence]. Keep open/close,
       // compress body to fit within maxTotalBytes.
@@ -382,13 +411,17 @@ export async function handleSubagentStart(
       const body = lines.slice(1, -1).join("\n");
 
       // Budget for body = maxTotalBytes - (open + \n + \n + close).
-      const overhead = openFence.length + closeFence.length + 2; // 2 newlines
+      // Fence markers are ASCII-only, so utf8ByteLength = length, but we
+      // use utf8ByteLength uniformly for clarity.
+      const overhead =
+        utf8ByteLength(openFence) + utf8ByteLength(closeFence) + 2;
       const markerSuffix = `\n[harness ${nonce}] context truncated at ${cfg.maxTotalBytes} bytes`;
-      const bodyBudget = cfg.maxTotalBytes - overhead - markerSuffix.length;
+      const bodyBudget =
+        cfg.maxTotalBytes - overhead - utf8ByteLength(markerSuffix);
 
       let truncatedBody: string;
       if (bodyBudget > 0) {
-        truncatedBody = body.slice(0, bodyBudget) + markerSuffix;
+        truncatedBody = truncateToUtf8Bytes(body, bodyBudget) + markerSuffix;
       } else {
         // maxTotalBytes is so small that fence + marker alone exceed it.
         // Drop the body entirely and keep only the fences with an inline
@@ -398,13 +431,14 @@ export async function handleSubagentStart(
 
       additionalContext = [openFence, truncatedBody, closeFence].join("\n");
     } else {
-      // No fence wrapping — straight slice with marker.
+      // No fence wrapping — byte-safe slice with marker.
       const truncationMarker = `\n[harness ${nonce}] context truncated at ${cfg.maxTotalBytes} bytes`;
+      const sliceBudget = Math.max(
+        0,
+        cfg.maxTotalBytes - utf8ByteLength(truncationMarker),
+      );
       additionalContext =
-        additionalContext.slice(
-          0,
-          Math.max(0, cfg.maxTotalBytes - truncationMarker.length),
-        ) + truncationMarker;
+        truncateToUtf8Bytes(additionalContext, sliceBudget) + truncationMarker;
     }
   }
 
