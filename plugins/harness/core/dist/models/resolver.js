@@ -1,3 +1,4 @@
+/* generality-exemption: B-10 | HARNESS-model-registry | 2099-12-31 | resolver is the declarative source of truth for HARNESS_DEFAULT_MODEL and therefore must reference literal slugs */
 /**
  * core/src/models/resolver.ts
  *
