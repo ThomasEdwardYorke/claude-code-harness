@@ -17,6 +17,42 @@ import { resolve } from "node:path";
 export type HarnessLanguage = "en" | "ja";
 export type TamperingSeverity = "approve" | "ask" | "deny";
 
+/**
+ * Tunables for the codex-sync agent aimed at mitigating mid-response
+ * truncation caused by Claude Code's subagent output limit. See
+ * `agents/codex-sync.md` for the user-facing remediation path.
+ *
+ * Background: Claude Code exposes `TASK_MAX_OUTPUT_LENGTH` (default
+ * 32000 characters, documented maximum 160000) which middle-truncates
+ * subagent final responses that exceed the effective limit (full output
+ * is auto-saved to disk). codex-sync returns multi-KB Codex review output
+ * and hit this truncation 6 times in 2026-04 alone (backlog 1c). These
+ * knobs let `harness doctor` warn when the effective limit is below the
+ * runtime default without hardcoding the threshold inside bin/harness.
+ */
+export interface CodexSyncConfig {
+  /**
+   * Value `harness doctor` prints as the recommended setting for the
+   * `TASK_MAX_OUTPUT_LENGTH` environment variable. Capped at 160000 —
+   * Claude Code silently clamps higher values so advertising one would
+   * be misleading.
+   */
+  recommendedTaskMaxOutputLength: number;
+  /**
+   * Threshold below which `harness doctor` flags the current effective
+   * `TASK_MAX_OUTPUT_LENGTH` as WARN. Default 32000 mirrors Claude Code's
+   * runtime default so the doctor warns whenever the env var is unset.
+   */
+  warnTaskMaxOutputLengthBelow: number;
+  /**
+   * When true, `harness doctor` reports the effective
+   * `TASK_MAX_OUTPUT_LENGTH` alongside codex plugin detection. Set false
+   * to silence the report entirely (e.g. for CI images where the env
+   * var is intentionally left at the runtime default).
+   */
+  checkTaskMaxOutputLength: boolean;
+}
+
 export interface CodexConfig {
   /** Whether the codex-sync agent path resolution is active. */
   enabled: boolean;
@@ -26,6 +62,21 @@ export interface CodexConfig {
    * If omitted, `harness doctor` auto-detects the latest version.
    */
   pluginRoot?: string;
+  /**
+   * Tunables for the codex-sync agent. **Non-optional after `loadConfig` /
+   * `loadConfigSafe`**: `DEFAULT_CONFIG.codex.sync` is always populated and
+   * `mergeConfig()` carries it through unconditionally (see the nested
+   * spread in `mergeConfig` — `partial.codex?.sync ?? {}` fallback ensures
+   * the merged object always has the three threshold fields).
+   *
+   * The user-facing JSON surface is still free to omit `codex.sync`
+   * entirely; schema validation treats the section as optional. Only the
+   * post-merge `HarnessConfig` consumer view is guaranteed to see a fully
+   * populated `CodexSyncConfig`, which is why downstream code (bin/harness
+   * doctor, `stop.ts` reminders, etc.) can dereference without optional
+   * chaining.
+   */
+  sync: CodexSyncConfig;
 }
 
 export interface WorkModeConfig {
@@ -447,7 +498,14 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     "GOOGLE_API_KEY",
   ],
   protectedFileSuffixes: [".env"],
-  codex: { enabled: false },
+  codex: {
+    enabled: false,
+    sync: {
+      recommendedTaskMaxOutputLength: 160000,
+      warnTaskMaxOutputLengthBelow: 32000,
+      checkTaskMaxOutputLength: true,
+    },
+  },
   workMode: { bypassRmRf: false, bypassGitPush: false },
   tampering: { severity: "approve" },
   work: {
@@ -570,7 +628,17 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
   return {
     ...DEFAULT_CONFIG,
     ...partial,
-    codex: { ...DEFAULT_CONFIG.codex, ...(partial.codex ?? {}) },
+    codex: {
+      ...DEFAULT_CONFIG.codex,
+      ...(partial.codex ?? {}),
+      // codex.sync is nested — merge one level deeper so a partial
+      // `{ sync: { checkTaskMaxOutputLength: false } }` override keeps
+      // the other two threshold defaults instead of wiping them.
+      sync: {
+        ...DEFAULT_CONFIG.codex.sync,
+        ...(partial.codex?.sync ?? {}),
+      },
+    },
     workMode: { ...DEFAULT_CONFIG.workMode, ...(partial.workMode ?? {}) },
     tampering: { ...DEFAULT_CONFIG.tampering, ...(partial.tampering ?? {}) },
     work: mergedWork,

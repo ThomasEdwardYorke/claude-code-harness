@@ -117,6 +117,72 @@ exit_code: <N>
 stderr: <last 20 lines>
 ```
 
+## Handling Mid-Response Truncation
+
+This agent's final response can be middle-truncated by Claude Code's
+`TASK_MAX_OUTPUT_LENGTH` runtime cap (default 32000 characters,
+documented maximum 160000). `codex-companion.mjs` itself does not
+truncate — it writes the raw Codex `finalMessage` to stdout verbatim —
+so any mid-response cut is always a consequence of the Claude Code
+subagent output limit, not a Codex or harness bug.
+
+Claude Code's documented behaviour on overflow:
+
+- The **full output is auto-saved to disk** by the runtime; no data is
+  lost at the codex-companion or harness layer. The caller can still
+  retrieve the complete payload from the saved output file even when the
+  visible agent response is truncated.
+- The **visible** response is middle-truncated — start and end remain
+  intact while the middle is replaced with a truncation marker.
+
+### Recovery path for the caller (do not perform this yourself)
+
+If the caller (main Claude / parent agent) observes a truncated response
+from this agent (closing sentence cut mid-word, expected section
+missing, truncation marker inserted by the runtime), it should resume
+the **same** agent instance via `SendMessage`. Either body form is
+accepted — use whichever language matches the rest of the session:
+
+```text
+# English
+SendMessage({
+  to: "<this-agent-id>",
+  body: "The previous output was middle-truncated by TASK_MAX_OUTPUT_LENGTH. Please return the remaining content verbatim, picking up where it stopped."
+})
+
+# Japanese (for JP-first sessions)
+SendMessage({
+  to: "<this-agent-id>",
+  body: "先ほどの出力が TASK_MAX_OUTPUT_LENGTH で truncate されました。続きを途中から末尾まで verbatim で返してください。"
+})
+```
+
+Claude Code resumes suspended subagents from exactly where they stopped,
+so the resumed turn will return the remaining payload without re-running
+Codex (the Codex thread is already persisted by codex-companion).
+
+Alternatively, if `SendMessage` resume is unavailable, the caller can
+read the saved full output from the Claude Code task output file
+(notification payload exposes `output-file: /.../tasks/<id>.output`) —
+that copy is not subject to the subagent response cap.
+
+### Prevention: bump `TASK_MAX_OUTPUT_LENGTH`
+
+To avoid the truncation in the first place, set
+`TASK_MAX_OUTPUT_LENGTH=160000` (Claude Code's documented maximum) in
+the shell environment before starting the Claude Code session:
+
+```bash
+export TASK_MAX_OUTPUT_LENGTH=160000
+```
+
+`harness doctor` reports the effective value and warns when it falls
+below the runtime default (32000). The thresholds are configurable via
+`codex.sync.*` in `harness.config.json` (see schema for shape). This
+agent itself never reads or mutates the env var — the remediation lives
+with the human operator / caller, because the truncation happens one
+layer above this agent's blast radius.
+
 ## Routing Guide
 
 - **Short tasks where a synchronous result is required** -> this agent (`codex-sync`)

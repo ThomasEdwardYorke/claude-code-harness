@@ -2951,3 +2951,91 @@ describe("harness model registry (v0.4.0 resolver)", () => {
     ).toBeUndefined();
   });
 });
+
+describe("codex-sync truncate mitigation (v0.4.0 final, backlog 1c)", () => {
+  // Background: Claude Code runtime's `TASK_MAX_OUTPUT_LENGTH` env var
+  // defaults to 32000 and caps at 160000 (official env-vars docs).
+  // Subagent outputs exceeding the effective limit are middle-truncated;
+  // the full payload is auto-saved to disk but the truncated copy visible
+  // to the caller loses its middle. codex-sync regularly returned multi-KB
+  // Codex output and hit truncation 6 times between 2026-04-21 and
+  // 2026-04-24, forcing manual `SendMessage` recovery every time.
+  //
+  // The invariants below lock in the v0.4.0 final mitigation surface:
+  //   1. codex-sync.md must document the root cause (TASK_MAX_OUTPUT_LENGTH)
+  //      and the official recovery path (SendMessage resume).
+  //   2. harness.config.schema.json must expose a strict `codex.sync`
+  //      section so projects can tune thresholds and opt out of the
+  //      doctor check without monkey-patching the plugin.
+  //   3. bin/harness doctor must report the effective TASK_MAX_OUTPUT_LENGTH
+  //      so users notice the stale 32000 default before it next truncates.
+  const binSource = readFileSync(
+    resolve(PLUGIN_ROOT, "bin", "harness"),
+    "utf-8",
+  );
+  const schemaSource = readFileSync(
+    resolve(PLUGIN_ROOT, "schemas", "harness.config.schema.json"),
+    "utf-8",
+  );
+
+  it("codex-sync agent documents TASK_MAX_OUTPUT_LENGTH as the truncation root cause", () => {
+    const source = readAgent("codex-sync");
+    expect(source).toContain("TASK_MAX_OUTPUT_LENGTH");
+    // Claude Code official max value — keep the number in docs so users
+    // can copy-paste an effective env var.
+    expect(source).toContain("160000");
+  });
+
+  it("codex-sync agent documents SendMessage resume as the recovery path", () => {
+    const source = readAgent("codex-sync");
+    expect(source).toContain("SendMessage");
+    // The word "resume" (or its JP counterpart "再開") must appear near
+    // SendMessage so the caller reads the two as a pair.
+    expect(source).toMatch(/SendMessage[\s\S]{0,400}?(resume|再開|continuation|pick\s+up)/i);
+  });
+
+  it("codex-sync agent references the disk-saved full output as fallback recovery", () => {
+    const source = readAgent("codex-sync");
+    // Claude Code saves the full (pre-truncation) payload to disk; the
+    // agent spec must surface this so callers know a truncated subagent
+    // response is recoverable without re-running Codex.
+    expect(source).toMatch(/disk|full[\s-]?output|saved/i);
+  });
+
+  it("harness.config.schema.json exposes a strict codex.sync section", () => {
+    const schema = JSON.parse(schemaSource);
+    const codexProps = schema.properties?.codex?.properties;
+    expect(codexProps?.sync).toBeDefined();
+    expect(codexProps.sync.type).toBe("object");
+    expect(codexProps.sync.additionalProperties).toBe(false);
+    // Exactly the three tunables the doctor / agent spec rely on.
+    expect(codexProps.sync.properties?.recommendedTaskMaxOutputLength).toBeDefined();
+    expect(codexProps.sync.properties?.warnTaskMaxOutputLengthBelow).toBeDefined();
+    expect(codexProps.sync.properties?.checkTaskMaxOutputLength).toBeDefined();
+  });
+
+  it("harness.config.schema.json codex.sync thresholds declare Claude Code range bounds", () => {
+    const schema = JSON.parse(schemaSource);
+    const syncProps =
+      schema.properties.codex.properties.sync.properties;
+    // `recommendedTaskMaxOutputLength` is the value harness recommends users
+    // set `TASK_MAX_OUTPUT_LENGTH` to. Claude Code caps the env var at
+    // 160000; forbidding higher values avoids advertising a value the
+    // runtime will silently clamp.
+    expect(syncProps.recommendedTaskMaxOutputLength.maximum).toBe(160000);
+    expect(syncProps.recommendedTaskMaxOutputLength.minimum).toBe(32000);
+    expect(syncProps.recommendedTaskMaxOutputLength.default).toBe(160000);
+    // `warnTaskMaxOutputLengthBelow` must stay <= the recommended value
+    // and >= 1. Default 32000 matches Claude Code's runtime default so
+    // the doctor warns whenever the env var is unset.
+    expect(syncProps.warnTaskMaxOutputLengthBelow.maximum).toBe(160000);
+    expect(syncProps.warnTaskMaxOutputLengthBelow.default).toBe(32000);
+  });
+
+  it("bin/harness doctor reports TASK_MAX_OUTPUT_LENGTH status", () => {
+    expect(binSource).toContain("TASK_MAX_OUTPUT_LENGTH");
+    // The doctor must branch on the configured threshold, not hardcode
+    // 32000, so projects can tighten / loosen without shipping a patch.
+    expect(binSource).toMatch(/warnTaskMaxOutputLengthBelow|codex\.sync/);
+  });
+});

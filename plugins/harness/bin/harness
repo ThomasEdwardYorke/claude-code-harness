@@ -168,6 +168,15 @@ async function cmdDoctor() {
     }
   }
 
+  // codex-sync truncate mitigation thresholds (codex.sync.*). Defaults
+  // mirror `DEFAULT_CONFIG.codex.sync` in core/src/config.ts. Both the
+  // harness.config.json loader and the TASK_MAX_OUTPUT_LENGTH report
+  // below override these when the user supplies them; keeping the
+  // defaults in sync with config.ts is enforced by unit tests.
+  let codexSyncCheck = true;
+  let codexSyncWarnBelow = 32000;
+  let codexSyncRecommended = 160000;
+
   // Codex companion (optional — used by codex-sync / coderabbit-mimic agents).
   // `os.homedir()` handles Windows (USERPROFILE) + POSIX HOME + edge
   // cases where HOME is unset in container / CI environments. Falling
@@ -224,11 +233,64 @@ async function cmdDoctor() {
         const p = resolve(projectDir, rel);
         out.push(`handoff file:        ${p}${existsSync(p) ? "" : " (missing — optional)"}`);
       }
+      // codex-sync truncate mitigation: project override of codex.sync.*.
+      // Accept only well-typed scalars — malformed entries (string, null,
+      // NaN, Infinity) fall through to the shipped defaults rather than
+      // poisoning the doctor report.
+      const syncCfg = cfg?.codex?.sync;
+      if (syncCfg && typeof syncCfg === "object") {
+        if (typeof syncCfg.checkTaskMaxOutputLength === "boolean") {
+          codexSyncCheck = syncCfg.checkTaskMaxOutputLength;
+        }
+        if (
+          typeof syncCfg.warnTaskMaxOutputLengthBelow === "number" &&
+          Number.isFinite(syncCfg.warnTaskMaxOutputLengthBelow)
+        ) {
+          codexSyncWarnBelow = syncCfg.warnTaskMaxOutputLengthBelow;
+        }
+        if (
+          typeof syncCfg.recommendedTaskMaxOutputLength === "number" &&
+          Number.isFinite(syncCfg.recommendedTaskMaxOutputLength)
+        ) {
+          codexSyncRecommended = syncCfg.recommendedTaskMaxOutputLength;
+        }
+      }
     } catch (err) {
       out.push(`harness.config.json: PARSE ERROR (${err instanceof Error ? err.message : String(err)})`);
     }
   } else {
     out.push(`harness.config.json: not found at ${harnessConfigPath} (run 'harness init' to create one)`);
+  }
+
+  // codex-sync truncate mitigation: report the effective
+  // TASK_MAX_OUTPUT_LENGTH env var so operators spot an unset or low
+  // value before the next codex-sync mid-truncation (backlog 1c).
+  // Claude Code runtime caps subagent final responses at the env var's
+  // value (default 32000, documented max 160000); raising it lets
+  // codex-sync return multi-KB review output without resume dances.
+  // Respects `codex.sync.checkTaskMaxOutputLength: false` for CI.
+  if (codexSyncCheck) {
+    const taskMaxRaw = process.env.TASK_MAX_OUTPUT_LENGTH;
+    if (taskMaxRaw !== undefined && taskMaxRaw.length > 0) {
+      const taskMax = Number(taskMaxRaw);
+      if (Number.isFinite(taskMax) && taskMax > 0) {
+        if (taskMax < codexSyncWarnBelow) {
+          out.push(
+            `TASK_MAX_OUTPUT_LENGTH: ${taskMax} (WARN below ${codexSyncWarnBelow} — recommend 'export TASK_MAX_OUTPUT_LENGTH=${codexSyncRecommended}' to avoid codex-sync mid-truncation; Claude Code max is 160000)`,
+          );
+        } else {
+          out.push(`TASK_MAX_OUTPUT_LENGTH: ${taskMax} (OK)`);
+        }
+      } else {
+        out.push(
+          `TASK_MAX_OUTPUT_LENGTH: "${taskMaxRaw}" (WARN unparseable — recommend 'export TASK_MAX_OUTPUT_LENGTH=${codexSyncRecommended}')`,
+        );
+      }
+    } else {
+      out.push(
+        `TASK_MAX_OUTPUT_LENGTH: unset — Claude Code falls back to runtime default 32000. Recommend 'export TASK_MAX_OUTPUT_LENGTH=${codexSyncRecommended}' to avoid codex-sync mid-truncation.`,
+      );
+    }
   }
 
   // Project-local skill scaffold (harness plugin's project-local convention).
