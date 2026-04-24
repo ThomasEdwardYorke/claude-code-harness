@@ -734,7 +734,7 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
   }
 });
 
-describe("main() safe-fallback diagnostic surfacing (Issue #3)", () => {
+describe("main() safe-fallback diagnostic surfacing", () => {
   // Guards against silent-exception serialization in the hookSpecificOutput
   // branch (user-prompt-submit / post-tool-use-failure / config-change /
   // subagent-start). Before the fix, a thrown handler + errorToResult() →
@@ -935,6 +935,38 @@ describe("main() safe-fallback diagnostic surfacing (Issue #3)", () => {
     const mixed = "エラー: 😀 stack trace\n  at foo (a.ts:1:1)";
     expect(sanitizeSafeFallbackReason(mixed)).toBe(mixed);
   });
+
+  it.skipIf(!distExists)(
+    "classic branch sanitisation: JSON.stringify(result).reason also scrubbed (not only stderr / systemMessage)",
+    () => {
+      // When the safe-fallback path fires, the sanitised reason is now
+      // propagated back into `result.reason` so the classic output branch
+      // (pre-tool / post-tool / permission / session / pre-compact / …)
+      // also emits the scrubbed text inside its stdout JSON. Otherwise a
+      // raw ANSI/NUL byte from an exception message could slip through
+      // `JSON.stringify(result)` (where JSON.stringify would escape it as
+      // `\uXXXX`, but a downstream display could still un-escape on render).
+      //
+      // We cannot easily inject control bytes via V8's JSON.parse error
+      // path on every Node release, so we assert the weaker invariant
+      // that the `reason` in stdout JSON equals the text on stderr —
+      // both must be the single sanitised surface, not two divergent
+      // strings.
+      const result = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: "{not valid json}",
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      const stdoutReason = parsed["reason"] as string;
+      const stderrTrim = result.stderr.trim();
+      expect(stdoutReason).toBe(stderrTrim);
+    },
+  );
 
   it.skipIf(!distExists)(
     "handler-throws path (not JSON.parse) also routes through errorToResult + safe-fallback surfacing",

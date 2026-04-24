@@ -51,9 +51,9 @@ export interface HookResult {
    *     conversation turn (so it is visible to both audiences)
    *
    * Used by the permission hook (custom permission-reason JSON) and by
-   * the `hookSpecificOutput` serialization branch (Issue #3 fail-safe
-   * path) where `result.reason` is lifted into `systemMessage` to avoid
-   * silent `{}` output when a handler throws.
+   * the `hookSpecificOutput` serialization branch where a safe-fallback
+   * `reason` is lifted into `systemMessage` so a handler exception does
+   * not produce silent `{}` output.
    */
   systemMessage?: string;
 

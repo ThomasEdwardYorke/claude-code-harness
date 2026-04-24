@@ -465,7 +465,8 @@ async function main(): Promise<void> {
   // Tracks whether main() landed on the `errorToResult()` fail-safe path.
   // Used to surface the engine-level diagnostic (reason string) on stderr
   // and — for the hookSpecificOutput serialization branch — lift it to
-  // `systemMessage` so it is not silently dropped (Issue #3).
+  // `systemMessage` so the reason is not silently dropped by the stdout
+  // JSON emitter when `decision === "approve"`.
   let safeFallbackUsed = false;
 
   try {
@@ -499,7 +500,7 @@ async function main(): Promise<void> {
     safeFallbackUsed = true;
   }
 
-  // Fail-safe diagnostic surfacing (Issue #3): when main() reached the
+  // Fail-safe diagnostic surfacing: when main() reached the
   // `errorToResult()` fallback, write the sanitised reason to stderr so
   // the developer sees it even in the hookSpecificOutput branch where the
   // stdout JSON would otherwise drop `reason` (only serialised on
@@ -519,12 +520,27 @@ async function main(): Promise<void> {
   // the length — the reason text may contain stack-trace content that we
   // cannot fully trust when it is surfaced to the user or delivered to
   // Claude as context on the next turn.
+  //
+  // Explicit length check (not a truthy shortcut) so a handler returning
+  // `reason: ""` does not slip through silently — currently impossible
+  // because `errorToResult()` prefixes with `"Core engine error ..."`
+  // (length > 0 guaranteed), but the explicit guard also future-proofs
+  // against code that rebinds `result` to a different fail-safe shape.
   const safeFallbackSurface =
-    safeFallbackUsed && result.reason
+    safeFallbackUsed &&
+    typeof result.reason === "string" &&
+    result.reason.length > 0
       ? sanitizeSafeFallbackReason(result.reason)
       : undefined;
   if (safeFallbackSurface !== undefined) {
     process.stderr.write(safeFallbackSurface + "\n");
+    // Propagate the sanitised form back into `result.reason` so the
+    // classic `JSON.stringify(result)` branch (pre-tool / post-tool /
+    // permission / session-* / pre-compact / subagent-stop / task-* /
+    // stop / worktree-remove) also emits the scrubbed text rather than
+    // the raw reason that could still carry ANSI escapes or other
+    // terminal-control bytes inside the JSON payload.
+    result.reason = safeFallbackSurface;
   }
 
   if (hookType === "permission" && result.systemMessage !== undefined) {
@@ -587,11 +603,11 @@ async function main(): Promise<void> {
       out["decision"] = "block";
       if (result.reason) out["reason"] = result.reason;
     }
-    // Issue #3 fix: lift the sanitised safe-fallback reason to
-    // `systemMessage` so a handler exception surfaces as a user-visible
-    // warning + is delivered to Claude as context on the next turn.
-    // Without this, the stdout JSON below would be literal `{}` (silent
-    // approve with no diagnostic).
+    // Silent-exception safeguard: lift the sanitised safe-fallback reason
+    // to `systemMessage` so a handler exception surfaces as a
+    // user-visible warning + is delivered to Claude as context on the
+    // next turn. Without this, the stdout JSON below would be literal
+    // `{}` (silent approve with no diagnostic).
     //
     // `systemMessage` is a top-level universal field per the spec
     // (https://code.claude.com/docs/en/hooks): "Warning message shown to
