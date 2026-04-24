@@ -140,8 +140,19 @@ Claude Code's documented behaviour on overflow:
 If the caller (main Claude / parent agent) observes a truncated response
 from this agent (closing sentence cut mid-word, expected section
 missing, truncation marker inserted by the runtime), it should resume
-the **same** agent instance via `SendMessage`. Either body form is
-accepted — use whichever language matches the rest of the session:
+the **same** agent instance via `SendMessage`.
+
+**Requirement for `SendMessage` resume**: the parent session must have
+spawned this agent with an explicit `name` (Claude Code's subagent
+teammate feature — `SendMessage` documentation specifically states
+"Refer to teammates by name, never by UUID", so an agent launched
+without a `name` field cannot be addressed and the caller must fall
+back to the "read the saved task output file" path described below
+instead.) A parent that relies on truncate recovery should therefore
+set a stable `name` at spawn time.
+
+Either body form is accepted — use whichever language matches the
+rest of the session:
 
 ```text
 # English

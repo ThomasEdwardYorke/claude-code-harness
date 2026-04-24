@@ -3041,4 +3041,40 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
     // 32000, so projects can tighten / loosen without shipping a patch.
     expect(binSource).toMatch(/warnTaskMaxOutputLengthBelow|codex\.sync/);
   });
+
+  it("bin/harness doctor clamps recommended up to warn threshold (self-contradictory config)", () => {
+    // Cross-field invariant: `recommendedTaskMaxOutputLength` must not
+    // be below `warnTaskMaxOutputLengthBelow` — otherwise the doctor
+    // would advise the operator to set an env var value that it then
+    // immediately re-flags as "below threshold". Without this clamp,
+    // `{ recommended: 40000, warnBelow: 80000 }` produces a confused
+    // state (stderr warn + misleading report). The diff uses a direct
+    // `codexSyncRecommended < codexSyncWarnBelow` gate and tags the
+    // fix as "self-contradictory" so future refactors preserve it.
+    expect(binSource).toMatch(/codexSyncRecommended\s*<\s*codexSyncWarnBelow/);
+    expect(binSource).toContain("self-contradictory");
+  });
+
+  it("bin/harness doctor flags TASK_MAX_OUTPUT_LENGTH values above Claude Code's documented max", () => {
+    // Claude Code silently clamps the env var to 160000 when the user
+    // sets it higher. Reporting "OK" for a 999999999-style value would
+    // mislead the operator (the effective limit does not match). Emit
+    // an explicit WARN that mentions the runtime clamp behaviour.
+    expect(binSource).toMatch(/taskMax\s*>\s*160000/);
+    expect(binSource).toContain("silently clamps to 160000");
+  });
+
+  it("codex-sync agent documents SendMessage resume requires a name-spawned agent", () => {
+    // Adversarial reviewer pointed out that `SendMessage({ to: "<name>" })`
+    // requires the parent to have spawned the agent with an explicit
+    // `name` field (Claude Code's `SendMessage` docs: "Refer to
+    // teammates by name, never by UUID"). Keep this precondition in
+    // the agent spec so the caller knows to set a stable `name` when
+    // they care about truncate recovery, and so the fallback path
+    // (reading the saved task output file) is documented for
+    // parents that launched this agent anonymously.
+    const source = readAgent("codex-sync");
+    expect(source).toMatch(/name.*?spawn|spawn.*?name/i);
+    expect(source).toMatch(/Refer to teammates by name|teammate|by name, never by UUID/i);
+  });
 });

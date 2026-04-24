@@ -270,6 +270,24 @@ async function cmdDoctor() {
             );
           }
         }
+        // Cross-field invariant: `recommendedTaskMaxOutputLength` must be
+        // at least `warnTaskMaxOutputLengthBelow`, otherwise the doctor
+        // would recommend a value that is *itself* below the threshold
+        // it uses to decide WARN — a confused state where the operator
+        // is told "set to X" and the doctor would immediately re-flag
+        // X as "below threshold". Schema can't easily express an
+        // allOf cross-field bound in draft-07, so enforce at load
+        // time: warn via stderr and clamp `recommended` up to
+        // `warnBelow`. The warn threshold is the load-bearing signal
+        // (doctor's WARN decision hinges on it), so preserving it and
+        // raising `recommended` beats lowering the threshold to match
+        // a malformed `recommended`.
+        if (codexSyncRecommended < codexSyncWarnBelow) {
+          process.stderr.write(
+            `harness doctor: codex.sync.recommendedTaskMaxOutputLength (${codexSyncRecommended}) is below warnTaskMaxOutputLengthBelow (${codexSyncWarnBelow}); clamping recommended up to ${codexSyncWarnBelow} to avoid a self-contradictory recommendation\n`,
+          );
+          codexSyncRecommended = codexSyncWarnBelow;
+        }
       }
     } catch (err) {
       out.push(`harness.config.json: PARSE ERROR (${err instanceof Error ? err.message : String(err)})`);
@@ -293,6 +311,14 @@ async function cmdDoctor() {
         if (taskMax < codexSyncWarnBelow) {
           out.push(
             `TASK_MAX_OUTPUT_LENGTH: ${taskMax} (WARN below ${codexSyncWarnBelow} — recommend 'export TASK_MAX_OUTPUT_LENGTH=${codexSyncRecommended}' to avoid codex-sync mid-truncation; Claude Code max is 160000)`,
+          );
+        } else if (taskMax > 160000) {
+          // Over Claude Code's documented max — the runtime silently
+          // clamps the effective limit to 160000, so reporting "OK"
+          // would mislead the operator. Flag explicitly so they know
+          // the env var value is not honoured as-is.
+          out.push(
+            `TASK_MAX_OUTPUT_LENGTH: ${taskMax} (WARN above Claude Code's documented max of 160000 — runtime silently clamps to 160000; consider 'export TASK_MAX_OUTPUT_LENGTH=160000' for parity)`,
           );
         } else {
           out.push(`TASK_MAX_OUTPUT_LENGTH: ${taskMax} (OK)`);
