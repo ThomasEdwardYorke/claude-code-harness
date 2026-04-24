@@ -2048,20 +2048,42 @@ describe("session-handoff skill — harness-setup check 統合", () => {
  *   も検出して false-fail する。歴史的言及を残す場合はバッククォート表現を変更すること。
  */
 describe("release guard — version consistency (Phase μ)", () => {
-  const EXPECTED_VERSION = "0.3.3";
-  const EXPECTED_PREV_VERSION = "0.3.2";
-  const EXPECTED_RELEASE_DATE = "2026-04-23";
+  /**
+   * SemVer 2.0.0 shape validation (pre-release + build metadata both permitted).
+   *
+   * Reference: https://semver.org/#spec-item-9 / #spec-item-10
+   * Accepts:
+   *   - 1.2.3                       (stable release)
+   *   - 0.4.0-rc.1                  (pre-release)
+   *   - 0.4.0-beta.3                (pre-release)
+   *   - 0.4.0-alpha.2+build.7       (pre-release + build metadata)
+   *   - 1.0.0+20130313144700        (build metadata only)
+   * Rejects:
+   *   - 0.2        (2-part — missing patch)
+   *   - 1.2.3.4    (4-part — extra segment)
+   *   - abc        (non-numeric)
+   *   - 0.4.0-     (empty pre-release)
+   *   - 0.4.0+     (empty build metadata)
+   *
+   * Shape validation のみ (leading-zero 等の canonical 準拠は強制しない)。
+   * v0.4.0-rc.1 以降で pre-release cycle を解放するため、前 regex
+   * `^\d+\.\d+\.\d+$` を relax した (SemVer 2.0.0 §9 / §10 の shape を許容)。
+   */
+  const SEMVER_VERSION_REGEX =
+    /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
-  // SemVer X.Y.Z 形状検証 (shape validation のみ、leading-zero 等の細部検査は省略)
-  // EXPECTED_VERSION = "0.2" / "1.2.3.4" / "abc" 等の malformed を排除することが目的
-  if (!/^\d+\.\d+\.\d+$/.test(EXPECTED_VERSION)) {
+  const EXPECTED_VERSION = "0.4.0-rc.1";
+  const EXPECTED_PREV_VERSION = "0.3.3";
+  const EXPECTED_RELEASE_DATE = "2026-04-24";
+
+  if (!SEMVER_VERSION_REGEX.test(EXPECTED_VERSION)) {
     throw new Error(
-      `EXPECTED_VERSION "${EXPECTED_VERSION}" is not canonical SemVer X.Y.Z`,
+      `EXPECTED_VERSION "${EXPECTED_VERSION}" does not match SemVer 2.0.0 shape`,
     );
   }
-  if (!/^\d+\.\d+\.\d+$/.test(EXPECTED_PREV_VERSION)) {
+  if (!SEMVER_VERSION_REGEX.test(EXPECTED_PREV_VERSION)) {
     throw new Error(
-      `EXPECTED_PREV_VERSION "${EXPECTED_PREV_VERSION}" is not canonical SemVer X.Y.Z`,
+      `EXPECTED_PREV_VERSION "${EXPECTED_PREV_VERSION}" does not match SemVer 2.0.0 shape`,
     );
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(EXPECTED_RELEASE_DATE)) {
@@ -2210,6 +2232,72 @@ describe("release guard — version consistency (Phase μ)", () => {
       `v${escapeRegex(EXPECTED_VERSION)}\\s*\\(unreleased\\)`,
     );
     expect(testBedUsage).not.toMatch(pattern);
+  });
+
+  // --- 13: SEMVER_VERSION_REGEX shape unit tests (pre-release cycle support) ---
+  //
+  // v0.4.0-rc.1 以降で pre-release suffix (`-rc.N` / `-beta.N` / `-alpha.N`) を
+  // 正しく通す / malformed を弾く contract を固定化。前 regex は `^\d+\.\d+\.\d+$`
+  // で `-rc.1` を reject していたため、relax と同時に単体テストを追加して
+  // future regression (例: 誤って `.+?` 化 / 空 suffix 許容) を遮断する。
+  describe("SEMVER_VERSION_REGEX — SemVer 2.0.0 shape validation", () => {
+    it("accepts canonical X.Y.Z stable releases", () => {
+      expect(SEMVER_VERSION_REGEX.test("0.0.0")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.2.3")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("10.20.30")).toBe(true);
+    });
+
+    it("accepts pre-release suffix (-rc.N / -beta.N / -alpha.N)", () => {
+      expect(SEMVER_VERSION_REGEX.test("0.4.0-rc.1")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("0.4.0-beta.3")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.0.0-alpha.7")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.0.0-0.3.7")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.0.0-x-y-z.-")).toBe(true);
+    });
+
+    it("accepts build metadata suffix (+sha / +build)", () => {
+      expect(SEMVER_VERSION_REGEX.test("1.0.0+20130313144700")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.0.0+build.7")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.0.0+exp.sha.5114f85")).toBe(true);
+    });
+
+    it("accepts combined pre-release + build metadata", () => {
+      expect(SEMVER_VERSION_REGEX.test("0.4.0-rc.1+build.7")).toBe(true);
+      expect(SEMVER_VERSION_REGEX.test("1.0.0-alpha+001")).toBe(true);
+    });
+
+    it("rejects 2-part version (missing patch)", () => {
+      expect(SEMVER_VERSION_REGEX.test("0.2")).toBe(false);
+      expect(SEMVER_VERSION_REGEX.test("1.0")).toBe(false);
+    });
+
+    it("rejects 4-part version (extra segment)", () => {
+      expect(SEMVER_VERSION_REGEX.test("1.2.3.4")).toBe(false);
+    });
+
+    it("rejects non-numeric major/minor/patch", () => {
+      expect(SEMVER_VERSION_REGEX.test("abc")).toBe(false);
+      expect(SEMVER_VERSION_REGEX.test("v1.2.3")).toBe(false);
+      expect(SEMVER_VERSION_REGEX.test("1.2.x")).toBe(false);
+    });
+
+    it("rejects empty pre-release suffix", () => {
+      expect(SEMVER_VERSION_REGEX.test("0.4.0-")).toBe(false);
+    });
+
+    it("rejects empty build metadata suffix", () => {
+      expect(SEMVER_VERSION_REGEX.test("0.4.0+")).toBe(false);
+    });
+
+    it("rejects leading / trailing whitespace", () => {
+      expect(SEMVER_VERSION_REGEX.test(" 1.2.3")).toBe(false);
+      expect(SEMVER_VERSION_REGEX.test("1.2.3 ")).toBe(false);
+    });
+
+    it("rejects garbage after valid version", () => {
+      expect(SEMVER_VERSION_REGEX.test("1.2.3extra")).toBe(false);
+      expect(SEMVER_VERSION_REGEX.test("1.2.3-rc.1@")).toBe(false);
+    });
   });
 });
 

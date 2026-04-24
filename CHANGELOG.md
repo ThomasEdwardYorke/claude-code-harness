@@ -5,6 +5,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0-rc.1] - 2026-04-24
+
 > **⚠️ Breaking change**: unified pipe-separated 4-field exemption grammar — legacy em-dash + comma separators, bare `generality-ok` keyword at line level, bare `all` pattern-id, and fewer-than-4-field file-level declarations are rejected at parse-time and fail CI. Downstream consumers shipping their own `generality-exemption` comments must migrate to `<pattern-ids> | <issue-key> | <expiry> | <reason>` before upgrading. See `### Breaking` below for the full migration path.
 
 ### Added
@@ -134,8 +136,9 @@ Additional hardening driven by Codex second-opinion (pre-merge) review:
 - Added explicit guidance on log sensitivity in `docs/en/security.md`.
 - `.gitignore` template excludes `.claude/logs/`, `.claude/state/`, `.claude/worktrees/`.
 
-[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.3.3...HEAD
-[0.3.3]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.3.2...v0.3.3
+[Unreleased]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.4.0-rc.1...HEAD
+[0.4.0-rc.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/compare/v0.3.3...v0.4.0-rc.1
+[0.3.3]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.3
 [0.3.2]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.2
 [0.3.1]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.1
 [0.3.0]: https://github.com/ThomasEdwardYorke/cc-triad-relay/releases/tag/v0.3.0
