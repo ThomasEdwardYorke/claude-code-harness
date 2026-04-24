@@ -290,6 +290,32 @@ export async function route(hookType, input) {
             }
             return ccHR;
         }
+        case "subagent-start": {
+            // SubagentStart: Task tool が subagent を spawn する直前に発火する
+            // observability hook。公式仕様 (https://code.claude.com/docs/en/hooks)
+            // により `hookSpecificOutput.additionalContext` は **subagent 側の context**
+            // に inject される (unidirectional)。本 handler は opt-in で
+            // agentTypeNotes による per-type guidance を注入し、Global plugin ×
+            // Local project rules の bridge を subagent にも提供する。
+            //
+            // matcher: agent_type (Bash / Explore / Plan / harness:worker 等)。
+            // block 非対応 — handler は常に decision: "approve" を返す。
+            const { handleSubagentStart } = await import("./hooks/subagent-start.js");
+            const raw = input;
+            const ssRes = await handleSubagentStart({
+                hook_event_name: String(raw["hook_event_name"] ?? "SubagentStart"),
+                session_id: extractString(raw, "session_id"),
+                cwd: extractString(raw, "cwd"),
+                agent_type: extractString(raw, "agent_type"),
+                agent_id: extractString(raw, "agent_id"),
+                transcript_path: extractString(raw, "transcript_path"),
+            });
+            const ssHR = { decision: ssRes.decision };
+            if (ssRes.additionalContext !== undefined) {
+                ssHR.additionalContext = ssRes.additionalContext;
+            }
+            return ssHR;
+        }
         case "session-start":
         case "session-end": {
             return { decision: "approve" };
@@ -336,6 +362,7 @@ async function main() {
             hookType === "session-end" ||
             hookType === "pre-compact" ||
             hookType === "subagent-stop" ||
+            hookType === "subagent-start" ||
             hookType === "task-created" ||
             hookType === "task-completed" ||
             hookType === "stop" ||
@@ -391,25 +418,28 @@ async function main() {
     }
     else if (hookType === "user-prompt-submit" ||
         hookType === "post-tool-use-failure" ||
-        hookType === "config-change") {
-        // UserPromptSubmit / PostToolUseFailure / ConfigChange: 公式仕様
-        // (https://code.claude.com/docs/en/hooks) の
+        hookType === "config-change" ||
+        hookType === "subagent-start") {
+        // UserPromptSubmit / PostToolUseFailure / ConfigChange / SubagentStart:
+        // 公式仕様 (https://code.claude.com/docs/en/hooks) の
         // `hookSpecificOutput.additionalContext` / `sessionTitle` に lift して
         // stdout に JSON を書く。decision=block 時は top-level の decision/reason
         // も load する (ConfigChange では opt-in block、UserPromptSubmit では
-        // prompt 拒否)。
+        // prompt 拒否、SubagentStart は block 非対応のため常に approve)。
         //
         // hookEventName mapping (公式 event 名 vs harness dispatch 名):
         //   - user-prompt-submit → "UserPromptSubmit"
         //   - post-tool-use-failure → "PostToolUseFailure"
         //   - config-change → "ConfigChange"
+        //   - subagent-start → "SubagentStart"
         // content-integrity invariant (see __tests__/content-integrity.test.ts):
-        // `hookEventName` 識別子から 100 chars 以内に各公式 event 名リテラルが
-        // 並ぶこと。inline lookup table で 3 branch (将来 4+ も) を表現する。
+        // `hookEventName` 識別子から 200 chars 以内に各公式 event 名リテラルが
+        // 並ぶこと。inline lookup table で 4 branch (将来 5+ も) を表現する。
         const hookEventName = {
             "user-prompt-submit": "UserPromptSubmit",
             "post-tool-use-failure": "PostToolUseFailure",
             "config-change": "ConfigChange",
+            "subagent-start": "SubagentStart",
         }[hookType] ?? "UserPromptSubmit";
         const out = {};
         if (result.decision === "block") {

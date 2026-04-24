@@ -229,6 +229,17 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" subagent-start",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

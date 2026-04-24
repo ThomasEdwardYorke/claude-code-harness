@@ -132,6 +132,83 @@ describe("route() dispatcher — hook integration", () => {
     });
   });
 
+  describe("subagent-start", () => {
+    it("default config → additionalContext に SubagentStart diagnostic が入る (NOT reason)", async () => {
+      // SubagentStart は modern hook: hookSpecificOutput.additionalContext を使う
+      // (subagent-stop は legacy pattern で reason にマップされる)。
+      const result = await route("subagent-start", {
+        hook_event_name: "SubagentStart",
+        cwd: tmpRoot,
+        agent_type: "harness:worker",
+        agent_id: "agent-001",
+      });
+
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toBeDefined();
+      expect(result.additionalContext).toContain("SubagentStart");
+      expect(result.additionalContext).toContain("agent_type=harness:worker");
+      // block 非対応 → reason は undefined (decision block 時のみ populate)
+      expect(result.reason).toBeUndefined();
+    });
+
+    it("enabled: false → additionalContext undefined、reason も undefined", async () => {
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify({ subagentStart: { enabled: false } }),
+      );
+
+      const result = await route("subagent-start", {
+        hook_event_name: "SubagentStart",
+        cwd: tmpRoot,
+        agent_type: "harness:worker",
+        agent_id: "agent-001",
+      });
+
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toBeUndefined();
+      expect(result.reason).toBeUndefined();
+    });
+
+    it("agentTypeNotes match → additionalContext に note 含む", async () => {
+      writeFileSync(
+        join(tmpRoot, "harness.config.json"),
+        JSON.stringify({
+          subagentStart: {
+            agentTypeNotes: {
+              "harness:worker": "TDD first (red → green → refactor).",
+            },
+          },
+        }),
+      );
+
+      const result = await route("subagent-start", {
+        hook_event_name: "SubagentStart",
+        cwd: tmpRoot,
+        agent_type: "harness:worker",
+        agent_id: "agent-001",
+      });
+
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toContain(
+        "TDD first (red → green → refactor).",
+      );
+    });
+
+    it("非 string 入力 (agent_type = 42 等) も crash せず undefined 扱いで処理", async () => {
+      // extractString() は non-string を drop → handler 側で "unknown" に fallback
+      const result = await route("subagent-start", {
+        hook_event_name: "SubagentStart",
+        cwd: tmpRoot,
+        agent_type: 42, // non-string — should be dropped by extractString
+        agent_id: null, // non-string — should be dropped by extractString
+      });
+
+      expect(result.decision).toBe("approve");
+      expect(result.additionalContext).toContain("agent_type=unknown");
+      expect(result.additionalContext).toContain("agent_id=unknown");
+    });
+  });
+
   describe("task-created", () => {
     it("maps '[TaskCreated]' additionalContext into reason", async () => {
       const result = await route("task-created", {
