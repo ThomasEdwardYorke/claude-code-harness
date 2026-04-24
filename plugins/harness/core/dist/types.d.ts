@@ -35,7 +35,18 @@ export interface HookResult {
     decision: HookDecision;
     /** Human-readable explanation. */
     reason?: string;
-    /** Extra context surfaced to Claude. */
+    /**
+     * Top-level universal warning field (per the Claude Code hooks spec,
+     * https://code.claude.com/docs/en/hooks). When populated:
+     *   - Claude Code displays it to the user as a warning
+     *   - The content is delivered to Claude as context on the next
+     *     conversation turn (so it is visible to both audiences)
+     *
+     * Used by the permission hook (custom permission-reason JSON) and by
+     * the `hookSpecificOutput` serialization branch (Issue #3 fail-safe
+     * path) where `result.reason` is lifted into `systemMessage` to avoid
+     * silent `{}` output when a handler throws.
+     */
     systemMessage?: string;
     /**
      * Default `true`. `false` で Claude Code を完全停止させる。停止時は
