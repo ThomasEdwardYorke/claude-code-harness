@@ -459,18 +459,29 @@ describe("SubagentStart — spoofing defense", () => {
 
 describe("SubagentStart — config shape defense", () => {
   it("agentTypeNotes の値が number → silent drop (crash しない)", async () => {
+    // Sentinel uses a 9-digit value (`999999999`) instead of a short
+    // numeric literal. The happy-path output contains a randomly
+    // generated 12-char hex session-id, so a short literal like `42`
+    // collides with the id about 4% of the time per matrix leg
+    // (`not.toContain("42")` would false-positive when the random id
+    // happens to contain the substring). Nine consecutive `9`s cannot
+    // appear in a hex id (digits 0-9 plus a-f), so the assertion is
+    // stable across all runs.
+    const MALFORMED_NUMERIC_SENTINEL = 999999999;
     const root = makeTempProject({
       subagentStart: {
         agentTypeNotes: {
-          "harness:worker": 42 as unknown as string, // malformed user config
+          "harness:worker": MALFORMED_NUMERIC_SENTINEL as unknown as string,
           "harness:reviewer": "valid note",
         },
       },
     });
     const result = await call(root, { agent_type: "harness:worker" });
-    // 42 は filter で drop → note は inject されない
-    expect(result.additionalContext ?? "").not.toContain("42");
-    // ただし reviewer は valid なので当たる
+    // The numeric sentinel must be filtered out — no note injected.
+    expect(result.additionalContext ?? "").not.toContain(
+      String(MALFORMED_NUMERIC_SENTINEL),
+    );
+    // Reviewer's valid-string note survives the filter.
     const r2 = await call(root, { agent_type: "harness:reviewer" });
     expect(r2.additionalContext).toContain("valid note");
   });
