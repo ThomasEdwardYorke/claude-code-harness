@@ -305,6 +305,44 @@ export interface ReleaseConfig {
   testCommand?: string;
 }
 
+/**
+ * Model registry configuration. Controls which Codex model every
+ * harness-dispatched Codex invocation targets, with a per-agent override
+ * surface and a logical-alias table so projects can pin a specific Codex
+ * model (including a legacy model for reproducibility) without editing
+ * the agent markdown.
+ *
+ * Implementation lives in `src/models/resolver.ts`; consumers are the
+ * `bin/harness model resolve` CLI, each Codex-dispatching agent's
+ * Invocation Rules, and the `harness model check` deprecation linter.
+ * See `HARNESS_DEFAULT_MODEL` in resolver.ts for the compile-time default.
+ */
+export interface ModelsCodexRegistryConfig {
+  default?: string;
+  reasoningEffort?:
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh";
+  aliases?: Record<string, string>;
+}
+
+export interface ModelsAgentRegistryConfig {
+  model?: string;
+  reasoningEffort?:
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh";
+}
+
+export interface ModelsConfig {
+  codex?: ModelsCodexRegistryConfig;
+  agents?: Record<string, ModelsAgentRegistryConfig>;
+}
+
 export interface HarnessConfig {
   /** Human-readable project name (shown in messages). */
   projectName: string;
@@ -337,6 +375,11 @@ export interface HarnessConfig {
   release: ReleaseConfig;
   userPromptSubmit: UserPromptSubmitConfig;
   postToolUseFailure: PostToolUseFailureConfig;
+  /**
+   * Optional model registry. When absent, harness resolves to
+   * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).
+   */
+  models?: ModelsConfig;
 }
 
 // ============================================================
@@ -422,6 +465,13 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     maxErrorLength: 1024,
     correctiveHints: true,
   },
+  // `models` is intentionally absent from DEFAULT_CONFIG. The compile-time
+  // fallback lives in `src/models/resolver.ts` as `HARNESS_DEFAULT_MODEL`
+  // so that an unconfigured project surfaces as `source: "harness-default"`
+  // in `harness model resolve` output (not `"codex-default"`). Populating
+  // `DEFAULT_CONFIG.models` would conflate shipped behaviour with explicit
+  // user intent and make `harness model check` unable to flag missing
+  // overrides.
 };
 
 // ============================================================
@@ -490,7 +540,54 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
       ...DEFAULT_CONFIG.postToolUseFailure,
       ...(partial.postToolUseFailure ?? {}),
     },
+    ...(() => {
+      const merged = mergeModelsConfig(partial.models);
+      return merged ? { models: merged } : {};
+    })(),
   };
+}
+
+/**
+ * Deep-merge `models` so per-agent overrides and the codex aliases map
+ * inherit sibling defaults. `agents` and `aliases` are merged one level;
+ * arrays (none in this config surface) would replace wholesale if added.
+ * Returns `undefined` only when *both* default and partial are absent,
+ * matching the interface's optional semantics.
+ */
+function mergeModelsConfig(
+  partial: ModelsConfig | undefined,
+): ModelsConfig | undefined {
+  const base = DEFAULT_CONFIG.models;
+  if (!base && !partial) return undefined;
+  const mergedCodex =
+    base?.codex || partial?.codex
+      ? {
+          ...(base?.codex ?? {}),
+          ...(partial?.codex ?? {}),
+          aliases: {
+            ...(base?.codex?.aliases ?? {}),
+            ...(partial?.codex?.aliases ?? {}),
+          },
+        }
+      : undefined;
+  // Drop the aliases key when both sides were absent so the merged shape
+  // matches "absent" rather than "present-but-empty".
+  const finalCodex =
+    mergedCodex &&
+    (mergedCodex.aliases && Object.keys(mergedCodex.aliases).length === 0)
+      ? (() => {
+          const { aliases: _aliases, ...rest } = mergedCodex;
+          return rest;
+        })()
+      : mergedCodex;
+  const mergedAgents = {
+    ...(base?.agents ?? {}),
+    ...(partial?.agents ?? {}),
+  };
+  const result: ModelsConfig = {};
+  if (finalCodex) result.codex = finalCodex;
+  if (Object.keys(mergedAgents).length > 0) result.agents = mergedAgents;
+  return result;
 }
 
 /**

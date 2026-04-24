@@ -85,8 +85,8 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 |---|---|---|
 | P1.1 | `plugins/harness/core/src/hooks/pre-compact.ts` (新規) + `plugins/harness/hooks/hooks.json` | `PreCompact` hook で担当表 / 進行中 PR # / 現 Phase を `systemMessage` として注入 |
 | P1.2 | `plugins/harness/core/src/hooks/subagent-stop.ts` (新規) + `hooks.json` | `SubagentStop` hook で ruff / mypy / pytest を自動実行 (CI safety net) |
-| P1.3 | `plugins/harness/agents/security-auditor.md` | `model: opus` + skill 本文先頭に `ultrathink` プレフィックス |
-| P1.4 | `plugins/harness/agents/codex-sync.md` | `model: haiku` 試験 (軽量 wrapper のため) |
+| P1.3 | `plugins/harness/agents/security-auditor.md` | `model: opus` + skill 本文先頭に `ultrathink` プレフィックス **(done)** |
+| P1.4 | `plugins/harness/agents/codex-sync.md` | `model: haiku` 試験 (軽量 wrapper のため) **(done)** |
 | P1.5 | `plugins/harness/commands/*.md` | 全 skill に `allowed-tools` / `argument-hint` 明示 |
 | P1.6 | `plugins/harness/core/src/hooks/task-lifecycle.ts` (新規) | `TaskCreated` / `TaskCompleted` で Plans.md 担当表を自動同期 (プロジェクトが Plans.md 運用を持つ場合のみ) |
 | P1.7 | `plugins/harness/commands/session-handoff.md` (新規、2026-04-22 完了) | **Completed in PR #4 (`0fc8318`)**: 長期プロジェクトの引き継ぎ doc を 3 層構造 (current + backlog + design-decisions + archive/) で管理する skill。Anthropic 公式 [MEMORY.md][anthropic-memory] / [SKILL.md][anthropic-skills] pattern 準拠。subcommand: `init` / `update` / `archive` / `check`。汎用化厳守 (`<project>` placeholder、特定 project 情報なし)。**2026-04-22 follow-up**: `check` を 3-gate 化 (structural + content comprehension + rehydration synthesis)、orient-phase 把握/理解判定 (S-01〜S-12 + PASS/WARN/FAIL/INIT_REQUIRED)。**PR #6**: Gate 2 full-context ingestion 明示 + S-13 backlog 再肥大化 guard (150/200 行) + Anti-pattern #10 (check 後の再 Read 禁止) + Forbidden 3 カテゴリ圧縮 + Output Template Context loaded 表示 |
@@ -95,8 +95,9 @@ Model B (各 worktree で独立 claude プロセス + 同一ハーネス) へ進
 
 - [ ] `/compact` 後も担当表コンテキスト維持
 - [ ] `harness:worker` 完了時に CI が自動実行
-- [ ] per-agent model routing が効く (security-auditor に opus、codex-sync に haiku)
+- [x] **per-agent model routing が効く (security-auditor に opus、codex-sync に haiku)** — P1.3 / P1.4 実装済 (v4.1)。`model:` frontmatter が agent invocation に propagate することを content-integrity で lock-in 済
 - [x] **session-handoff skill で長期プロジェクト引き継ぎをサポート (P1.7、2026-04-22)**
+- [x] **Codex model registry (harness-dispatched Codex 呼出) の pin 機能** — `plugins/harness/core/src/models/resolver.ts` + `harness.config.schema.json` `models` section + `bin/harness model resolve|check` + codex-sync / codex-team / coderabbit-mimic に `--model` 注入 + `generality.test.ts` B-10 (model slug hardcode 検出)。shipped default は OpenAI 2026-04-24 リリースの GPT-5.5 に pin
 
 [anthropic-memory]: https://code.claude.com/docs/en/memory
 [anthropic-skills]: https://code.claude.com/docs/en/skills

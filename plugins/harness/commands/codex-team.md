@@ -29,6 +29,44 @@ without leaving the session. Three sub-modes: **review**, **dev**
 3. The model cost is acceptable — the default Codex model can be
    expensive. Override with `-m <model>` when needed.
 
+## Model selection (harness model registry)
+
+All three sub-commands below inject the model slug resolved by
+`harness model resolve codex-team` so every Codex invocation converges
+on the project's configured model rather than `~/.codex/config.toml`'s
+personal default. Precedence is documented in
+`plugins/harness/core/src/models/resolver.ts` and summarised here:
+
+```
+caller -m / --model                (explicit arg on the codex invocation)
+  >  harness model resolve codex-team
+     (reads `harness.config.json` `models.agents["codex-team"].model`
+      → `models.codex.default` → compile-time `HARNESS_DEFAULT_MODEL`)
+  >  Codex config default from `~/.codex/config.toml`
+```
+
+**Fallback-only semantics.** The resolver output is injected as
+`$MODEL_FLAG` *only when the caller has not already specified `-m` /
+`--model`*. If the user invoking `/codex-team` already supplied
+`-m <slug>` themselves, leave `MODEL_FLAG` empty so the explicit
+choice is preserved end-to-end.
+
+Resolve once at the top of the shell block and reuse the slug:
+
+```bash
+CODEX_MODEL="$(harness model resolve codex-team 2>/dev/null \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin).get("model",""))' \
+  2>/dev/null)"
+MODEL_FLAG=""
+if [ -n "$CODEX_MODEL" ]; then
+  MODEL_FLAG="-m $CODEX_MODEL"
+fi
+```
+
+Skip the block entirely when the caller wants to exercise the Codex
+config-side default; otherwise every `codex review` / `codex exec`
+invocation should include `$MODEL_FLAG` (examples below).
+
 ## Sub-commands
 
 ### `review` — code review
@@ -41,11 +79,11 @@ git status --short && git diff --stat
 
 RESULT="/tmp/codex-review-$(date +%s).txt"
 
-# default: uncommitted changes
-codex review --uncommitted --output-last-message "$RESULT" 2>&1
+# default: uncommitted changes (inject harness-resolved $MODEL_FLAG)
+codex review $MODEL_FLAG --uncommitted --output-last-message "$RESULT" 2>&1
 
 # optional: against a base branch
-#   codex review --base "$BRANCH" --output-last-message "$RESULT" 2>&1
+#   codex review $MODEL_FLAG --base "$BRANCH" --output-last-message "$RESULT" 2>&1
 ```
 
 When running under a pane-capable terminal (WezTerm), you can split a
@@ -72,7 +110,7 @@ Hand Codex a task. Evaluate the result before applying.
 
 ```bash
 RESULT="/tmp/codex-dev-$(date +%s).txt"
-codex exec "$TASK_DESCRIPTION" --full-auto --output-last-message "$RESULT" 2>&1
+codex exec $MODEL_FLAG "$TASK_DESCRIPTION" --full-auto --output-last-message "$RESULT" 2>&1
 cat "$RESULT"
 ```
 
@@ -88,7 +126,7 @@ Same input surface as `review`, but primed for adversarial thinking.
 
 ```bash
 RESULT="/tmp/codex-adversarial-$(date +%s).txt"
-codex review --uncommitted --output-last-message "$RESULT" -- \
+codex review $MODEL_FLAG --uncommitted --output-last-message "$RESULT" -- \
   "Act as an adversarial reviewer. Focus on authentication flaws, data-loss risks, race conditions, injection, credential exposure, and failure modes under adverse inputs. Assume worst case." \
   2>&1
 cat "$RESULT"

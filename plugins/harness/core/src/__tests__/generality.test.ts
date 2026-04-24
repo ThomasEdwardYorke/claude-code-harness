@@ -1,4 +1,4 @@
-/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
+/* generality-exemption: B-1,B-2a,B-2b,B-2c,B-2d,B-2e,B-2f,B-3a,B-3b,B-3c,B-3d,B-3e,B-4a,B-4b,B-5,B-6,B-7,B-8,B-9,B-10 | HARNESS-generality-self | 2099-12-31 | detector harness itself must reference patterns it blocks (self-reference unavoidable, until v1.0 redesign) */
 /**
  * core/src/__tests__/generality.test.ts
  *
@@ -80,11 +80,27 @@ const WARN_TARGETS: ScopeTarget[] = [
 
 interface BlockPattern {
   id: string;
-  category: "branch" | "legacy-api" | "tracker-id" | "project-file" | "web-stack";
+  category:
+    | "branch"
+    | "legacy-api"
+    | "tracker-id"
+    | "project-file"
+    | "web-stack"
+    | "model-hardcode";
   pattern: RegExp;
   message: string;
   // テストファイルでも禁止か (false にすると test では warn のみ)
   appliesToTests: boolean;
+  /**
+   * Files matching this regex (relative to REPO_ROOT) are not scanned for
+   * this pattern. Use when the pattern's semantic intent is in tension
+   * with a declarative source-of-truth file that must carry the very
+   * string the pattern rejects — e.g. `schemas/*.json` contains the
+   * configured default model by design, so the `model-hardcode` pattern
+   * skips it. Prefer file-head `generality-exemption` comments for code
+   * files (those document the rationale inline).
+   */
+  skipFiles?: RegExp;
 }
 
 const BLOCK_PATTERNS: BlockPattern[] = [
@@ -314,8 +330,41 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     appliesToTests: false,
   },
 
-  // B-10 (shipped spec 日本語混入) は本 Phase では policy-based 運用 (CONTRIBUTING §1.2 + 段階移行 plan)。
+  // 系列10 (shipped spec 日本語混入) は現時点では policy-based 運用 (CONTRIBUTING §1.2 + 段階移行 plan)。
   // 実装は `docs/maintainer/english-migration.md` で roadmap 化 → 次セッション以降で CI 強制化予定。
+  // (旧 "B-10 (日本語混入)" 割当は中止、現在の B-10 は model-hardcode に再割当済。)
+
+  // ─────────────── 系列11: GPT model slug hardcode (v0.4.0 model registry) ───────────────
+  // Harness-dispatched Codex invocations must resolve the model slug through the
+  // `harness model resolve <agent>` CLI (see `plugins/harness/core/src/models/resolver.ts`)
+  // so every project can pin / swap the default centrally. Literal `gpt-X.Y` /
+  // `gpt-X.Y-codex` references in shipped spec defeat that contract.
+  // Exempt surfaces: (a) schema.json (declarative default is required), (b) the
+  // resolver source + its tests + config.ts via file-head exemption.
+  {
+    id: "B-10",
+    category: "model-hardcode",
+    // Matches OpenAI model slugs the Codex runtime emits (`gpt-5.5`, `gpt-5.4`,
+    // `gpt-5.4-mini`, `gpt-5.3-codex`, `gpt-5.2-codex`). Anchored on the `gpt-`
+    // prefix + a `\d+\.\d+` minor number to avoid false-positive with other
+    // strings that happen to contain `gpt`.
+    pattern: /\bgpt-\d+\.\d+(?:-[a-z0-9]+)*\b/gi,
+    message:
+      "ハードコードされた OpenAI model slug (`gpt-X.Y` / `gpt-X.Y-codex`) が含まれています。" +
+      "`harness model resolve <agent>` で解決した slug を参照するか、" +
+      "`harness.config.json` の `models.codex.default` を通してください。" +
+      "参照: `plugins/harness/core/src/models/resolver.ts` (HARNESS_DEFAULT_MODEL) / " +
+      "`docs/maintainer/` の model registry 運用メモ。",
+    appliesToTests: false,
+    // Exempt the resolver source (declarative HARNESS_DEFAULT_MODEL) and
+    // the schema directory (example slugs in field descriptions). These
+    // are the model-registry source of truth by construction; enforcing
+    // the rule there is a tautology. Using `skipFiles` avoids an inline
+    // `generality-exemption: B-10 | …` comment in the resolver source,
+    // which would itself carry the `B-10` tracker ID the rule otherwise
+    // forbids.
+    skipFiles: /^plugins\/harness\/(?:schemas\/|core\/src\/models\/resolver\.ts$)/,
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -726,8 +775,14 @@ function describeFileBlocklistTests(
 
       describe(`[${pattern.id}] ${pattern.category}`, () => {
         for (const { file } of allFiles) {
-          const rel = relative(REPO_ROOT, file);
+          // Normalise path separators so the skipFiles regex + describe
+          // title stay consistent across Unix and Windows
+          // (`plugins\harness\...` vs `plugins/harness/...`).
+          const rel = relative(REPO_ROOT, file).replace(/\\/g, "/");
           it(`${rel} に ${pattern.id} が含まれない`, () => {
+            if (pattern.skipFiles && pattern.skipFiles.test(rel)) {
+              return;
+            }
             const content = readFileSync(file, "utf-8");
             if (hasFileExemption(content, pattern.id)) {
               return;

@@ -285,6 +285,53 @@
           "description": "When true, append harness built-in corrective hints for well-known error patterns (permission denied / no such file / command not found / signal abort / timeout / network unreachable). Set false to inject raw error only."
         }
       }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Model registry consumed by every harness-dispatched Codex invocation (`codex-sync` / `codex-team` / `coderabbit-mimic` / `tdd-implement`). When this section is omitted the resolver reports `source: \"harness-default\"` (compile-time fallback `HARNESS_DEFAULT_MODEL` in `src/models/resolver.ts`). Use `codex.default` for a single harness-wide pin, `codex.aliases` to name logical tiers, and `agents.*.model` / `agents.*.reasoningEffort` to override per Codex agent. Schema-level `default` annotations are deliberately omitted so schema-aware editors do not pre-populate these values — absence is semantically meaningful (distinguishes shipped behaviour from explicit pin).",
+      "properties": {
+        "codex": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Harness-level Codex model settings applied when no per-agent override exists.",
+          "properties": {
+            "default": {
+              "type": "string",
+              "description": "Codex model slug served by the Codex CLI (e.g. a `gpt-X.Y` or `gpt-X.Y-codex` variant). May reference a logical name declared in `aliases`. Resolved by `harness model resolve <agent>` and injected as `codex exec --model <slug>` at agent invocation time. When omitted the resolver falls back to `HARNESS_DEFAULT_MODEL`."
+            },
+            "reasoningEffort": {
+              "type": "string",
+              "enum": ["minimal", "low", "medium", "high", "xhigh"],
+              "description": "`codex exec --effort` value. The 5 levels match the Codex config-reference documentation. Per-agent overrides under `agents.*.reasoningEffort` take precedence. When omitted the resolver falls back to `HARNESS_DEFAULT_REASONING_EFFORT`."
+            },
+            "aliases": {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "description": "Logical-name → concrete-model-slug map so projects can say `default: \"strong\"` / `default: \"fast\"` instead of hardcoding the slug everywhere. Alias lookup runs once at resolve-time; circular or missing aliases return the literal name (surfaced by `harness model check --strict` as `unknown-slug`)."
+            }
+          }
+        },
+        "agents": {
+          "type": "object",
+          "description": "Per-agent model overrides. Keys are agent names as understood by the resolver (`codex-sync`, `codex-team`, `coderabbit-mimic`; the resolver strips the `harness:` prefix and `.md` suffix before lookup). An entry without `model` simply inherits `codex.default`.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string",
+                "description": "Overrides `codex.default` for this agent. Can reference an alias."
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "enum": ["minimal", "low", "medium", "high", "xhigh"],
+                "description": "Overrides `codex.reasoningEffort` for this agent."
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

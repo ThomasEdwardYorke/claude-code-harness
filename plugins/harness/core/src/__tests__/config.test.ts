@@ -377,4 +377,100 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.release.strategy).toBe("three-branch");
     });
   });
+
+  describe("models section (harness model registry)", () => {
+    it("DEFAULT_CONFIG leaves models undefined so resolver emits source=harness-default", () => {
+      // The compile-time default lives in `src/models/resolver.ts` as
+      // `HARNESS_DEFAULT_MODEL`. Deliberately leaving `DEFAULT_CONFIG.models`
+      // undefined lets `harness model resolve` distinguish "shipped
+      // behaviour" (source=harness-default) from "explicit project
+      // pinning" (source=codex-default or agent-override).
+      expect(DEFAULT_CONFIG.models).toBeUndefined();
+    });
+
+    it("loadConfig keeps models undefined when user does not declare models", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ projectName: "skip-models" }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models).toBeUndefined();
+    });
+
+    it("loadConfig accepts user override of codex.default without pinning sibling keys", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ models: { codex: { default: "gpt-5.4" } } }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.default).toBe("gpt-5.4");
+      // No sibling defaults were merged — reasoningEffort stays undefined
+      // so the resolver can fall through to its own fallback.
+      expect(cfg.models?.codex?.reasoningEffort).toBeUndefined();
+    });
+
+    it("loadConfig deep-merges codex.aliases with base (empty base + user aliases)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          models: {
+            codex: { aliases: { strong: "gpt-5.5", fast: "gpt-5.4-mini" } },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.aliases).toEqual({
+        strong: "gpt-5.5",
+        fast: "gpt-5.4-mini",
+      });
+    });
+
+    it("loadConfig lifts per-agent overrides under agents.*.model", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          models: {
+            agents: {
+              "codex-sync": { model: "gpt-5.4" },
+              "codex-team": { reasoningEffort: "high" },
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.agents?.["codex-sync"]?.model).toBe("gpt-5.4");
+      expect(cfg.models?.agents?.["codex-team"]?.reasoningEffort).toBe("high");
+      // No codex section in the user config — so loadConfig does not
+      // synthesize one (keeps the "harness-default source" signal alive).
+      expect(cfg.models?.codex).toBeUndefined();
+    });
+
+    it("loadConfig preserves user-supplied codex + aliases + agents fields together", () => {
+      // Regression guard for nested-merge shadowing. `mergeModelsConfig`
+      // must keep each sub-key intact when the user supplies a partial
+      // `codex` override + a per-agent entry + a new alias in one shot.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          models: {
+            codex: {
+              default: "strong",
+              reasoningEffort: "xhigh",
+              aliases: { strong: "gpt-5.5", fast: "gpt-5.4-mini" },
+            },
+            agents: {
+              "codex-sync": { model: "strong", reasoningEffort: "low" },
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.default).toBe("strong");
+      expect(cfg.models?.codex?.reasoningEffort).toBe("xhigh");
+      expect(cfg.models?.codex?.aliases?.strong).toBe("gpt-5.5");
+      expect(cfg.models?.codex?.aliases?.fast).toBe("gpt-5.4-mini");
+      expect(cfg.models?.agents?.["codex-sync"]?.model).toBe("strong");
+      expect(cfg.models?.agents?.["codex-sync"]?.reasoningEffort).toBe("low");
+    });
+  });
 });
