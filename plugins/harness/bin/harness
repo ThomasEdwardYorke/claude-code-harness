@@ -313,12 +313,13 @@ async function cmdDoctor() {
             `TASK_MAX_OUTPUT_LENGTH: ${taskMax} (WARN below ${codexSyncWarnBelow} — recommend 'export TASK_MAX_OUTPUT_LENGTH=${codexSyncRecommended}' to avoid codex-sync mid-truncation; Claude Code max is 160000)`,
           );
         } else if (taskMax > 160000) {
-          // Over Claude Code's documented max — the runtime silently
-          // clamps the effective limit to 160000, so reporting "OK"
-          // would mislead the operator. Flag explicitly so they know
-          // the env var value is not honoured as-is.
+          // Over the runtime-observed cap — Claude Code silently
+          // clamps the effective limit to 160000 (the upper bound
+          // surfaced by its env-vars reference), so reporting "OK"
+          // here would mislead the operator. Flag explicitly so they
+          // know the env var value is not honoured as-is.
           out.push(
-            `TASK_MAX_OUTPUT_LENGTH: ${taskMax} (WARN above Claude Code's documented max of 160000 — runtime silently clamps to 160000; consider 'export TASK_MAX_OUTPUT_LENGTH=160000' for parity)`,
+            `TASK_MAX_OUTPUT_LENGTH: ${taskMax} (WARN above the runtime-observed cap of 160000 — Claude Code silently clamps higher values; consider 'export TASK_MAX_OUTPUT_LENGTH=160000' for parity)`,
           );
         } else {
           out.push(`TASK_MAX_OUTPUT_LENGTH: ${taskMax} (OK)`);

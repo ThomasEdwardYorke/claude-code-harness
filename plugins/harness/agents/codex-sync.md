@@ -121,7 +121,7 @@ stderr: <last 20 lines>
 
 This agent's final response can be middle-truncated by Claude Code's
 `TASK_MAX_OUTPUT_LENGTH` runtime cap (default 32000 characters,
-documented maximum 160000). `codex-companion.mjs` itself does not
+runtime-observed cap of 160000). `codex-companion.mjs` itself does not
 truncate — it writes the raw Codex `finalMessage` to stdout verbatim —
 so any mid-response cut is always a consequence of the Claude Code
 subagent output limit, not a Codex or harness bug.
@@ -149,7 +149,15 @@ teammate feature — `SendMessage` documentation specifically states
 without a `name` field cannot be addressed and the caller must fall
 back to the "read the saved task output file" path described below
 instead.) A parent that relies on truncate recovery should therefore
-set a stable `name` at spawn time.
+set a stable `name` at spawn time, e.g.:
+
+```text
+Agent({
+  subagent_type: "harness:codex-sync",
+  name: "codex-sync-<purpose>",   // stable, unique-per-spawn, resume-addressable
+  prompt: "..."
+})
+```
 
 Either body form is accepted — use whichever language matches the
 rest of the session:
@@ -172,10 +180,13 @@ Claude Code resumes suspended subagents from exactly where they stopped,
 so the resumed turn will return the remaining payload without re-running
 Codex (the Codex thread is already persisted by codex-companion).
 
-Alternatively, if `SendMessage` resume is unavailable, the caller can
-read the saved full output from the Claude Code task output file
-(notification payload exposes `output-file: /.../tasks/<id>.output`) —
-that copy is not subject to the subagent response cap.
+Alternatively, if `SendMessage` resume is unavailable (e.g. the agent
+was spawned without a `name`), the caller can read the saved full
+output from the Claude Code task output file as a fallback recovery
+route. The spawn notification payload exposes the exact path, typically
+of the form `output-file: /tmp/claude-501/<session-id>/tasks/abc123def456.output`
+— that copy is not subject to the subagent response cap and contains
+the complete pre-truncation payload.
 
 ### Prevention: bump `TASK_MAX_OUTPUT_LENGTH`
 

@@ -2998,8 +2998,19 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
     const source = readAgent("codex-sync");
     // Claude Code saves the full (pre-truncation) payload to disk; the
     // agent spec must surface this so callers know a truncated subagent
-    // response is recoverable without re-running Codex.
-    expect(source).toMatch(/disk|full[\s-]?output|saved/i);
+    // response is recoverable without re-running Codex. Two conditions
+    // must hold — a single-keyword `/disk|saved/` check would pass even
+    // if the recovery contract (output-file path + fallback language)
+    // was later weakened, so split the assertion.
+    //
+    // (1) A concrete `output-file: …/tasks/<alphanumeric-id>.output`
+    //     path pattern so operators can copy-paste an example when
+    //     they hit a truncated response.
+    expect(source).toMatch(/output-file:\s*.*tasks\/[A-Za-z0-9_-]+\.output/);
+    // (2) Explicit fallback / read / recover context so the path is
+    //     unambiguously identified as the recovery route rather than a
+    //     log pointer unrelated to truncation.
+    expect(source).toMatch(/\bfallback\b|\bread\b|recover(?:ed|y)?\b/i);
   });
 
   it("harness.config.schema.json exposes a strict codex.sync section", () => {
@@ -3009,9 +3020,22 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
     expect(codexProps.sync.type).toBe("object");
     expect(codexProps.sync.additionalProperties).toBe(false);
     // Exactly the three tunables the doctor / agent spec rely on.
+    // Lock the **complete keyset**, not just presence. `additionalProperties:
+    // false` guards the user-facing schema, but without an exact-keyset
+    // assertion here a future contributor could silently add a 4th
+    // shipped property that the doctor / agent spec do not consume —
+    // CI would still pass because each `.toBeDefined()` check is
+    // permissive. Comparing sorted keys to a hardcoded array catches
+    // that drift at PR time.
     expect(codexProps.sync.properties?.recommendedTaskMaxOutputLength).toBeDefined();
     expect(codexProps.sync.properties?.warnTaskMaxOutputLengthBelow).toBeDefined();
     expect(codexProps.sync.properties?.checkTaskMaxOutputLength).toBeDefined();
+    const syncKeys = Object.keys(codexProps.sync.properties).sort();
+    expect(syncKeys).toEqual([
+      "checkTaskMaxOutputLength",
+      "recommendedTaskMaxOutputLength",
+      "warnTaskMaxOutputLengthBelow",
+    ]);
   });
 
   it("harness.config.schema.json codex.sync thresholds declare Claude Code range bounds", () => {
@@ -3061,7 +3085,13 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
     // mislead the operator (the effective limit does not match). Emit
     // an explicit WARN that mentions the runtime clamp behaviour.
     expect(binSource).toMatch(/taskMax\s*>\s*160000/);
-    expect(binSource).toContain("silently clamps to 160000");
+    // Phrase the WARN around "Claude Code silently clamps higher
+    // values" so the adversarial-review observation ("documented max"
+    // could not be cited from public env-vars docs; the 160000 cap
+    // is runtime-observed) stays locked — if a future contributor
+    // re-tightens the wording to "documented max" the regression
+    // is caught here.
+    expect(binSource).toMatch(/silently clamps|runtime-observed cap/);
   });
 
   it("codex-sync agent documents SendMessage resume requires a name-spawned agent", () => {
