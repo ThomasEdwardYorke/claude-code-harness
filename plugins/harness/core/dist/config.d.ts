@@ -14,7 +14,7 @@ export type TamperingSeverity = "approve" | "ask" | "deny";
  * `agents/codex-sync.md` for the user-facing remediation path.
  *
  * Background: Claude Code exposes `TASK_MAX_OUTPUT_LENGTH` (default
- * 32000 characters, documented maximum 160000) which middle-truncates
+ * 32000 characters, runtime-observed cap at 160000) which middle-truncates
  * subagent final responses that exceed the effective limit (full output
  * is auto-saved to disk). codex-sync returns multi-KB Codex review output
  * and hit this truncation repeatedly during development. These knobs

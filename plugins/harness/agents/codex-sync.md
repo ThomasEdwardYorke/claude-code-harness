@@ -191,7 +191,7 @@ the complete pre-truncation payload.
 ### Prevention: bump `TASK_MAX_OUTPUT_LENGTH`
 
 To avoid the truncation in the first place, set
-`TASK_MAX_OUTPUT_LENGTH=160000` (Claude Code's documented maximum) in
+`TASK_MAX_OUTPUT_LENGTH=160000` (Claude Code's runtime-observed cap) in
 the shell environment before starting the Claude Code session:
 
 ```bash
