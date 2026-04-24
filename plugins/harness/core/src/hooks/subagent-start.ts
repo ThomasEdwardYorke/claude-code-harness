@@ -170,7 +170,10 @@ function resolveConfig(projectRoot: string): SubagentStartConfig {
         if (Array.isArray(rawNotes)) return {};
         const filtered: Record<string, string> = {};
         for (const [k, v] of Object.entries(rawNotes as Record<string, unknown>)) {
-          if (typeof k === "string" && k.length > 0 && typeof v === "string") {
+          // `Object.entries` は常に string key を返すため `typeof k` check
+          // は省略。空 key と non-string value のみを reject (malformed
+          // config が `sanitizeNote` に到達するのを防ぐ shape defense)。
+          if (k.length > 0 && typeof v === "string") {
             filtered[k] = v;
           }
         }
