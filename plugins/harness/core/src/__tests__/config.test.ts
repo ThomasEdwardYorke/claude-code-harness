@@ -377,4 +377,65 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.release.strategy).toBe("three-branch");
     });
   });
+
+  describe("models section (harness model registry)", () => {
+    it("DEFAULT_CONFIG pins gpt-5.5 as codex.default with medium reasoning", () => {
+      expect(DEFAULT_CONFIG.models?.codex?.default).toBe("gpt-5.5");
+      expect(DEFAULT_CONFIG.models?.codex?.reasoningEffort).toBe("medium");
+    });
+
+    it("loadConfig preserves default when user does not declare models", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ projectName: "skip-models" }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.default).toBe("gpt-5.5");
+    });
+
+    it("loadConfig allows overriding codex.default without losing reasoningEffort default", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ models: { codex: { default: "gpt-5.4" } } }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.default).toBe("gpt-5.4");
+      expect(cfg.models?.codex?.reasoningEffort).toBe("medium");
+    });
+
+    it("loadConfig deep-merges codex.aliases with base (empty base + user aliases)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          models: {
+            codex: { aliases: { strong: "gpt-5.5", fast: "gpt-5.4-mini" } },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.aliases).toEqual({
+        strong: "gpt-5.5",
+        fast: "gpt-5.4-mini",
+      });
+    });
+
+    it("loadConfig lifts per-agent overrides under agents.*.model", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          models: {
+            agents: {
+              "codex-sync": { model: "gpt-5.4" },
+              "codex-team": { reasoningEffort: "high" },
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.agents?.["codex-sync"]?.model).toBe("gpt-5.4");
+      expect(cfg.models?.agents?.["codex-team"]?.reasoningEffort).toBe("high");
+      // Default codex section untouched.
+      expect(cfg.models?.codex?.default).toBe("gpt-5.5");
+    });
+  });
 });

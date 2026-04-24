@@ -37,12 +37,33 @@ Path resolution note: the plugin version directory is not hardcoded here. `harne
    ```
 2. **Never pass `--background`** (foreground is the default, so simply omit `--background`)
 3. Set the Bash `timeout` to **600000ms (10 minutes, the Bash maximum)**. If the Codex task does not finish within 10 minutes, Bash will time out, and the agent must explicitly give up and report that
-4. Follow the user's request if any of the following are specified:
-   - A specific `--effort <low|medium|high>` -> pass it through unchanged (the default is unspecified, which means the Codex-side default)
-   - A specific `--model <name>` -> pass it through unchanged
+4. Follow the caller's request (main Claude / parent agent) if any of the following are specified in the prompt:
+   - A specific `--effort <minimal|low|medium|high|xhigh>` -> pass it through unchanged
+   - A specific `--model <name>` -> pass it through unchanged (caller takes precedence over the harness model registry)
    - `--write` (write-capable) -> pass it through unchanged (**do not include it by default**; the default is equivalent to read-only)
    - `--resume-last` or `--resume` -> pass `--resume-last`
    - `--fresh` -> do not add `--resume-last` (leave the default behavior unchanged)
+
+   When the caller does **not** provide `--model`, resolve the harness
+   model registry first and inject the result so every Codex invocation
+   converges on the configured model rather than `~/.codex/config.toml`'s
+   personal default:
+   ```bash
+   # Prefer the harness-managed slug if the core CLI is on PATH; otherwise
+   # fall back to the companion's own default (no explicit flag). Pipe
+   # errors to /dev/null so a core-less install never breaks foreground
+   # invocation — the caller can always override via `--model` in the prompt.
+   HARNESS_MODEL="$(harness model resolve codex-sync 2>/dev/null \
+     | python3 -c 'import sys, json; print(json.load(sys.stdin).get("model",""))' \
+     2>/dev/null)"
+   MODEL_FLAG=""
+   if [ -n "$HARNESS_MODEL" ]; then
+     MODEL_FLAG="--model $HARNESS_MODEL"
+   fi
+   node "$CODEX_COMPANION" task $MODEL_FLAG "<PROMPT>"
+   ```
+   Precedence: caller `--model` &gt; `harness model resolve` (reads
+   `harness.config.json` + compile-time default) &gt; Codex config default.
 5. The following flag must **never** be passed:
    - `--background` (this directly defeats the purpose of this agent)
 6. Pass the prompt text **verbatim**. Do not add summaries, reformatting, or rewrites

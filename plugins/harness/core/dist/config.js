@@ -90,6 +90,12 @@ export const DEFAULT_CONFIG = {
         maxErrorLength: 1024,
         correctiveHints: true,
     },
+    models: {
+        codex: {
+            default: "gpt-5.5",
+            reasoningEffort: "medium",
+        },
+    },
 };
 // ============================================================
 // Loader
@@ -155,7 +161,52 @@ function mergeConfig(partial) {
             ...DEFAULT_CONFIG.postToolUseFailure,
             ...(partial.postToolUseFailure ?? {}),
         },
+        ...(() => {
+            const merged = mergeModelsConfig(partial.models);
+            return merged ? { models: merged } : {};
+        })(),
     };
+}
+/**
+ * Deep-merge `models` so per-agent overrides and the codex aliases map
+ * inherit sibling defaults. `agents` and `aliases` are merged one level;
+ * arrays (none in this config surface) would replace wholesale if added.
+ * Returns `undefined` only when *both* default and partial are absent,
+ * matching the interface's optional semantics.
+ */
+function mergeModelsConfig(partial) {
+    const base = DEFAULT_CONFIG.models;
+    if (!base && !partial)
+        return undefined;
+    const mergedCodex = base?.codex || partial?.codex
+        ? {
+            ...(base?.codex ?? {}),
+            ...(partial?.codex ?? {}),
+            aliases: {
+                ...(base?.codex?.aliases ?? {}),
+                ...(partial?.codex?.aliases ?? {}),
+            },
+        }
+        : undefined;
+    // Drop the aliases key when both sides were absent so the merged shape
+    // matches "absent" rather than "present-but-empty".
+    const finalCodex = mergedCodex &&
+        (mergedCodex.aliases && Object.keys(mergedCodex.aliases).length === 0)
+        ? (() => {
+            const { aliases: _aliases, ...rest } = mergedCodex;
+            return rest;
+        })()
+        : mergedCodex;
+    const mergedAgents = {
+        ...(base?.agents ?? {}),
+        ...(partial?.agents ?? {}),
+    };
+    const result = {};
+    if (finalCodex)
+        result.codex = finalCodex;
+    if (Object.keys(mergedAgents).length > 0)
+        result.agents = mergedAgents;
+    return result;
 }
 /**
  * Guard against `pseudoCoderabbitProfile` being set to a string outside
