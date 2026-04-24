@@ -170,9 +170,11 @@ function resolveConfig(projectRoot: string): SubagentStartConfig {
         if (Array.isArray(rawNotes)) return {};
         const filtered: Record<string, string> = {};
         for (const [k, v] of Object.entries(rawNotes as Record<string, unknown>)) {
-          // `Object.entries` は常に string key を返すため `typeof k` check
-          // は省略。空 key と non-string value のみを reject (malformed
-          // config が `sanitizeNote` に到達するのを防ぐ shape defense)。
+          // `Object.entries` always yields string keys — no `typeof k`
+          // check needed. Reject only empty keys and non-string values
+          // so that malformed config never reaches `sanitizeNote()`
+          // (shape defense — belt-and-suspenders over the downstream
+          // `typeof note === "string"` guard in the handler).
           if (k.length > 0 && typeof v === "string") {
             filtered[k] = v;
           }
@@ -373,16 +375,17 @@ export async function handleSubagentStart(
   lines.push(diagnosticLine);
 
   // Inject agentTypeNotes if agent_type matches a key in the config.
-  // Lookup uses the COALESCED (pre-sanitize) agent_type — `undefined`
-  // collapses to the literal `"unknown"` so config authors can target
-  // the missing-input case via `{ "unknown": "<note>" }`. Sanitize is
-  // strictly for **rendering** (control-char escape in the diagnostic
-  // line); the key lookup must stay on the raw value so a config entry
-  // like `{ "Bash": "..." }` still matches an unsanitized Bash spawn.
-  // The name `agentTypeKey` makes the "coalesced key for lookup" intent
-  // explicit (as opposed to a name like `rawAgentType` which would
-  // suggest the value is unmodified, which is not the case for undefined).
-  const agentTypeKey = input.agent_type ?? "unknown";
+  // Lookup mirrors the renderer's `sanitizeIdentifier` coalescing rule:
+  // both `undefined` and `""` collapse to `"unknown"` so a config
+  // `{ "unknown": "<note>" }` fires for either missing-input variant.
+  // The renderer and lookup must stay in lock-step — otherwise an empty
+  // `agent_type` would display as `"unknown"` but the note wouldn't
+  // fire. A well-formed non-empty string passes through unchanged so
+  // `{ "harness:worker": "..." }` still matches `agent_type=harness:worker`.
+  const agentTypeKey =
+    typeof input.agent_type === "string" && input.agent_type.length > 0
+      ? input.agent_type
+      : "unknown";
   const note = cfg.agentTypeNotes[agentTypeKey];
   if (typeof note === "string" && note.length > 0) {
     const sanitizedNote = sanitizeNote(note);

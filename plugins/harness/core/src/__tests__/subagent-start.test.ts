@@ -255,6 +255,23 @@ describe("SubagentStart — agentTypeNotes injection", () => {
     expect(ctx).toContain("line2");
   });
 
+  it("agent_type='' (empty string) も 'unknown' に coalesce されて config key 'unknown' にマッチ", async () => {
+    // Renderer (sanitizeIdentifier) は "" を "unknown" に畳む。lookup も
+    // 同じ rule に従うので、empty-string input も config key "unknown" に
+    // 到達する (display / lookup の lock-step 整合性)。
+    const root = makeTempProject({
+      subagentStart: {
+        agentTypeNotes: {
+          unknown: "empty-string → unknown note",
+        },
+      },
+    });
+    const result = await call(root, { agent_type: "" });
+    expect(result.additionalContext).toContain("empty-string → unknown note");
+    // display も unknown を示す
+    expect(result.additionalContext).toContain("agent_type=unknown");
+  });
+
   it("agent_type undefined は 'unknown' に coalesce されて config key 'unknown' にマッチ", async () => {
     // CodeRabbit PR #23 nitpick: 旧テスト名 "sanitized agent_type でマッチ" は
     // 挙動を誤解を招く書き方だった。実装は `input.agent_type ?? "unknown"` で
