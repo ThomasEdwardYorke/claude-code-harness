@@ -323,7 +323,11 @@ function loadCodexModelsCache() {
     const configPath = join(home, ".codex", "config.toml");
     const migrations = {};
     if (existsSync(configPath)) {
-      const toml = readFileSync(configPath, "utf-8");
+      // Normalise CRLF / CR to LF before regex matching so Windows line
+      // endings inside the user's config.toml do not leak stray `\r` into
+      // migration keys / values. The section is small (kv pairs) so a
+      // dedicated TOML parser would be overkill.
+      const toml = readFileSync(configPath, "utf-8").replace(/\r\n?/g, "\n");
       // Parse the [notice.model_migrations] block without a TOML lib; the
       // section is small (kv pairs) and we only need string → string.
       const blockMatch = toml.match(

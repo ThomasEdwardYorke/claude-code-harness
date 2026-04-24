@@ -437,5 +437,32 @@ describe("loadConfig / loadConfigSafe", () => {
       // Default codex section untouched.
       expect(cfg.models?.codex?.default).toBe("gpt-5.5");
     });
+
+    it("loadConfig preserves codex.default + aliases + agents fields together", () => {
+      // Regression guard for nested-merge shadowing. `mergeModelsConfig`
+      // must keep each sub-key intact when the user supplies a partial
+      // `codex` override + a per-agent entry + a new alias in one shot.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          models: {
+            codex: {
+              reasoningEffort: "xhigh",
+              aliases: { strong: "gpt-5.5", fast: "gpt-5.4-mini" },
+            },
+            agents: {
+              "codex-sync": { model: "strong", reasoningEffort: "low" },
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.models?.codex?.default).toBe("gpt-5.5");
+      expect(cfg.models?.codex?.reasoningEffort).toBe("xhigh");
+      expect(cfg.models?.codex?.aliases?.strong).toBe("gpt-5.5");
+      expect(cfg.models?.codex?.aliases?.fast).toBe("gpt-5.4-mini");
+      expect(cfg.models?.agents?.["codex-sync"]?.model).toBe("strong");
+      expect(cfg.models?.agents?.["codex-sync"]?.reasoningEffort).toBe("low");
+    });
   });
 });

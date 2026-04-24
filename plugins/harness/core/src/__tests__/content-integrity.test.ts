@@ -2725,4 +2725,16 @@ describe("harness model registry (v0.4.0 resolver)", () => {
         .default,
     ).toBe("medium");
   });
+
+  it("schema default === resolver HARNESS_DEFAULT_MODEL (no 3-way drift)", async () => {
+    // Import the resolver's exported constant and assert that schema.json's
+    // `models.codex.default.default` literal matches it. This lock-in
+    // closes the 3-way drift vector (resolver.ts, config.ts, schema.json)
+    // flagged in the Codex adversarial review of the Model Registry epic.
+    const resolver = await import("../models/resolver.js");
+    const schema = JSON.parse(schemaSource);
+    expect(
+      schema.properties.models.properties.codex.properties.default.default,
+    ).toBe(resolver.HARNESS_DEFAULT_MODEL);
+  });
 });
