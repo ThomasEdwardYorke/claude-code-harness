@@ -400,6 +400,18 @@ function parseExemptionBody(
         "'",
     );
   }
+  // Unified grammar is single-line — reject embedded `\r` / `\n` so neither
+  // downstream grep tooling nor reviewers have to reconstruct multi-line
+  // comments to parse an exemption. Applies to both file-head and
+  // line-level forms (although line-level bodies never naturally carry
+  // newlines, guarding here catches pathological CRLF injection).
+  if (/[\r\n]/.test(body)) {
+    throw new Error(
+      "generality-exemption declaration must be a single line (no CR/LF inside the body). " +
+        "Form: `generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | reason`. Found multi-line body: " +
+        JSON.stringify(body),
+    );
+  }
   // Unified exemption grammar migration: legacy 形式 (em-dash / multi-comma / file-level の pipe 無し) を reject
   if (!body.includes("|")) {
     // file-level では pipe + 4 fields が必須
@@ -1173,6 +1185,32 @@ describe("exemption grammar (unified, pipe-separated)", () => {
       const line = `const x = "foo"; // generality-exemption: B-1 |`;
       expect(() => hasLineExemption(line, "B-1")).toThrow(
         /4|field|empty|exact CSV|pattern ID/i,
+      );
+    });
+
+    // ------------------------------------------------------------
+    // Single-line declaration invariant.
+    //
+    // Although `[\s\S]*?` in the file-head regex technically allows a
+    // declaration body to span newlines, the unified grammar is
+    // intentionally single-line so that neither grep nor downstream
+    // tooling has to reconstruct multi-line comments to parse
+    // exemptions. Reject `\r` and `\n` anywhere inside the captured
+    // body at parse-time.
+    // ------------------------------------------------------------
+    it("rejects file-head declaration whose reason spans multiple lines (LF inside body)", () => {
+      const content =
+        "/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 |\nwrapped reason */\nconst x = 1;\n";
+      expect(() => hasFileExemption(content, "B-1")).toThrow(
+        /single line|newline|line break|4|field/i,
+      );
+    });
+
+    it("rejects file-head declaration with CR inside body", () => {
+      const content =
+        "<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | \r embedded CR -->\n";
+      expect(() => hasFileExemption(content, "B-1")).toThrow(
+        /single line|newline|line break|4|field/i,
       );
     });
   });
