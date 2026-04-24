@@ -3027,8 +3027,11 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
     expect(syncProps.recommendedTaskMaxOutputLength.default).toBe(160000);
     // `warnTaskMaxOutputLengthBelow` must stay <= the recommended value
     // and >= 1. Default 32000 matches Claude Code's runtime default so
-    // the doctor warns whenever the env var is unset.
+    // the doctor warns whenever the env var is unset. Pin `minimum: 1`
+    // so an accidental schema relax to `minimum: 0` (which would let a
+    // user set a threshold nothing can ever fall below) is caught.
     expect(syncProps.warnTaskMaxOutputLengthBelow.maximum).toBe(160000);
+    expect(syncProps.warnTaskMaxOutputLengthBelow.minimum).toBe(1);
     expect(syncProps.warnTaskMaxOutputLengthBelow.default).toBe(32000);
   });
 

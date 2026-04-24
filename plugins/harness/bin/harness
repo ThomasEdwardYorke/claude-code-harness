@@ -234,25 +234,41 @@ async function cmdDoctor() {
         out.push(`handoff file:        ${p}${existsSync(p) ? "" : " (missing — optional)"}`);
       }
       // codex-sync truncate mitigation: project override of codex.sync.*.
-      // Accept only well-typed scalars — malformed entries (string, null,
-      // NaN, Infinity) fall through to the shipped defaults rather than
-      // poisoning the doctor report.
+      // Accept only well-typed scalars AND values that fall within the
+      // JSON schema's declared bounds — malformed entries (string, null,
+      // NaN, Infinity, non-integer, out-of-range) fall through to the
+      // shipped defaults rather than poisoning the doctor report. Range
+      // bounds mirror `harness.config.schema.json`:
+      //   - `recommendedTaskMaxOutputLength`: integer, [32000, 160000]
+      //     (Claude Code's documented range — outside values would
+      //     advertise something the runtime silently clamps).
+      //   - `warnTaskMaxOutputLengthBelow`: integer, [1, 160000].
+      // Out-of-range values are logged via stderr so CI catches the
+      // drift instead of silently falling back.
       const syncCfg = cfg?.codex?.sync;
+      const isIntInRange = (v, min, max) =>
+        typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
       if (syncCfg && typeof syncCfg === "object") {
         if (typeof syncCfg.checkTaskMaxOutputLength === "boolean") {
           codexSyncCheck = syncCfg.checkTaskMaxOutputLength;
         }
-        if (
-          typeof syncCfg.warnTaskMaxOutputLengthBelow === "number" &&
-          Number.isFinite(syncCfg.warnTaskMaxOutputLengthBelow)
-        ) {
-          codexSyncWarnBelow = syncCfg.warnTaskMaxOutputLengthBelow;
+        if (syncCfg.warnTaskMaxOutputLengthBelow !== undefined) {
+          if (isIntInRange(syncCfg.warnTaskMaxOutputLengthBelow, 1, 160000)) {
+            codexSyncWarnBelow = syncCfg.warnTaskMaxOutputLengthBelow;
+          } else {
+            process.stderr.write(
+              `harness doctor: ignoring out-of-range codex.sync.warnTaskMaxOutputLengthBelow=${JSON.stringify(syncCfg.warnTaskMaxOutputLengthBelow)} (expected integer in [1, 160000]); using default ${codexSyncWarnBelow}\n`,
+            );
+          }
         }
-        if (
-          typeof syncCfg.recommendedTaskMaxOutputLength === "number" &&
-          Number.isFinite(syncCfg.recommendedTaskMaxOutputLength)
-        ) {
-          codexSyncRecommended = syncCfg.recommendedTaskMaxOutputLength;
+        if (syncCfg.recommendedTaskMaxOutputLength !== undefined) {
+          if (isIntInRange(syncCfg.recommendedTaskMaxOutputLength, 32000, 160000)) {
+            codexSyncRecommended = syncCfg.recommendedTaskMaxOutputLength;
+          } else {
+            process.stderr.write(
+              `harness doctor: ignoring out-of-range codex.sync.recommendedTaskMaxOutputLength=${JSON.stringify(syncCfg.recommendedTaskMaxOutputLength)} (expected integer in [32000, 160000]); using default ${codexSyncRecommended}\n`,
+            );
+          }
         }
       }
     } catch (err) {
@@ -264,7 +280,7 @@ async function cmdDoctor() {
 
   // codex-sync truncate mitigation: report the effective
   // TASK_MAX_OUTPUT_LENGTH env var so operators spot an unset or low
-  // value before the next codex-sync mid-truncation (backlog 1c).
+  // value before the next codex-sync mid-truncation.
   // Claude Code runtime caps subagent final responses at the env var's
   // value (default 32000, documented max 160000); raising it lets
   // codex-sync return multi-KB review output without resume dances.

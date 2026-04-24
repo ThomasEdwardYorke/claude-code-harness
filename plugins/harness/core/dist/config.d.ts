@@ -17,8 +17,8 @@ export type TamperingSeverity = "approve" | "ask" | "deny";
  * 32000 characters, documented maximum 160000) which middle-truncates
  * subagent final responses that exceed the effective limit (full output
  * is auto-saved to disk). codex-sync returns multi-KB Codex review output
- * and hit this truncation 6 times in 2026-04 alone (backlog 1c). These
- * knobs let `harness doctor` warn when the effective limit is below the
+ * and hit this truncation repeatedly during development. These knobs
+ * let `harness doctor` warn when the effective limit is below the
  * runtime default without hardcoding the threshold inside bin/harness.
  */
 export interface CodexSyncConfig {
