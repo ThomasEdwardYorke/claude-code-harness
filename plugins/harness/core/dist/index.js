@@ -263,7 +263,7 @@ export async function route(hookType, input) {
             return ptufHR;
         }
         case "config-change": {
-            // ConfigChange: config 変更時の observability hook (Phase η P1-P2)。
+            // ConfigChange: config 変更時の observability hook。
             // 公式仕様 (https://code.claude.com/docs/en/hooks) の
             // `hookSpecificOutput.additionalContext` で source / file_path /
             // hints を inject。opt-in block (blockOnSources) で `decision: "block"`

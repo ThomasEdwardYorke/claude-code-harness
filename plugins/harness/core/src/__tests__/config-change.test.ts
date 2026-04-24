@@ -1,7 +1,7 @@
 /**
  * core/src/__tests__/config-change.test.ts
  *
- * ConfigChange hook handler のテスト (Phase η P1-P2 — ConfigChange event)。
+ * ConfigChange hook handler のテスト。
  *
  * ## 設計方針
  *

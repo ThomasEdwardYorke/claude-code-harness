@@ -1743,6 +1743,133 @@ describe("PostToolUseFailure hook 登録 invariant", () => {
 });
 
 // ============================================================
+// ConfigChange hook 登録 invariant (observability + opt-in source blocking)
+//
+// 公式仕様 (https://code.claude.com/docs/en/hooks, verified 2026-04-24):
+//  - Trigger: session 中に config file が変更されたとき (外部 editor / process
+//    が settings / skills files を書き換え)
+//  - Payload: source (matcher: user_settings / project_settings /
+//    local_settings / policy_settings / skills) + file_path + 共通
+//    (session_id / cwd / transcript_path / hook_event_name)
+//  - Output: `hookSpecificOutput.additionalContext` で source / file_path /
+//    hints を inject。`decision: "block"` で config 変更を拒否可能 (reason 付き)
+//  - matcher: source-based (5 enum 値)
+//
+// 現行の判断:
+//  - non-blocking observability by default (approve + context のみ)
+//  - opt-in blocking via `configChange.blockOnSources` (無効値は silent drop)
+//  - fail-open: config 読込失敗 / enabled=false → silent skip + approve
+//  - file_path sanitization: CR/LF/CRLF → `\n` literal、他 C0 (TAB 含む) + DEL → `\x{HH}`
+//  - source whitelist: 5 enum 以外は "unknown" に畳む
+//  - per-request 48-bit nonce (spoofing defence)
+//  - sensitive path hint (.env / secrets.<ext> / credentials.<ext> / *.pem /
+//    *.key / /secrets/ / /.ssh/ / /keys/ / /credentials/ dir heuristic)
+//  - harness.config.json reload hint
+//  - index.ts main() で UserPromptSubmit / PostToolUseFailure と共通の
+//    hookSpecificOutput 出力分岐 (3 event の hookEventName 識別子が 100 chars
+//    以内に並ぶ lookup object で一貫性確保)
+//
+// 設計経緯は CHANGELOG.md 参照。
+// ============================================================
+describe("ConfigChange hook 登録 invariant", () => {
+  const hooksJsonPath = resolve(PLUGIN_ROOT, "hooks/hooks.json");
+  const handlerPath = resolve(
+    PLUGIN_ROOT,
+    "core/src/hooks/config-change.ts",
+  );
+  const indexPath = resolve(PLUGIN_ROOT, "core/src/index.ts");
+
+  it("hooks.json は ConfigChange を登録する (non-blocking observability, timeout 10s)", () => {
+    const raw = readFileSync(hooksJsonPath, "utf-8");
+    const parsed = JSON.parse(raw) as {
+      hooks: Record<
+        string,
+        Array<{ hooks: Array<{ command?: string; timeout?: number }> }>
+      >;
+    };
+    expect(parsed.hooks).toHaveProperty("ConfigChange");
+    const entry = parsed.hooks["ConfigChange"];
+    expect(Array.isArray(entry)).toBe(true);
+    expect(entry?.length).toBeGreaterThan(0);
+    expect(entry?.[0]?.hooks?.[0]?.command).toContain("config-change");
+    expect(entry?.[0]?.hooks?.[0]?.timeout).toBe(10);
+  });
+
+  it("config-change.ts が handleConfigChange を export する", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/export\s+async\s+function\s+handleConfigChange/);
+  });
+
+  it("config-change.ts は context 注入に additionalContext を使う", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/additionalContext/);
+    // systemMessage を直接 lift する drift を拒否 (UserPromptSubmit /
+    // PostToolUseFailure と同じ規約)
+    expect(src).not.toMatch(/systemMessage\s*:\s*lines/);
+  });
+
+  it("config-change.ts は fail-open 実装 (loadConfigSafe try-catch + enabled switch)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // config 読込失敗時の try-catch による defaults fallback
+    expect(src).toMatch(/loadConfigSafe/);
+    expect(src).toMatch(/try\s*\{[\s\S]*loadConfigSafe/);
+    // enabled: false の時 no-op
+    expect(src).toMatch(/enabled[\s\S]{0,80}return\s*\{\s*decision:\s*"approve"\s*\}/);
+  });
+
+  it("config-change.ts は 5 official matcher sources を whitelist する", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // Anthropic spec の 5 source enum を完全に含むこと
+    // (source を "unknown" に畳む sanitize の前提となる allowlist)
+    expect(src).toMatch(/"user_settings"/);
+    expect(src).toMatch(/"project_settings"/);
+    expect(src).toMatch(/"local_settings"/);
+    expect(src).toMatch(/"policy_settings"/);
+    expect(src).toMatch(/"skills"/);
+  });
+
+  it("config-change.ts は sensitive path detection (file + dir heuristic) を持つ", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // basename-level: .env / secrets / credentials / *.pem / *.key
+    expect(src).toMatch(/\.env/);
+    expect(src).toMatch(/secrets\?/);
+    expect(src).toMatch(/credentials\?/);
+    expect(src).toMatch(/pem/);
+    // dir-level heuristic: segment boundary matching — source contains
+    // the regex literal `/(?:secrets?|credentials?|keys?|\.ssh)/`; we
+    // match on the non-capturing group opener `(?:` + `secrets?`.
+    expect(src).toMatch(/\(\?:secrets\?/);
+    expect(src).toMatch(/\\\.ssh/);
+  });
+
+  it("config-change.ts は harness.config.json reload hint を持つ", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    expect(src).toMatch(/isHarnessConfigPath/);
+    expect(src).toMatch(/harness\.config\.json/);
+  });
+
+  it("config-change.ts は per-request nonce を生成する (spoofing defence)", () => {
+    const src = readFileSync(handlerPath, "utf-8");
+    // 48-bit nonce = 6 bytes → 12 hex chars
+    expect(src).toMatch(/randomBytes\(6\)/);
+    expect(src).toMatch(/\.toString\("hex"\)/);
+  });
+
+  it("index.ts main() に config-change 分岐があり hookSpecificOutput 形式で出力する", () => {
+    const src = readFileSync(indexPath, "utf-8");
+    // HookType union に追加済
+    expect(src).toMatch(/"config-change"/);
+    // main() 出力分岐: hookEventName lookup object に ConfigChange リテラルが
+    // 並ぶこと (lookup テーブル drift を早期検出)。
+    // 窓幅 150: 3 entry lookup object では UserPromptSubmit (〜30) /
+    // PostToolUseFailure (〜86) / ConfigChange (〜131) の距離になるため、
+    // 将来 4 entry 追加に備えて余裕を持たせる。intent は「同じ lookup object
+    // に並ぶこと」で、100 vs 150 は実用上の drift 検出能力に差が無い。
+    expect(src).toMatch(/hookEventName[\s\S]{0,150}"ConfigChange"/);
+  });
+});
+
+// ============================================================
 // session-handoff skill: 引き継ぎ doc 構造化ベストプラクティスを
 // shipped plugin として提供する skill の existence + structure guard
 //

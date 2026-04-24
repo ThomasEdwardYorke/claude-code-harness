@@ -1,7 +1,7 @@
 /**
  * hooks/config-change.ts
  *
- * ConfigChange hook handler (Phase η P1-P2).
+ * ConfigChange hook handler.
  *
  * ## Official spec (https://code.claude.com/docs/en/hooks, verified 2026-04-24)
  *
