@@ -325,16 +325,20 @@ const BLOCK_PATTERNS: BlockPattern[] = [
 // Markdown / TS コメント形式から exemption 宣言を抽出する regex。
 // Unified exemption grammar: file-level と line-level で同一 keyword `generality-exemption` を使用。
 // 旧 `generality-ok` keyword は廃止 (line-level でも受理されない)。
-// File-head declarations must start at a line boundary (optionally indented
-// by whitespace / shebang) — docstring samples such as
-// ` * - File-head Markdown: <!-- generality-exemption: ... -->` must not be
-// misread as actual declarations once the head slice is wide enough to include
-// the docstring body (see `EXEMPTION_HEAD_SLICE_BYTES` and Codex MAJOR-1).
+//
+// File-head declarations MUST be anchored at the start of the file; only
+// BOM (`﻿`), an optional shebang line, and whitespace are permitted
+// between offset 0 and the opening `<!--` / `/*` marker. Once any other
+// text appears, subsequent `<!-- generality-exemption: ... -->` blocks
+// are treated as ordinary body content — they no longer satisfy the
+// short-form inheritance precondition, so a maintainer cannot lift an
+// inherited exemption by placing a block anywhere inside the 2048-byte
+// head slice.
 const EXEMPTION_FILE_HEAD_PATTERNS = [
-  // Markdown: HTML comment (body は --> まで非貪欲)
-  /(?:^|\n)\s*<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
-  // TypeScript / JavaScript: block comment (body は block-comment closing marker まで)
-  /(?:^|\n)\s*\/\*\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*\*\//,
+  // Markdown: HTML comment anchored at the top of the file.
+  /^(?:﻿)?(?:#![^\n]*\n)?\s*<!--\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*-->/,
+  // TypeScript / JavaScript: block comment anchored at the top of the file.
+  /^(?:﻿)?(?:#![^\n]*\n)?\s*\/\*\s*generality-exemption\b\s*(?::\s*([\s\S]*?))?\s*\*\//,
 ];
 
 // Line-level exemption: TS 行コメント or 単一行 MD コメント
@@ -416,13 +420,30 @@ function parseExemptionBody(
     }
   }
 
-  const parts = body
-    .split("|")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  // Keep every raw split result so that leading / trailing / embedded
+  // empty fields (`| B-1 | …`, `B-1 | … |`, `B-1 | | … |`) remain visible
+  // to the count + non-empty checks below. A silent `filter` would collapse
+  // those malformed inputs into an apparently valid 4-field declaration.
+  const parts = body.split("|").map((s) => s.trim());
   if (parts.length === 0) {
     throw new Error(
       "generality-exemption body is empty after parsing. Found: " + body,
+    );
+  }
+
+  // Line-level short form path is: `// generality-exemption: B-1,B-2a`
+  // — no pipes, one element, non-empty. Anything else (even a stray
+  // trailing pipe that produces `["B-1", ""]`) must flow into the
+  // 4-field validation so it is rejected with an explicit diagnostic.
+  const isShortFormCandidate =
+    kind === "line" && parts.length === 1 && parts[0].length > 0;
+  if (!isShortFormCandidate && parts.some((p) => p.length === 0)) {
+    throw new Error(
+      "generality-exemption must have exactly 4 non-empty pipe-separated fields: " +
+        "`<pattern-ids> | <issue-key> | <expiry> | <reason>`. " +
+        "Empty field(s) found in: [" +
+        parts.map((p) => JSON.stringify(p)).join(", ") +
+        "]",
     );
   }
 
@@ -988,16 +1009,22 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     });
 
     // ------------------------------------------------------------
-    // Codex adversarial MAJOR-1: file-head slice boundary hardening.
-    // A file-head block comment (`/* generality-exemption: ... */`) can start
-    // before the 800-byte slice boundary and close *after* it, causing the
-    // non-greedy `[\s\S]*?` regex to fail match silently — the declaration
-    // becomes ineffective. Widen the slice so realistic file headers remain
-    // detected even when padded with lengthy shebangs / banner comments.
+    // Slice-boundary + strict-head invariants.
+    //
+    // (1) Non-greedy `[\s\S]*?` + strict `^`-anchored regex must still
+    //     detect a long declaration whose closing marker sits far from
+    //     offset 0 — padding AFTER the declaration is irrelevant, the
+    //     head slice (2048 bytes) must be wide enough to see the close.
+    // (2) Padding BEFORE the declaration (the inverse) MUST push the
+    //     block out of file-head scope even when the declaration closes
+    //     inside the 2048-byte slice. Tested in
+    //     "file-head strict anchoring + pipe empty-field rejection"
+    //     below — kept separate because the invariant is semantic, not
+    //     just slice-size.
     // ------------------------------------------------------------
-    it("file-head declaration that spans the prior 800-byte boundary remains detected (MAJOR-1)", () => {
-      const padding = "x".repeat(790);
-      const content = `${padding}\n/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | hardened boundary */\n`;
+    it("file-head declaration with long reason still fits the 2048-byte slice", () => {
+      const longReason = "x".repeat(1500);
+      const content = `/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | ${longReason} */\n`;
       expect(hasFileExemption(content, "B-1")).toBe(true);
     });
 
@@ -1076,6 +1103,77 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     it("idsPart containing 'all' plus real pattern-id is rejected (pattern-ids field hygiene)", () => {
       const md = `<!-- generality-exemption: all,B-1 | HARNESS-42 | v0.5.0 | mixed rejected -->`;
       expect(() => parseExemption(md)).toThrow(/all|exact CSV|pattern ID/i);
+    });
+  });
+
+  describe("file-head strict anchoring + pipe empty-field rejection", () => {
+    // CodeRabbit Round 2 findings: (a) file-head regex that only required a
+    // line-start boundary inside the first 2048 bytes would lift arbitrary
+    // non-head declarations into file-head scope (short-form inheritance
+    // bypass). (b) `parts.filter((s) => s.length > 0)` silently collapsed
+    // leading / trailing / embedded empty pipe fields, letting `| B-1 | … |
+    // … | reason` parse as a valid 4-field declaration even though the
+    // leading empty field should be rejected.
+
+    it("file-head regex rejects a block comment that appears after real code", () => {
+      // Declaration preceded by actual executable code ⇒ must NOT be
+      // treated as file-head regardless of the 2048-byte slice.
+      const content =
+        'const harmless = 1;\n' +
+        'console.log("still not a header");\n' +
+        '/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | spoof attempt */\n' +
+        'const x = "foo";\n';
+      expect(hasFileExemption(content, "B-1")).toBe(false);
+    });
+
+    it("file-head regex rejects a MD comment placed after running content", () => {
+      const content =
+        '# Title\n' +
+        '\n' +
+        'Intro paragraph.\n' +
+        '<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | spoof -->\n';
+      expect(hasFileExemption(content, "B-1")).toBe(false);
+    });
+
+    it("file-head regex still accepts declaration preceded only by BOM + shebang + whitespace", () => {
+      const content =
+        "﻿" +
+        "#!/usr/bin/env node\n" +
+        "\n" +
+        "/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | hardened head */\n" +
+        "const x = 1;\n";
+      expect(hasFileExemption(content, "B-1")).toBe(true);
+    });
+
+    it("short-form inheritance is NOT satisfied when declaration sits past real content (regression vs bypass)", () => {
+      const fileContent =
+        'const y = "bar";\n' +
+        '/* generality-exemption: B-1 | HARNESS-42 | v0.5.0 | not-at-head */\n' +
+        'const x = "foo"; // generality-exemption: B-1\n';
+      const line = `const x = "foo"; // generality-exemption: B-1`;
+      expect(hasLineExemption(line, "B-1", fileContent)).toBe(false);
+    });
+
+    it("rejects full form with leading empty pipe field ('| B-1 | HARNESS-42 | v0.5.0 | reason')", () => {
+      const md = `<!-- generality-exemption: | B-1 | HARNESS-42 | v0.5.0 | leading empty -->`;
+      expect(() => parseExemption(md)).toThrow(/4|field|empty|pattern/i);
+    });
+
+    it("rejects full form with trailing empty pipe field ('B-1 | HARNESS-42 | v0.5.0 | reason |')", () => {
+      const md = `<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | trailing empty | -->`;
+      expect(() => parseExemption(md)).toThrow(/4|field|empty/i);
+    });
+
+    it("rejects full form with embedded empty pipe field ('B-1 | | v0.5.0 | reason')", () => {
+      const md = `<!-- generality-exemption: B-1 | | v0.5.0 | embedded empty -->`;
+      expect(() => parseExemption(md)).toThrow(/4|field|empty|issue/i);
+    });
+
+    it("rejects line-level short form with trailing pipe ('// generality-exemption: B-1 |')", () => {
+      const line = `const x = "foo"; // generality-exemption: B-1 |`;
+      expect(() => hasLineExemption(line, "B-1")).toThrow(
+        /4|field|empty|exact CSV|pattern ID/i,
+      );
     });
   });
 });
