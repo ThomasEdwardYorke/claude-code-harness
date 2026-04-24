@@ -210,30 +210,49 @@ export interface ModelCheckReport {
   referencedModels: string[];
 }
 
-function collectReferencedSlugs(config: ModelsConfig | undefined): string[] {
-  const out = new Set<string>();
+interface SlugReference {
+  slug: string;
+  location: DeprecationHit["location"];
+  agent?: string;
+}
+
+/**
+ * Emit every (slug, location) pair the resolver might hand out. Duplicates
+ * are preserved — a slug referenced in both `codex.default` and an
+ * `agents[*].model` override yields two references so consumers of
+ * `checkModels` see where each usage lives (rather than collapsing them
+ * into a single dedup hit).
+ */
+function collectReferences(config: ModelsConfig | undefined): SlugReference[] {
+  const out: SlugReference[] = [];
   const codexDefault = config?.codex?.default;
   if (codexDefault) {
     const { concrete } = resolveAlias(config, codexDefault);
-    out.add(concrete);
+    out.push({ slug: concrete, location: "codex.default" });
   }
   const aliases = config?.codex?.aliases;
   if (aliases) {
     for (const target of Object.values(aliases)) {
-      if (target) out.add(target);
+      if (target) out.push({ slug: target, location: "codex.aliases" });
     }
   }
   const agents = config?.agents;
   if (agents) {
-    for (const [, agentCfg] of Object.entries(agents)) {
+    for (const [agentName, agentCfg] of Object.entries(agents)) {
       if (agentCfg?.model) {
         const { concrete } = resolveAlias(config, agentCfg.model);
-        out.add(concrete);
+        out.push({
+          slug: concrete,
+          location: "agents",
+          agent: agentName,
+        });
       }
     }
   }
-  if (out.size === 0) out.add(HARNESS_DEFAULT_MODEL);
-  return Array.from(out);
+  if (out.length === 0) {
+    out.push({ slug: HARNESS_DEFAULT_MODEL, location: "harness-default" });
+  }
+  return out;
 }
 
 /**
@@ -249,7 +268,10 @@ export function checkModels(
   config: ModelsConfig | undefined,
   cache: ModelsCacheSnapshot | null,
 ): ModelCheckReport {
-  const referencedModels = collectReferencedSlugs(config);
+  const references = collectReferences(config);
+  const referencedModels = Array.from(
+    new Set(references.map((r) => r.slug)),
+  );
   const hits: DeprecationHit[] = [];
 
   if (!cache) return { hits, referencedModels };
@@ -262,61 +284,41 @@ export function checkModels(
   const migrations = cache.migrations ?? {};
   const upgradeSlug = cache.upgrade?.model;
 
-  function locate(
-    slug: string,
-  ): { location: DeprecationHit["location"]; agent?: string } {
-    if (config?.codex?.default) {
-      const { concrete } = resolveAlias(config, config.codex.default);
-      if (concrete === slug) return { location: "codex.default" };
-    }
-    const aliases = config?.codex?.aliases;
-    if (aliases) {
-      for (const [, target] of Object.entries(aliases)) {
-        if (target === slug) return { location: "codex.aliases" };
-      }
-    }
-    const agents = config?.agents;
-    if (agents) {
-      for (const [agentName, agentCfg] of Object.entries(agents)) {
-        if (!agentCfg?.model) continue;
-        const { concrete } = resolveAlias(config, agentCfg.model);
-        if (concrete === slug) return { location: "agents", agent: agentName };
-      }
-    }
-    return { location: "harness-default" };
-  }
-
-  for (const slug of referencedModels) {
-    const { location, agent } = locate(slug);
+  for (const ref of references) {
     const agentTag: Pick<DeprecationHit, "agent"> | object =
-      agent !== undefined ? { agent } : {};
+      ref.agent !== undefined ? { agent: ref.agent } : {};
+    // `upgrade` hits only fire when the referenced slug is *known* to the
+    // cache and distinct from the upgrade target. This avoids false
+    // positives where a typo or unreleased slug would otherwise be
+    // flagged as "older than upgrade target" instead of "unknown-slug".
     if (
       upgradeSlug &&
-      slug !== upgradeSlug &&
-      knownSlugs.has(upgradeSlug)
+      ref.slug !== upgradeSlug &&
+      knownSlugs.has(upgradeSlug) &&
+      knownSlugs.has(ref.slug)
     ) {
       hits.push({
-        model: slug,
-        location,
+        model: ref.slug,
+        location: ref.location,
         ...agentTag,
         suggested: upgradeSlug,
         reason: "upgrade",
       });
     }
-    const migrationTarget = migrations[slug];
-    if (migrationTarget && migrationTarget !== slug) {
+    const migrationTarget = migrations[ref.slug];
+    if (migrationTarget && migrationTarget !== ref.slug) {
       hits.push({
-        model: slug,
-        location,
+        model: ref.slug,
+        location: ref.location,
         ...agentTag,
         suggested: migrationTarget,
         reason: "migration",
       });
     }
-    if (knownSlugs.size > 0 && !knownSlugs.has(slug)) {
+    if (knownSlugs.size > 0 && !knownSlugs.has(ref.slug)) {
       hits.push({
-        model: slug,
-        location,
+        model: ref.slug,
+        location: ref.location,
         ...agentTag,
         reason: "unknown-slug",
       });

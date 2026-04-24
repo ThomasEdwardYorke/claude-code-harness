@@ -1,4 +1,3 @@
-/* generality-exemption: B-10 | HARNESS-model-registry | 2099-12-31 | DEFAULT_CONFIG carries the literal HARNESS_DEFAULT_MODEL slug by design */
 /**
  * core/src/config.ts
  * Harness configuration loader.
@@ -10,16 +9,6 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-
-// Re-use the compile-time model default from the resolver so
-// `DEFAULT_CONFIG.models.codex.default`, the schema default, and the
-// resolver's `HARNESS_DEFAULT_MODEL` cannot drift. Content-integrity
-// asserts `schema.properties.models.properties.codex.properties.default.default`
-// matches this constant at CI time.
-import {
-  HARNESS_DEFAULT_MODEL,
-  HARNESS_DEFAULT_REASONING_EFFORT,
-} from "./models/resolver.js";
 
 // ============================================================
 // Type definitions
@@ -319,8 +308,9 @@ export interface ReleaseConfig {
 /**
  * Model registry configuration. Controls which Codex model every
  * harness-dispatched Codex invocation targets, with a per-agent override
- * surface and a logical-alias table so projects can pin `gpt-5.5` (or a
- * legacy model for reproducibility) without editing the agent markdown.
+ * surface and a logical-alias table so projects can pin a specific Codex
+ * model (including a legacy model for reproducibility) without editing
+ * the agent markdown.
  *
  * Implementation lives in `src/models/resolver.ts`; consumers are the
  * `bin/harness model resolve` CLI, each Codex-dispatching agent's
@@ -475,12 +465,13 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     maxErrorLength: 1024,
     correctiveHints: true,
   },
-  models: {
-    codex: {
-      default: HARNESS_DEFAULT_MODEL,
-      reasoningEffort: HARNESS_DEFAULT_REASONING_EFFORT,
-    },
-  },
+  // `models` is intentionally absent from DEFAULT_CONFIG. The compile-time
+  // fallback lives in `src/models/resolver.ts` as `HARNESS_DEFAULT_MODEL`
+  // so that an unconfigured project surfaces as `source: "harness-default"`
+  // in `harness model resolve` output (not `"codex-default"`). Populating
+  // `DEFAULT_CONFIG.models` would conflate shipped behaviour with explicit
+  // user intent and make `harness model check` unable to flag missing
+  // overrides.
 };
 
 // ============================================================

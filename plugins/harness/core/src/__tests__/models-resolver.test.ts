@@ -158,7 +158,7 @@ describe("models/resolver — resolveModel", () => {
             reasoningEffort: "maximum" as unknown as "medium",
           },
         },
-      } satisfies Partial<ModelsConfig> as ModelsConfig;
+      } as ModelsConfig;
       const result = resolveModel(config, "codex-sync");
       expect(result.reasoningEffort).toBe(HARNESS_DEFAULT_REASONING_EFFORT);
     });
@@ -169,7 +169,7 @@ describe("models/resolver — resolveModel", () => {
           default: "gpt-5.5",
           reasoningEffort: "ultra" as unknown as "medium",
         },
-      } satisfies Partial<ModelsConfig> as ModelsConfig;
+      } as ModelsConfig;
       const result = resolveModel(config, "codex-sync");
       expect(result.reasoningEffort).toBe(HARNESS_DEFAULT_REASONING_EFFORT);
     });
@@ -295,5 +295,40 @@ describe("models/resolver — checkModels", () => {
     const report = checkModels(undefined, upgradeOnlyCache);
     expect(report.referencedModels).toEqual(["gpt-5.5"]);
     expect(report.hits).toEqual([]);
+  });
+
+  it("unknown slugs do NOT fire `upgrade` hits — only `unknown-slug`", () => {
+    // Regression guard: previously `slug !== upgradeSlug` on its own let
+    // typo / unreleased slugs pile up an `upgrade` hit as well as the
+    // `unknown-slug` hit, which made `--strict` noisy.
+    const config: ModelsConfig = { codex: { default: "gpt-7-fantasy" } };
+    const report = checkModels(config, cache);
+    expect(report.hits.filter((h) => h.reason === "upgrade")).toEqual([]);
+    const unknownHit = report.hits.find((h) => h.reason === "unknown-slug");
+    expect(unknownHit).toBeDefined();
+    expect(unknownHit?.model).toBe("gpt-7-fantasy");
+  });
+
+  it("emits one hit per reference site when the same slug is wired in multiple places", () => {
+    // `collectReferences` now keeps per-site tuples instead of dedup'ing
+    // into a single slug, so `codex.default` + an agent-override that
+    // share a deprecated slug both surface their own fix location.
+    const config: ModelsConfig = {
+      codex: { default: "gpt-5.4" },
+      agents: {
+        "codex-sync": { model: "gpt-5.4" },
+      },
+    };
+    const report = checkModels(config, cache);
+    const upgradeHits = report.hits.filter((h) => h.reason === "upgrade");
+    expect(upgradeHits).toHaveLength(2);
+    expect(upgradeHits.some((h) => h.location === "codex.default")).toBe(true);
+    expect(
+      upgradeHits.some(
+        (h) => h.location === "agents" && h.agent === "codex-sync",
+      ),
+    ).toBe(true);
+    // Dedup is still reflected in the summary list.
+    expect(report.referencedModels).toEqual(["gpt-5.4"]);
   });
 });

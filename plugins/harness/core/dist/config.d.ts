@@ -283,8 +283,9 @@ export interface ReleaseConfig {
 /**
  * Model registry configuration. Controls which Codex model every
  * harness-dispatched Codex invocation targets, with a per-agent override
- * surface and a logical-alias table so projects can pin `gpt-5.5` (or a
- * legacy model for reproducibility) without editing the agent markdown.
+ * surface and a logical-alias table so projects can pin a specific Codex
+ * model (including a legacy model for reproducibility) without editing
+ * the agent markdown.
  *
  * Implementation lives in `src/models/resolver.ts`; consumers are the
  * `bin/harness model resolve` CLI, each Codex-dispatching agent's
