@@ -245,7 +245,17 @@ STDERR_LOG="$WORKDIR/codex-stderr.log"
 # codex-companion.mjs は progress reporter が stderr に `[codex] ...` を出すため、
 # `2>&1` で混ぜると $RESULT の strict JSON 前提が壊れる。stderr は別ファイルに分離し、
 # parse 失敗時のデバッグ用に保持する (Step 4 で使用)。
-node "$CODEX_COMPANION" task --prompt-file "$WORKDIR/prompt.md" --effort medium > "$RESULT" 2>"$STDERR_LOG"
+#
+# Harness model registry から coderabbit-mimic 用の model slug を取得。
+# 取得できない場合 (core build 不在 / jq+python3 不在) は companion 既定にフォールバック。
+CODERABBIT_MODEL="$(harness model resolve coderabbit-mimic 2>/dev/null \
+  | python3 -c 'import sys, json; print(json.load(sys.stdin).get("model",""))' \
+  2>/dev/null)"
+MODEL_FLAG=""
+if [ -n "$CODERABBIT_MODEL" ]; then
+  MODEL_FLAG="--model $CODERABBIT_MODEL"
+fi
+node "$CODEX_COMPANION" task --prompt-file "$WORKDIR/prompt.md" $MODEL_FLAG --effort medium > "$RESULT" 2>"$STDERR_LOG"
 ```
 
 ### Step 4. 結果の post-process

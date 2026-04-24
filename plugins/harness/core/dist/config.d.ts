@@ -280,6 +280,30 @@ export interface ReleaseConfig {
      */
     testCommand?: string;
 }
+/**
+ * Model registry configuration. Controls which Codex model every
+ * harness-dispatched Codex invocation targets, with a per-agent override
+ * surface and a logical-alias table so projects can pin `gpt-5.5` (or a
+ * legacy model for reproducibility) without editing the agent markdown.
+ *
+ * Implementation lives in `src/models/resolver.ts`; consumers are the
+ * `bin/harness model resolve` CLI, each Codex-dispatching agent's
+ * Invocation Rules, and the `harness model check` deprecation linter.
+ * See `HARNESS_DEFAULT_MODEL` in resolver.ts for the compile-time default.
+ */
+export interface ModelsCodexRegistryConfig {
+    default?: string;
+    reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+    aliases?: Record<string, string>;
+}
+export interface ModelsAgentRegistryConfig {
+    model?: string;
+    reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+}
+export interface ModelsConfig {
+    codex?: ModelsCodexRegistryConfig;
+    agents?: Record<string, ModelsAgentRegistryConfig>;
+}
 export interface HarnessConfig {
     /** Human-readable project name (shown in messages). */
     projectName: string;
@@ -312,6 +336,11 @@ export interface HarnessConfig {
     release: ReleaseConfig;
     userPromptSubmit: UserPromptSubmitConfig;
     postToolUseFailure: PostToolUseFailureConfig;
+    /**
+     * Optional model registry. When absent, harness resolves to
+     * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).
+     */
+    models?: ModelsConfig;
 }
 export declare const DEFAULT_CONFIG: HarnessConfig;
 /**

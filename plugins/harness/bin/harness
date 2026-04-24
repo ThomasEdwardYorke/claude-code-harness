@@ -8,6 +8,8 @@
  *   harness doctor                Diagnose local environment
  *   harness rules list            List active guardrail rules
  *   harness rules test <command>  Dry-run a bash command against R01-R13
+ *   harness model resolve <agent> Print effective Codex model for <agent> (JSON)
+ *   harness model check [--strict]  Flag deprecated models vs ~/.codex/models_cache.json
  *   harness migrate [--from PATH] Migrate legacy v2 state to the v3 JSON store
  *   harness --version
  */
@@ -52,6 +54,8 @@ function printUsage() {
       "  harness doctor                Diagnose local environment",
       "  harness rules list            List active guardrail rules",
       "  harness rules test <cmd>      Dry-run a bash command against R01-R13",
+      "  harness model resolve <agent> Print effective Codex model for <agent>",
+      "  harness model check [--strict]  Flag deprecated models vs models_cache.json",
       "  harness migrate [--from D]    Migrate legacy .claude/state to v3 JSON",
       "  harness --version",
       "",
@@ -283,6 +287,106 @@ async function cmdRulesTest(command) {
   return 0;
 }
 
+// ------------------------------------------------------------
+// harness model resolve / harness model check
+// ------------------------------------------------------------
+
+async function loadResolverModule() {
+  const corePath = resolveCorePath();
+  if (corePath === null) return null;
+  const resolverPath = corePath.replace(
+    "index.js",
+    "models/resolver.js",
+  );
+  if (!existsSync(resolverPath)) return null;
+  return await import(`file://${resolverPath.replace(/\\/g, "/")}`);
+}
+
+async function loadProjectModelsConfig() {
+  const corePath = resolveCorePath();
+  if (corePath === null) return undefined;
+  const configPath = corePath.replace("index.js", "config.js");
+  const mod = await import(`file://${configPath.replace(/\\/g, "/")}`);
+  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const cfg = mod.loadConfigSafe
+    ? mod.loadConfigSafe(projectDir)
+    : mod.loadConfig(projectDir);
+  return cfg?.models;
+}
+
+function loadCodexModelsCache() {
+  const home = homedir();
+  const cachePath = join(home, ".codex", "models_cache.json");
+  if (!existsSync(cachePath)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(cachePath, "utf-8"));
+    const configPath = join(home, ".codex", "config.toml");
+    const migrations = {};
+    if (existsSync(configPath)) {
+      const toml = readFileSync(configPath, "utf-8");
+      // Parse the [notice.model_migrations] block without a TOML lib; the
+      // section is small (kv pairs) and we only need string → string.
+      const blockMatch = toml.match(
+        /\[notice\.model_migrations\]\s*([\s\S]*?)(?=\n\[|$)/,
+      );
+      if (blockMatch) {
+        const body = blockMatch[1];
+        const lineRe = /"([^"]+)"\s*=\s*"([^"]+)"/g;
+        let m;
+        while ((m = lineRe.exec(body)) !== null) {
+          migrations[m[1]] = m[2];
+        }
+      }
+    }
+    return {
+      models: raw.models,
+      upgrade: raw.upgrade,
+      migrations,
+    };
+  } catch (err) {
+    process.stderr.write(
+      `harness model check: failed to read models cache (${
+        err instanceof Error ? err.message : String(err)
+      })\n`,
+    );
+    return null;
+  }
+}
+
+async function cmdModelResolve(agent) {
+  if (!agent) {
+    process.stderr.write("usage: harness model resolve <agent>\n");
+    return 2;
+  }
+  const mod = await loadResolverModule();
+  if (!mod) {
+    process.stderr.write(
+      "harness model resolve: core build not found. Run `npm run build`.\n",
+    );
+    return 1;
+  }
+  const config = await loadProjectModelsConfig();
+  const resolution = mod.resolveModel(config, agent);
+  process.stdout.write(JSON.stringify(resolution, null, 2) + "\n");
+  return 0;
+}
+
+async function cmdModelCheck(strict) {
+  const mod = await loadResolverModule();
+  if (!mod) {
+    process.stderr.write(
+      "harness model check: core build not found. Run `npm run build`.\n",
+    );
+    return 1;
+  }
+  const config = await loadProjectModelsConfig();
+  const cache = loadCodexModelsCache();
+  const report = mod.checkModels(config, cache);
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+  if (strict && report.hits.length > 0) return 1;
+  return 0;
+}
+
 async function cmdMigrate(fromDir) {
   const corePath = resolveCorePath();
   if (corePath === null) {
@@ -323,6 +427,15 @@ async function main() {
       if (action === "list") return await cmdRulesList();
       if (action === "test") return await cmdRulesTest(args.join(" "));
       process.stderr.write("usage: harness rules list | test <cmd>\n");
+      return 2;
+    }
+    case "model": {
+      const [action, ...args] = rest;
+      if (action === "resolve") return await cmdModelResolve(args[0]);
+      if (action === "check") return await cmdModelCheck(args.includes("--strict"));
+      process.stderr.write(
+        "usage: harness model resolve <agent> | check [--strict]\n",
+      );
       return 2;
     }
     case "migrate": {
