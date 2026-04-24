@@ -27,7 +27,8 @@ type HookType =
   | "worktree-remove"
   | "worktree-create"
   | "user-prompt-submit"
-  | "post-tool-use-failure";
+  | "post-tool-use-failure"
+  | "config-change";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -302,6 +303,34 @@ export async function route(
       }
       return ptufHR;
     }
+    case "config-change": {
+      // ConfigChange: config 変更時の observability hook (Phase η P1-P2)。
+      // 公式仕様 (https://code.claude.com/docs/en/hooks) の
+      // `hookSpecificOutput.additionalContext` で source / file_path /
+      // hints を inject。opt-in block (blockOnSources) で `decision: "block"`
+      // を返し config 変更を拒否可能 (reason 付き)。
+      //
+      // matcher: user_settings / project_settings / local_settings /
+      // policy_settings / skills (5 enum)。unknown source は "unknown" に畳む。
+      const { handleConfigChange } = await import("./hooks/config-change.js");
+      const raw = input as Record<string, unknown>;
+      const ccRes = await handleConfigChange({
+        hook_event_name: String(raw["hook_event_name"] ?? "ConfigChange"),
+        source: extractString(raw, "source"),
+        file_path: extractString(raw, "file_path"),
+        session_id: extractString(raw, "session_id"),
+        cwd: extractString(raw, "cwd"),
+        transcript_path: extractString(raw, "transcript_path"),
+      });
+      const ccHR: HookResult = { decision: ccRes.decision };
+      if (ccRes.reason !== undefined) {
+        ccHR.reason = ccRes.reason;
+      }
+      if (ccRes.additionalContext !== undefined) {
+        ccHR.additionalContext = ccRes.additionalContext;
+      }
+      return ccHR;
+    }
     case "session-start":
     case "session-end": {
       return { decision: "approve" };
@@ -359,7 +388,8 @@ async function main(): Promise<void> {
       hookType === "worktree-remove" ||
       hookType === "worktree-create" ||
       hookType === "user-prompt-submit" ||
-      hookType === "post-tool-use-failure"
+      hookType === "post-tool-use-failure" ||
+      hookType === "config-change"
     ) {
       const parsed = parseSessionInput(raw);
       result = await route(hookType, parsed);
@@ -403,21 +433,28 @@ async function main(): Promise<void> {
     }
   } else if (
     hookType === "user-prompt-submit" ||
-    hookType === "post-tool-use-failure"
+    hookType === "post-tool-use-failure" ||
+    hookType === "config-change"
   ) {
-    // UserPromptSubmit / PostToolUseFailure: 公式仕様
+    // UserPromptSubmit / PostToolUseFailure / ConfigChange: 公式仕様
     // (https://code.claude.com/docs/en/hooks) の
     // `hookSpecificOutput.additionalContext` / `sessionTitle` に lift して
-    // stdout に JSON を書く。decision=block 時は top-level reason / exit 2
-    // でも block 可能だが、両 handler は通常 approve + additionalContext のみ。
+    // stdout に JSON を書く。decision=block 時は top-level の decision/reason
+    // も load する (ConfigChange では opt-in block、UserPromptSubmit では
+    // prompt 拒否)。
     //
     // hookEventName mapping (公式 event 名 vs harness dispatch 名):
     //   - user-prompt-submit → "UserPromptSubmit"
     //   - post-tool-use-failure → "PostToolUseFailure"
-    const hookEventName =
-      hookType === "user-prompt-submit"
-        ? "UserPromptSubmit"
-        : "PostToolUseFailure";
+    //   - config-change → "ConfigChange"
+    // content-integrity invariant (see __tests__/content-integrity.test.ts):
+    // `hookEventName` 識別子から 100 chars 以内に各公式 event 名リテラルが
+    // 並ぶこと。inline lookup table で 3 branch (将来 4+ も) を表現する。
+    const hookEventName = ({
+      "user-prompt-submit": "UserPromptSubmit",
+      "post-tool-use-failure": "PostToolUseFailure",
+      "config-change": "ConfigChange",
+    } as Record<string, string>)[hookType] ?? "UserPromptSubmit";
     const out: Record<string, unknown> = {};
     if (result.decision === "block") {
       out["decision"] = "block";
