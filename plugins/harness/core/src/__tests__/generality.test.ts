@@ -352,7 +352,7 @@ interface ExemptionDeclaration {
   reason: string;
 }
 
-// Validation regex (Codex B hybrid design): semantic-slug issue keys を許容、
+// Validation regex (hybrid design for semantic-slug issue keys): semantic-slug issue keys を許容、
 // expiry は semver / ISO date / quarter の 3 書式を許容。
 // Issue key: uppercase PREFIX, then hyphen, then alphanumeric / underscore / hyphen body.
 // Slug forms (e.g. HARNESS-generality-self) are allowed for self-reference cases.
@@ -396,14 +396,6 @@ function parseExemptionBody(
         "'",
     );
   }
-  // `all` は構造的欠陥なので禁止 (Codex [C-2] 継承)
-  if (ALL_KEYWORD_RE.test(body)) {
-    throw new Error(
-      "generality-exemption `all` is prohibited. " +
-        "Declare explicit pattern IDs (e.g. `B-1,B-2a,B-3c`). Found: " +
-        body,
-    );
-  }
   // Unified exemption grammar migration: legacy 形式 (em-dash / multi-comma / file-level の pipe 無し) を reject
   if (!body.includes("|")) {
     // file-level では pipe + 4 fields が必須
@@ -434,8 +426,20 @@ function parseExemptionBody(
     );
   }
 
-  // pattern-ids 抽出 (必須)
+  // pattern-ids field (parts[0]) の単独 validation。
+  // `all` keyword / CSV shape の両方を pattern-ids field に限定することで、
+  // reason 内の natural-language な `'all'` 言及や `legacy reason` 文字列を false-positive にしない。
   const idsPart = parts[0];
+
+  // `all` は構造的欠陥なので禁止 — pattern-ids field のみ scope (reason field は free text)。
+  if (ALL_KEYWORD_RE.test(idsPart)) {
+    throw new Error(
+      "generality-exemption `all` is prohibited in the pattern-ids field. " +
+        "Declare explicit pattern IDs (e.g. `B-1,B-2a,B-3c`). Found: " +
+        JSON.stringify(idsPart),
+    );
+  }
+
   const ids = Array.from(idsPart.matchAll(PATTERN_ID_EXTRACT_RE)).map(
     (m) => m[0],
   );
@@ -447,23 +451,23 @@ function parseExemptionBody(
     );
   }
 
+  // idsPart は short form / 4-field form のいずれでも B-\d+[a-z]? の exact CSV である必要がある。
+  // Legacy fragments like `B-1, legacy reason` or `,B-1 | ...` or `foo B-1 | ...` は
+  // この anchor 付き regex で parse-time reject される。
+  if (!PATTERN_ID_CSV_RE.test(idsPart)) {
+    throw new Error(
+      "generality-exemption pattern-ids field must be an exact CSV of pattern IDs " +
+        "(e.g. `B-1,B-2a`). Trailing/interleaved non-ID text is not allowed; " +
+        "use the explicit 4-field pipe form for metadata. Found: " +
+        JSON.stringify(idsPart),
+    );
+  }
+
   // Line-level short form (pattern-ids only; metadata inherited from file-head declaration).
-  // Syntactic strictness: `idsPart` must be an exact CSV of `B-\d+[a-z]?` identifiers with
-  // no trailing/interleaved non-ID text. Legacy fragments like `B-1, legacy reason` are
-  // rejected at parse-time so they cannot bypass the 4-field requirement via the short-form
-  // escape hatch. Semantic file-head inheritance check is performed by the caller
-  // (`hasLineExemption`) when `fileContent` is supplied — this parser only rejects malformed
-  // short forms, while the semantic void case (short form without a file-head declaration)
-  // is handled one layer up. (CodeRabbit review on PR #17, 2026-04-24.)
+  // Semantic file-head inheritance check is performed by the caller (`hasLineExemption`) when
+  // `fileContent` is supplied — this parser only rejects malformed short forms, while the
+  // semantic void case (short form without a file-head declaration) is handled one layer up.
   if (kind === "line" && parts.length === 1) {
-    if (!PATTERN_ID_CSV_RE.test(idsPart)) {
-      throw new Error(
-        "generality-exemption short form must be an exact CSV of pattern IDs " +
-          "(e.g. `B-1,B-2a`). Trailing/non-ID text is not allowed in short form; " +
-          "use the full 4-field pipe form instead. Found: " +
-          JSON.stringify(idsPart),
-      );
-    }
     return {
       patternIds: new Set(ids),
       issueKey: "",
@@ -906,7 +910,7 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     });
 
     // ------------------------------------------------------------
-    // Regression: short-form parser strictness (CodeRabbit issue #4)
+    // Regression: short-form parser strictness
     // ------------------------------------------------------------
     // Short form (pattern-ids only) must:
     //   (1) Accept ONLY an exact CSV of B-\d+[a-z]? pattern IDs.
@@ -948,13 +952,13 @@ describe("exemption grammar (unified, pipe-separated)", () => {
     });
 
     // ------------------------------------------------------------
-    // Codex adversarial review follow-up (2026-04-24, Codex B second-opinion).
+    // Unicode / look-alike attack-surface invariants for pattern-id parsing.
     //
-    // Codex adversarial review flagged 4 attack vectors as CRITICAL / MINOR.
-    // Empirical verification showed 3 are ALREADY rejected by the current
-    // implementation (false positives). The assertions below lock in those
-    // invariants so future refactoring cannot accidentally regress them,
-    // and document the verified-safe status in-tree.
+    // The parser must treat pattern IDs as strict ASCII `B-\d+[a-z]?` tokens.
+    // The assertions below lock in that invariant against common bypass
+    // vectors (homoglyph letters, zero-width spaces, leading/trailing commas
+    // in CSV, and fullwidth pipe look-alikes) so future refactoring cannot
+    // accidentally regress them.
     // ------------------------------------------------------------
     it("invariant: Cyrillic look-alike `В-` (U+0412) is rejected — ASCII-only pattern IDs", () => {
       const line = `const x = "foo"; // generality-exemption: В-1`;
@@ -1022,6 +1026,56 @@ describe("exemption grammar (unified, pipe-separated)", () => {
 
     it("returns null when no exemption present", () => {
       expect(parseExemption("plain content without exemption")).toBeNull();
+    });
+  });
+
+  describe("pattern-ids field scoping (idsPart CSV strictness + all-keyword scope)", () => {
+    // Both checks must operate on parts[0] (pattern-ids field) only, NOT on the full body.
+    // Previous behavior scanned the entire body for the `all` keyword, which false-positively
+    // rejected valid declarations whose reason field mentioned `all` as a word. It also skipped
+    // CSV-shape validation for full 4-field declarations, letting malformed idsPart like
+    // ",B-1 | ..." or "foo B-1 | ..." slip past the parser.
+    it("rejects full-form idsPart with leading comma ',B-1 | HARNESS-42 | v0.5.0 | reason'", () => {
+      const md = `<!-- generality-exemption: ,B-1 | HARNESS-42 | v0.5.0 | leading comma -->`;
+      expect(() => parseExemption(md)).toThrow(/exact CSV|pattern ID/i);
+    });
+
+    it("rejects full-form idsPart with non-ID prefix 'foo B-1 | HARNESS-42 | v0.5.0 | reason'", () => {
+      const md = `<!-- generality-exemption: foo B-1 | HARNESS-42 | v0.5.0 | non-ID prefix -->`;
+      expect(() => parseExemption(md)).toThrow(/exact CSV|pattern ID/i);
+    });
+
+    it("rejects full-form idsPart with trailing suffix 'B-1 legacy | HARNESS-42 | v0.5.0 | reason'", () => {
+      const md = `<!-- generality-exemption: B-1 legacy | HARNESS-42 | v0.5.0 | trailing suffix -->`;
+      expect(() => parseExemption(md)).toThrow(/exact CSV|pattern ID/i);
+    });
+
+    it("accepts full-form idsPart as exact CSV 'B-1,B-2a | HARNESS-42 | v0.5.0 | reason'", () => {
+      const md = `<!-- generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | exact csv -->`;
+      const parsed = parseExemption(md);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.patternIds.has("B-1")).toBe(true);
+      expect(parsed!.patternIds.has("B-2a")).toBe(true);
+    });
+
+    it("reason field containing standalone 'all' does NOT trigger all-keyword rejection", () => {
+      // Previously ALL_KEYWORD_RE.test(body) inspected the whole body, so a reason like
+      // "rationale for 'all' exemptions" would throw. After scoping to parts[0], reason is free text.
+      const md = `<!-- generality-exemption: B-1 | HARNESS-42 | v0.5.0 | rationale for 'all' exemptions -->`;
+      const parsed = parseExemption(md);
+      expect(parsed).not.toBeNull();
+      expect(parsed!.reason).toMatch(/all/);
+      expect(parsed!.patternIds.has("B-1")).toBe(true);
+    });
+
+    it("idsPart equal to 'all' is still rejected (scoped check preserved)", () => {
+      const md = `<!-- generality-exemption: all | HARNESS-42 | v0.5.0 | scoped all -->`;
+      expect(() => parseExemption(md)).toThrow(/all/i);
+    });
+
+    it("idsPart containing 'all' plus real pattern-id is rejected (pattern-ids field hygiene)", () => {
+      const md = `<!-- generality-exemption: all,B-1 | HARNESS-42 | v0.5.0 | mixed rejected -->`;
+      expect(() => parseExemption(md)).toThrow(/all|exact CSV|pattern ID/i);
     });
   });
 });

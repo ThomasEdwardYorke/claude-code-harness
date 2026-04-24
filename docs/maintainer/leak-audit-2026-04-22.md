@@ -45,7 +45,8 @@ Blocklist with 5 series:
 Exemption mechanism (Phase ε unified grammar — see [CONTRIBUTING §3.1](../../CONTRIBUTING.md#31-unified-exemption-grammar)):
 - File-level (MD): `<!-- generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason> -->`
 - File-level (TS): `/* generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason> */`
-- Line-level: `// generality-exemption: B-1 | HARNESS-42 | v0.5.0 | fixture` (short form `// generality-exemption: B-1` 可)
+- Line-level (full): `// generality-exemption: B-1 | HARNESS-42 | v0.5.0 | fixture`
+- Line-level (short): `// generality-exemption: B-1` — allowed **only when** the same file already carries a valid full 4-field file-head declaration. A standalone short form (no matching file-head) is rejected at parse-time and fails CI; use the full 4-field pipe form whenever a file does not yet have a head declaration.
 
 Scope:
 - BLOCKLIST_TARGETS: `plugins/harness/agents/*.md`, `commands/*.md`, `core/src/hooks/*.ts`
