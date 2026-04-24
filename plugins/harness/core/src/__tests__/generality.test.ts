@@ -356,8 +356,14 @@ const BLOCK_PATTERNS: BlockPattern[] = [
       "参照: `plugins/harness/core/src/models/resolver.ts` (HARNESS_DEFAULT_MODEL) / " +
       "`docs/maintainer/` の model registry 運用メモ。",
     appliesToTests: false,
-    // Schema default declares the slug on purpose; it is the source of truth.
-    skipFiles: /^plugins\/harness\/schemas\//,
+    // Exempt the resolver source (declarative HARNESS_DEFAULT_MODEL) and
+    // the schema directory (example slugs in field descriptions). These
+    // are the model-registry source of truth by construction; enforcing
+    // the rule there is a tautology. Using `skipFiles` avoids an inline
+    // `generality-exemption: B-10 | …` comment in the resolver source,
+    // which would itself carry the `B-10` tracker ID the rule otherwise
+    // forbids.
+    skipFiles: /^plugins\/harness\/(?:schemas\/|core\/src\/models\/resolver\.ts$)/,
   },
 ];
 

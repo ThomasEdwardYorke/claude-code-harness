@@ -1,4 +1,3 @@
-/* generality-exemption: B-10 | HARNESS-model-registry | 2099-12-31 | resolver is the declarative source of truth for HARNESS_DEFAULT_MODEL and therefore must reference literal slugs */
 /**
  * core/src/models/resolver.ts
  *
@@ -163,11 +162,18 @@ export function resolveModel(
     codexCfg?.reasoningEffort,
   ]);
 
-  // When the only agent-side override is `reasoningEffort` (no `model`),
-  // promote the source to `agent-override` so `harness model resolve`
-  // output reflects that the caller explicitly customised this agent.
+  // When the only agent-side override is a *valid* `reasoningEffort`,
+  // promote `source` to `agent-override` so `harness model resolve`
+  // reflects the per-agent customisation. Unknown / malformed effort
+  // values fall back to the chain default, so they must not inflate
+  // the source either.
+  const hasValidAgentEffort =
+    agentCfg?.reasoningEffort !== undefined &&
+    VALID_REASONING_EFFORTS.includes(
+      agentCfg.reasoningEffort as ReasoningEffort,
+    );
   const source: ResolutionSource =
-    modelSource !== "agent-override" && agentCfg?.reasoningEffort
+    modelSource !== "agent-override" && hasValidAgentEffort
       ? "agent-override"
       : modelSource;
 
@@ -240,12 +246,6 @@ function collectReferences(config: ModelsConfig | undefined): SlugReference[] {
     const { concrete } = resolveAlias(config, codexDefault);
     out.push({ slug: concrete, location: "codex.default" });
   }
-  const aliases = config?.codex?.aliases;
-  if (aliases) {
-    for (const target of Object.values(aliases)) {
-      if (target) out.push({ slug: target, location: "codex.aliases" });
-    }
-  }
   const agents = config?.agents;
   if (agents) {
     for (const [agentName, agentCfg] of Object.entries(agents)) {
@@ -259,6 +259,14 @@ function collectReferences(config: ModelsConfig | undefined): SlugReference[] {
       }
     }
   }
+  // `codex.aliases` is intentionally NOT iterated here. An alias that is
+  // not referenced by `codex.default` or any `agents[*].model` is an
+  // unused tier declaration — surfacing its target as a "referenced
+  // model" would make `harness model check` flag slugs that the
+  // resolver will never actually hand out. When an alias IS used, the
+  // alias target flows into `out` via `resolveAlias()` on the
+  // `codex.default` / agent-model path above, so it is still tracked
+  // without double-counting orphan entries.
   if (out.length === 0) {
     out.push({ slug: HARNESS_DEFAULT_MODEL, location: "harness-default" });
   }

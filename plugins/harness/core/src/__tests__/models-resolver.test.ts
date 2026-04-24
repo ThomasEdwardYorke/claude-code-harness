@@ -284,7 +284,13 @@ describe("models/resolver — checkModels", () => {
     expect(report.hits).toEqual([]);
   });
 
-  it("collects referenced models from codex.default + aliases + agents (dedup)", () => {
+  it("collects referenced models from codex.default + agents, dedup'd, aliases not orphan-emitted", () => {
+    // Unused aliases (targets that neither codex.default nor any agent
+    // actually resolves to) are NOT surfaced as referenced models — the
+    // resolver would never hand them out, so `model check` should not
+    // flag them as deprecated. When an alias IS used (e.g.
+    // `default: "strong"` + `aliases.strong = "gpt-5.5"`), the concrete
+    // slug flows in via the default/agent path.
     const config: ModelsConfig = {
       codex: {
         default: "gpt-5.5",
@@ -296,9 +302,26 @@ describe("models/resolver — checkModels", () => {
       },
     };
     const report = checkModels(config, cache);
+    // `fast → gpt-5.4-mini` is an unused alias — it should NOT appear
+    // because nothing references it. `strong → gpt-5.5` is also unused
+    // (codex.default points at the literal `gpt-5.5`), so its target is
+    // not double-counted either.
     expect(report.referencedModels.sort()).toEqual(
-      ["gpt-5.3-codex", "gpt-5.4-mini", "gpt-5.5"].sort(),
+      ["gpt-5.3-codex", "gpt-5.5"].sort(),
     );
+  });
+
+  it("alias USED by codex.default surfaces the concrete slug as referenced (still tracked)", () => {
+    const config: ModelsConfig = {
+      codex: {
+        default: "strong",
+        aliases: { strong: "gpt-5.5", fast: "gpt-5.4-mini" },
+      },
+    };
+    const report = checkModels(config, cache);
+    // `strong` is used by codex.default; its resolved slug (gpt-5.5) is
+    // tracked. `fast` is orphan and not emitted.
+    expect(report.referencedModels.sort()).toEqual(["gpt-5.5"].sort());
   });
 
   it("locates hit back to the agent config when agent overrides an old model", () => {
