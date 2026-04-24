@@ -1,7 +1,7 @@
-<!-- generality-exemption: all, PR template references leak patterns it guards against -->
 <!--
   Thank you for contributing to cc-triad-relay!
   Please fill in all sections below. PR without this template will be held for review.
+  (This template is outside generality.test.ts scan scope; no exemption comment needed.)
 -->
 
 ## 変更概要 / Summary

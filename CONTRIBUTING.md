@@ -123,13 +123,51 @@ Never present a stack-specific example as the plugin-wide default.
 - [ ] **Example values check**: Every example follows Section 2.
 - [ ] **Test coverage — generality**: `plugins/harness/core/src/__tests__/generality.test.ts` is updated when a new leak pattern is introduced.
 - [ ] **Test coverage — behavior**: Integrity or behavior tests are added when the change affects runtime behavior.
-- [ ] **Exemption check**: No `generality-exemption` comment is added to shipped spec unless a maintainer has approved it, linked it to a tracking issue, and assigned an expiry release.
+- [ ] **Exemption check**: Any `generality-exemption` comment in shipped spec follows [§3.1 Unified Exemption Grammar](#31-unified-exemption-grammar) AND is maintainer-approved with a linked tracking issue + expiry release.
 
 > **Official basis**
 >
 > Anthropic skills docs note that skill content acts as standing instructions once invoked. Accidental project-local text in shipped specs persists across sessions and silently changes behavior for all users.
 >
 > Source: <https://code.claude.com/docs/en/skills>
+
+### 3.1 Unified Exemption Grammar
+
+Shipped spec may include a `generality-exemption` comment only when approved per [PR Review Flow §5](#pr-review-flow) (linked issue + expiry release). The comment **must** follow the pipe-separated, 4-field grammar enforced by `plugins/harness/core/src/__tests__/generality.test.ts`.
+
+**Format**: `generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>`
+
+| Field | Required | Format | Examples |
+| --- | --- | --- | --- |
+| pattern-ids | yes | `B-\d+[a-z]?` CSV. `all` is rejected. | `B-1`, `B-1,B-2a,B-3c` |
+| issue-key | yes | `[A-Z][A-Z0-9_]*-[A-Za-z0-9_-]+`. Semantic slugs allowed (e.g. self-reference). | `HARNESS-42`, `HARNESS-generality-self`, `PARTS-12` |
+| expiry | yes | semver `vX.Y.Z` \| ISO date `YYYY-MM-DD` \| quarter `YYYY-Qn`. | `v0.5.0`, `2026-12-31`, `2026-Q2` |
+| reason | yes | Free text, 1 line. | `detector self-reference unavoidable until v1.0 redesign` |
+
+**Placement**:
+
+```md
+<!-- generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | rationale -->
+```
+
+```ts
+/* generality-exemption: B-1,B-2a | HARNESS-42 | v0.5.0 | rationale */
+const branch = "feature/example-feature"; // generality-exemption: B-1 | HARNESS-42 | v0.5.0 | test fixture
+```
+
+**Line-level short form** (may omit metadata when the file head already declares it): `// generality-exemption: B-1` or `// generality-exemption: B-1,B-2a`.
+
+**Legacy forms rejected** (unified exemption grammar):
+
+- em dash (`—`) + comma separators
+- bare `generality-ok` keyword at line level (now unified to `generality-exemption`)
+- `all` as a pattern-id
+
+> **Design basis**
+>
+> Anthropic plugin/skill docs do not specify exemption grammar. The grammar is modelled after ESLint `// eslint-disable-next-line <rule> -- <reason>` and RuboCop `# rubocop:disable Cop/Name` with stricter issue-key + expiry requirements to enforce the release-gate in [PR Review Flow §5](#pr-review-flow).
+>
+> Source: <https://code.claude.com/docs/en/plugins>
 
 ---
 
