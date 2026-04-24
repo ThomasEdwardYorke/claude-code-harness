@@ -90,6 +90,12 @@ export const DEFAULT_CONFIG = {
         maxErrorLength: 1024,
         correctiveHints: true,
     },
+    configChange: {
+        enabled: true,
+        maxFilePathLength: 256,
+        detectSensitivePaths: true,
+        blockOnSources: [],
+    },
     // `models` is intentionally absent from DEFAULT_CONFIG. The compile-time
     // fallback lives in `src/models/resolver.ts` as `HARNESS_DEFAULT_MODEL`
     // so that an unconfigured project surfaces as `source: "harness-default"`
@@ -161,6 +167,10 @@ function mergeConfig(partial) {
         postToolUseFailure: {
             ...DEFAULT_CONFIG.postToolUseFailure,
             ...(partial.postToolUseFailure ?? {}),
+        },
+        configChange: {
+            ...DEFAULT_CONFIG.configChange,
+            ...(partial.configChange ?? {}),
         },
         ...(() => {
             const merged = mergeModelsConfig(partial.models);

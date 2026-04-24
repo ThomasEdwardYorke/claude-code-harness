@@ -224,6 +224,52 @@ export interface PostToolUseFailureConfig {
     correctiveHints: boolean;
 }
 /**
+ * ConfigChange hook configuration.
+ *
+ * Official spec (https://code.claude.com/docs/en/hooks): fires when a
+ * configuration file changes during a session (external editor / process
+ * modifies `settings.json` / `settings.local.json` / skills files). The
+ * matcher filters by source — `user_settings` / `project_settings` /
+ * `local_settings` / `policy_settings` / `skills`.
+ *
+ * Observability-first hook with opt-in blocking: default behaviour is
+ * `decision: "approve"` with a diagnostic context. Users set
+ * `blockOnSources: ["policy_settings"]` (etc.) to enforce immutability
+ * for specific sources, without writing a bespoke hook.
+ *
+ * When `enabled` is false or the config is malformed, the handler
+ * silently returns `decision: "approve"` with no `additionalContext`
+ * (fail-open, matching the rest of the harness hook stack).
+ */
+export interface ConfigChangeConfig {
+    /** Global on/off switch. When false the handler returns `approve` with no `additionalContext`. */
+    enabled: boolean;
+    /**
+     * Max file_path display length before truncation. Excess is cut with an
+     * inline marker containing the per-request nonce so spoofing is hard.
+     * Range: 32-4096 chars, default 256.
+     */
+    maxFilePathLength: number;
+    /**
+     * When true (default), emit `hint: potential secret file` for
+     * `.env` / `.env.<suffix>` / `secrets.<ext>` / `credentials.<ext>` /
+     * `*.pem` / `*.key` / `*.p12` / `*.pfx`. Hint is observational only —
+     * the handler never blocks based on sensitive-path detection.
+     */
+    detectSensitivePaths: boolean;
+    /**
+     * Matcher sources that cause this hook to return `decision: "block"`
+     * and reject the configuration change. Only valid enum values are
+     * honoured (`user_settings` / `project_settings` / `local_settings` /
+     * `policy_settings` / `skills`); unknown entries are silently dropped
+     * so a malformed config cannot turn the hook into a blunt
+     * reject-everything instrument.
+     *
+     * Default `[]` (observability only — never blocks).
+     */
+    blockOnSources: string[];
+}
+/**
  * UserPromptSubmit hook configuration.
  *
  * Designed as the harness "Global plugin → Local project rules bridge":
@@ -337,6 +383,7 @@ export interface HarnessConfig {
     release: ReleaseConfig;
     userPromptSubmit: UserPromptSubmitConfig;
     postToolUseFailure: PostToolUseFailureConfig;
+    configChange: ConfigChangeConfig;
     /**
      * Optional model registry. When absent, harness resolves to
      * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).

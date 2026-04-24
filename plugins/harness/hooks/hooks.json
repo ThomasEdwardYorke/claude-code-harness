@@ -218,6 +218,17 @@
           }
         ]
       }
+    ],
+    "ConfigChange": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatcher.mjs\" config-change",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
