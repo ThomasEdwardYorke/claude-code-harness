@@ -769,7 +769,10 @@ function describeFileBlocklistTests(
 
       describe(`[${pattern.id}] ${pattern.category}`, () => {
         for (const { file } of allFiles) {
-          const rel = relative(REPO_ROOT, file);
+          // Normalise path separators so the skipFiles regex + describe
+          // title stay consistent across Unix and Windows
+          // (`plugins\harness\...` vs `plugins/harness/...`).
+          const rel = relative(REPO_ROOT, file).replace(/\\/g, "/");
           it(`${rel} に ${pattern.id} が含まれない`, () => {
             if (pattern.skipFiles && pattern.skipFiles.test(rel)) {
               return;
