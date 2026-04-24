@@ -330,9 +330,9 @@ const BLOCK_PATTERNS: BlockPattern[] = [
     appliesToTests: false,
   },
 
-  // 系列10 (shipped spec 日本語混入) は本 Phase では policy-based 運用 (CONTRIBUTING §1.2 + 段階移行 plan)。
+  // 系列10 (shipped spec 日本語混入) は現時点では policy-based 運用 (CONTRIBUTING §1.2 + 段階移行 plan)。
   // 実装は `docs/maintainer/english-migration.md` で roadmap 化 → 次セッション以降で CI 強制化予定。
-  // (旧 "B-10 (日本語混入)" 割当は Phase ε で中止、現在の B-10 は model-hardcode に再割当済。)
+  // (旧 "B-10 (日本語混入)" 割当は中止、現在の B-10 は model-hardcode に再割当済。)
 
   // ─────────────── 系列11: GPT model slug hardcode (v0.4.0 model registry) ───────────────
   // Harness-dispatched Codex invocations must resolve the model slug through the
