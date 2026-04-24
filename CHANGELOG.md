@@ -5,6 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **codex-sync truncate mitigation (v0.4.0 final / backlog 1c)** — lands the long-standing "codex-sync agent response gets middle-truncated every few sessions" pain (cumulative 6 occurrences between 2026-04-21 and 2026-04-24). Claude Code's runtime clips subagent final responses at `TASK_MAX_OUTPUT_LENGTH` (default 32000, documented max 160000); the full payload is auto-saved to disk but the visible response loses its middle. `codex-companion.mjs` itself does not truncate — it writes Codex's raw `finalMessage` to stdout — so the mitigation belongs at the agent spec + operator-facing layer.
+  - `plugins/harness/core/src/config.ts`: new `CodexSyncConfig` interface (`recommendedTaskMaxOutputLength` / `warnTaskMaxOutputLengthBelow` / `checkTaskMaxOutputLength`). `CodexConfig.sync` is non-optional (merge fills defaults) so downstream consumers never need an existence check. `mergeConfig()` adds a one-level-deeper nested merge so `{ codex: { sync: { checkTaskMaxOutputLength: false } } }` preserves sibling thresholds.
+  - `plugins/harness/schemas/harness.config.schema.json`: `codex.sync` object with strict `additionalProperties: false`. Threshold bounds advertise Claude Code's documented range (32000 min / 160000 max for `recommendedTaskMaxOutputLength`).
+  - `plugins/harness/agents/codex-sync.md`: new "Handling Mid-Response Truncation" section documenting the root cause (TASK_MAX_OUTPUT_LENGTH), the caller-side recovery path (`SendMessage` resume — Claude Code picks up exactly where it stopped), the disk-saved full output as a fallback, and the prevention (`export TASK_MAX_OUTPUT_LENGTH=160000`).
+  - `plugins/harness/bin/harness`: `harness doctor` now reports the effective `TASK_MAX_OUTPUT_LENGTH` env var (4 branches: unset / set + OK / set + WARN below threshold / set + unparseable) so operators spot a stale default before the next mid-truncation. Respects `codex.sync.checkTaskMaxOutputLength: false` for CI images.
+  - Tests: +4 `config.test.ts` assertions (defaults / partial merge / custom thresholds / `codex.enabled`-only preserving sync defaults) and +6 `content-integrity.test.ts` invariants (agent-spec mentions of `TASK_MAX_OUTPUT_LENGTH` / `160000` / `SendMessage` / disk-saved output, schema strictness, schema threshold bounds, doctor check wiring). Full suite: 2384/2384 pass (was 2374).
+
 ## [0.4.0-rc.1] - 2026-04-24
 
 > **⚠️ Breaking change**: unified pipe-separated 4-field exemption grammar — legacy em-dash + comma separators, bare `generality-ok` keyword at line level, bare `all` pattern-id, and fewer-than-4-field file-level declarations are rejected at parse-time and fail CI. Downstream consumers shipping their own `generality-exemption` comments must migrate to `<pattern-ids> | <issue-key> | <expiry> | <reason>` before upgrading. See `### Breaking` below for the full migration path.

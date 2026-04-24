@@ -2951,3 +2951,160 @@ describe("harness model registry (v0.4.0 resolver)", () => {
     ).toBeUndefined();
   });
 });
+
+describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", () => {
+  // Background: Claude Code runtime's `TASK_MAX_OUTPUT_LENGTH` env var
+  // defaults to 32000 and caps at 160000 (official env-vars docs).
+  // Subagent outputs exceeding the effective limit are middle-truncated;
+  // the full payload is auto-saved to disk but the truncated copy visible
+  // to the caller loses its middle. codex-sync regularly returned multi-KB
+  // Codex output and hit the truncation cap multiple times in late-stage
+  // development, forcing manual `SendMessage` recovery every time.
+  //
+  // The invariants below lock in the v0.4.0 final mitigation surface:
+  //   1. codex-sync.md must document the root cause (TASK_MAX_OUTPUT_LENGTH)
+  //      and the official recovery path (SendMessage resume).
+  //   2. harness.config.schema.json must expose a strict `codex.sync`
+  //      section so projects can tune thresholds and opt out of the
+  //      doctor check without monkey-patching the plugin.
+  //   3. bin/harness doctor must report the effective TASK_MAX_OUTPUT_LENGTH
+  //      so users notice the stale 32000 default before it next truncates.
+  const binSource = readFileSync(
+    resolve(PLUGIN_ROOT, "bin", "harness"),
+    "utf-8",
+  );
+  const schemaSource = readFileSync(
+    resolve(PLUGIN_ROOT, "schemas", "harness.config.schema.json"),
+    "utf-8",
+  );
+
+  it("codex-sync agent documents TASK_MAX_OUTPUT_LENGTH as the truncation root cause", () => {
+    const source = readAgent("codex-sync");
+    expect(source).toContain("TASK_MAX_OUTPUT_LENGTH");
+    // Claude Code official max value — keep the number in docs so users
+    // can copy-paste an effective env var.
+    expect(source).toContain("160000");
+  });
+
+  it("codex-sync agent documents SendMessage resume as the recovery path", () => {
+    const source = readAgent("codex-sync");
+    expect(source).toContain("SendMessage");
+    // The word "resume" (or its JP counterpart "再開") must appear near
+    // SendMessage so the caller reads the two as a pair.
+    expect(source).toMatch(/SendMessage[\s\S]{0,400}?(resume|再開|continuation|pick\s+up)/i);
+  });
+
+  it("codex-sync agent references the disk-saved full output as fallback recovery", () => {
+    const source = readAgent("codex-sync");
+    // Claude Code saves the full (pre-truncation) payload to disk; the
+    // agent spec must surface this so callers know a truncated subagent
+    // response is recoverable without re-running Codex. Two conditions
+    // must hold — a single-keyword `/disk|saved/` check would pass even
+    // if the recovery contract (output-file path + fallback language)
+    // was later weakened, so split the assertion.
+    //
+    // (1) A concrete `output-file: …/tasks/<alphanumeric-id>.output`
+    //     path pattern so operators can copy-paste an example when
+    //     they hit a truncated response.
+    expect(source).toMatch(/output-file:\s*.*tasks\/[A-Za-z0-9_-]+\.output/);
+    // (2) Explicit fallback / read / recover context so the path is
+    //     unambiguously identified as the recovery route rather than a
+    //     log pointer unrelated to truncation.
+    expect(source).toMatch(/\bfallback\b|\bread\b|recover(?:ed|y)?\b/i);
+  });
+
+  it("harness.config.schema.json exposes a strict codex.sync section", () => {
+    const schema = JSON.parse(schemaSource);
+    const codexProps = schema.properties?.codex?.properties;
+    expect(codexProps?.sync).toBeDefined();
+    expect(codexProps.sync.type).toBe("object");
+    expect(codexProps.sync.additionalProperties).toBe(false);
+    // Exactly the three tunables the doctor / agent spec rely on.
+    // Lock the **complete keyset**, not just presence. `additionalProperties:
+    // false` guards the user-facing schema, but without an exact-keyset
+    // assertion here a future contributor could silently add a 4th
+    // shipped property that the doctor / agent spec do not consume —
+    // CI would still pass because each `.toBeDefined()` check is
+    // permissive. Comparing sorted keys to a hardcoded array catches
+    // that drift at PR time.
+    expect(codexProps.sync.properties?.recommendedTaskMaxOutputLength).toBeDefined();
+    expect(codexProps.sync.properties?.warnTaskMaxOutputLengthBelow).toBeDefined();
+    expect(codexProps.sync.properties?.checkTaskMaxOutputLength).toBeDefined();
+    const syncKeys = Object.keys(codexProps.sync.properties).sort();
+    expect(syncKeys).toEqual([
+      "checkTaskMaxOutputLength",
+      "recommendedTaskMaxOutputLength",
+      "warnTaskMaxOutputLengthBelow",
+    ]);
+  });
+
+  it("harness.config.schema.json codex.sync thresholds declare Claude Code range bounds", () => {
+    const schema = JSON.parse(schemaSource);
+    const syncProps =
+      schema.properties.codex.properties.sync.properties;
+    // `recommendedTaskMaxOutputLength` is the value harness recommends users
+    // set `TASK_MAX_OUTPUT_LENGTH` to. Claude Code caps the env var at
+    // 160000; forbidding higher values avoids advertising a value the
+    // runtime will silently clamp.
+    expect(syncProps.recommendedTaskMaxOutputLength.maximum).toBe(160000);
+    expect(syncProps.recommendedTaskMaxOutputLength.minimum).toBe(32000);
+    expect(syncProps.recommendedTaskMaxOutputLength.default).toBe(160000);
+    // `warnTaskMaxOutputLengthBelow` must stay <= the recommended value
+    // and >= 1. Default 32000 matches Claude Code's runtime default so
+    // the doctor warns whenever the env var is unset. Pin `minimum: 1`
+    // so an accidental schema relax to `minimum: 0` (which would let a
+    // user set a threshold nothing can ever fall below) is caught.
+    expect(syncProps.warnTaskMaxOutputLengthBelow.maximum).toBe(160000);
+    expect(syncProps.warnTaskMaxOutputLengthBelow.minimum).toBe(1);
+    expect(syncProps.warnTaskMaxOutputLengthBelow.default).toBe(32000);
+  });
+
+  it("bin/harness doctor reports TASK_MAX_OUTPUT_LENGTH status", () => {
+    expect(binSource).toContain("TASK_MAX_OUTPUT_LENGTH");
+    // The doctor must branch on the configured threshold, not hardcode
+    // 32000, so projects can tighten / loosen without shipping a patch.
+    expect(binSource).toMatch(/warnTaskMaxOutputLengthBelow|codex\.sync/);
+  });
+
+  it("bin/harness doctor clamps recommended up to warn threshold (self-contradictory config)", () => {
+    // Cross-field invariant: `recommendedTaskMaxOutputLength` must not
+    // be below `warnTaskMaxOutputLengthBelow` — otherwise the doctor
+    // would advise the operator to set an env var value that it then
+    // immediately re-flags as "below threshold". Without this clamp,
+    // `{ recommended: 40000, warnBelow: 80000 }` produces a confused
+    // state (stderr warn + misleading report). The diff uses a direct
+    // `codexSyncRecommended < codexSyncWarnBelow` gate and tags the
+    // fix as "self-contradictory" so future refactors preserve it.
+    expect(binSource).toMatch(/codexSyncRecommended\s*<\s*codexSyncWarnBelow/);
+    expect(binSource).toContain("self-contradictory");
+  });
+
+  it("bin/harness doctor flags TASK_MAX_OUTPUT_LENGTH values above Claude Code's documented max", () => {
+    // Claude Code silently clamps the env var to 160000 when the user
+    // sets it higher. Reporting "OK" for a 999999999-style value would
+    // mislead the operator (the effective limit does not match). Emit
+    // an explicit WARN that mentions the runtime clamp behaviour.
+    expect(binSource).toMatch(/taskMax\s*>\s*160000/);
+    // Phrase the WARN around "Claude Code silently clamps higher
+    // values" so the adversarial-review observation ("documented max"
+    // could not be cited from public env-vars docs; the 160000 cap
+    // is runtime-observed) stays locked — if a future contributor
+    // re-tightens the wording to "documented max" the regression
+    // is caught here.
+    expect(binSource).toMatch(/silently clamps|runtime-observed cap/);
+  });
+
+  it("codex-sync agent documents SendMessage resume requires a name-spawned agent", () => {
+    // Adversarial reviewer pointed out that `SendMessage({ to: "<name>" })`
+    // requires the parent to have spawned the agent with an explicit
+    // `name` field (Claude Code's `SendMessage` docs: "Refer to
+    // teammates by name, never by UUID"). Keep this precondition in
+    // the agent spec so the caller knows to set a stable `name` when
+    // they care about truncate recovery, and so the fallback path
+    // (reading the saved task output file) is documented for
+    // parents that launched this agent anonymously.
+    const source = readAgent("codex-sync");
+    expect(source).toMatch(/name.*?spawn|spawn.*?name/i);
+    expect(source).toMatch(/Refer to teammates by name|teammate|by name, never by UUID/i);
+  });
+});

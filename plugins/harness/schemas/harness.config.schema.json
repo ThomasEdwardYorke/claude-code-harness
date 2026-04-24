@@ -49,7 +49,33 @@
       "additionalProperties": false,
       "properties": {
         "enabled": { "type": "boolean", "default": false },
-        "pluginRoot": { "type": "string" }
+        "pluginRoot": { "type": "string" },
+        "sync": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Tunables for the codex-sync agent. Mitigates mid-response truncation when Claude Code's TASK_MAX_OUTPUT_LENGTH (default 32000, documented max 160000) is exceeded by a Codex review output. `harness doctor` uses these thresholds to warn the user when the effective env var is below the runtime default without hardcoding the limit. See agents/codex-sync.md for the user-facing remediation path.",
+          "properties": {
+            "recommendedTaskMaxOutputLength": {
+              "type": "integer",
+              "minimum": 32000,
+              "maximum": 160000,
+              "default": 160000,
+              "description": "Value `harness doctor` prints as the recommended setting for TASK_MAX_OUTPUT_LENGTH. Claude Code silently clamps higher values so advertising one would be misleading."
+            },
+            "warnTaskMaxOutputLengthBelow": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 160000,
+              "default": 32000,
+              "description": "Threshold below which `harness doctor` flags the current effective TASK_MAX_OUTPUT_LENGTH as WARN. Default mirrors Claude Code's runtime default so the doctor warns whenever the env var is unset."
+            },
+            "checkTaskMaxOutputLength": {
+              "type": "boolean",
+              "default": true,
+              "description": "When true, `harness doctor` reports the effective TASK_MAX_OUTPUT_LENGTH alongside codex plugin detection. Set false to silence the report entirely."
+            }
+          }
+        }
       }
     },
     "workMode": {

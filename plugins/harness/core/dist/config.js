@@ -24,7 +24,14 @@ export const DEFAULT_CONFIG = {
         "GOOGLE_API_KEY",
     ],
     protectedFileSuffixes: [".env"],
-    codex: { enabled: false },
+    codex: {
+        enabled: false,
+        sync: {
+            recommendedTaskMaxOutputLength: 160000,
+            warnTaskMaxOutputLengthBelow: 32000,
+            checkTaskMaxOutputLength: true,
+        },
+    },
     workMode: { bypassRmRf: false, bypassGitPush: false },
     tampering: { severity: "approve" },
     work: {
@@ -144,7 +151,17 @@ function mergeConfig(partial) {
     return {
         ...DEFAULT_CONFIG,
         ...partial,
-        codex: { ...DEFAULT_CONFIG.codex, ...(partial.codex ?? {}) },
+        codex: {
+            ...DEFAULT_CONFIG.codex,
+            ...(partial.codex ?? {}),
+            // codex.sync is nested — merge one level deeper so a partial
+            // `{ sync: { checkTaskMaxOutputLength: false } }` override keeps
+            // the other two threshold defaults instead of wiping them.
+            sync: {
+                ...DEFAULT_CONFIG.codex.sync,
+                ...(partial.codex?.sync ?? {}),
+            },
+        },
         workMode: { ...DEFAULT_CONFIG.workMode, ...(partial.workMode ?? {}) },
         tampering: { ...DEFAULT_CONFIG.tampering, ...(partial.tampering ?? {}) },
         work: mergedWork,

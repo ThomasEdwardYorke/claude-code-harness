@@ -473,4 +473,69 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.models?.agents?.["codex-sync"]?.reasoningEffort).toBe("low");
     });
   });
+
+  describe("codex.sync section (codex-sync truncate mitigation)", () => {
+    // Context: Claude Code runtime defaults `TASK_MAX_OUTPUT_LENGTH` to
+    // 32000 characters; subagent outputs exceeding that are middle-truncated
+    // (full output auto-saved to disk, but the subagent response visible
+    // to the caller loses the middle). codex-sync routinely returns
+    // multi-KB Codex review output and hit this truncation cap multiple
+    // times in development. Harness ships guidance to bump the env var
+    // to Claude Code's documented maximum (160000) and lets `harness
+    // doctor` warn when the effective limit is below the runtime default.
+    it("DEFAULT_CONFIG.codex.sync exposes TASK_MAX_OUTPUT_LENGTH thresholds", () => {
+      expect(DEFAULT_CONFIG.codex.sync).toBeDefined();
+      expect(DEFAULT_CONFIG.codex.sync?.recommendedTaskMaxOutputLength).toBe(160000);
+      expect(DEFAULT_CONFIG.codex.sync?.warnTaskMaxOutputLengthBelow).toBe(32000);
+      expect(DEFAULT_CONFIG.codex.sync?.checkTaskMaxOutputLength).toBe(true);
+    });
+
+    it("merges partial codex.sync override without dropping sibling defaults", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          codex: {
+            enabled: true,
+            sync: { checkTaskMaxOutputLength: false },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.codex.enabled).toBe(true);
+      expect(cfg.codex.sync?.checkTaskMaxOutputLength).toBe(false);
+      // Sibling defaults still come from DEFAULT_CONFIG.codex.sync.
+      expect(cfg.codex.sync?.recommendedTaskMaxOutputLength).toBe(160000);
+      expect(cfg.codex.sync?.warnTaskMaxOutputLengthBelow).toBe(32000);
+    });
+
+    it("accepts project-level override of threshold values", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          codex: {
+            sync: {
+              recommendedTaskMaxOutputLength: 80000,
+              warnTaskMaxOutputLengthBelow: 40000,
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.codex.sync?.recommendedTaskMaxOutputLength).toBe(80000);
+      expect(cfg.codex.sync?.warnTaskMaxOutputLengthBelow).toBe(40000);
+      // checkTaskMaxOutputLength still defaults to true when not overridden.
+      expect(cfg.codex.sync?.checkTaskMaxOutputLength).toBe(true);
+    });
+
+    it("preserves codex.sync defaults when user supplies only codex.enabled", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({ codex: { enabled: true } }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.codex.enabled).toBe(true);
+      expect(cfg.codex.sync?.recommendedTaskMaxOutputLength).toBe(160000);
+      expect(cfg.codex.sync?.checkTaskMaxOutputLength).toBe(true);
+    });
+  });
 });
