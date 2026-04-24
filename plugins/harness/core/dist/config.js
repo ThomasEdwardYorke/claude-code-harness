@@ -1,3 +1,4 @@
+/* generality-exemption: B-10 | HARNESS-model-registry | 2099-12-31 | DEFAULT_CONFIG carries the literal HARNESS_DEFAULT_MODEL slug by design */
 /**
  * core/src/config.ts
  * Harness configuration loader.

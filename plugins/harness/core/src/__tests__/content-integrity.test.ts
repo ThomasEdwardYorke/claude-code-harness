@@ -2657,3 +2657,72 @@ describe("slash command allowed-tools / subagent tools — 公式 tool catalog w
     expect(isMcpDynamicTool("mcp__noaction__")).toBe(false); // trailing 区切りだけは reject
   });
 });
+
+describe("harness model registry (v0.4.0 resolver)", () => {
+  const binSource = readFileSync(
+    resolve(PLUGIN_ROOT, "bin", "harness"),
+    "utf-8",
+  );
+  const schemaSource = readFileSync(
+    resolve(PLUGIN_ROOT, "schemas", "harness.config.schema.json"),
+    "utf-8",
+  );
+
+  it("bin/harness ships `model resolve` and `model check` subcommands", () => {
+    expect(binSource).toContain("harness model resolve <agent>");
+    expect(binSource).toContain("harness model check [--strict]");
+    expect(binSource).toContain("cmdModelResolve");
+    expect(binSource).toContain("cmdModelCheck");
+    // Dispatcher switch must route `model` to the new handler.
+    expect(binSource).toMatch(/case "model"/);
+  });
+
+  it("harness.config.schema.json declares a strict models section", () => {
+    const schema = JSON.parse(schemaSource);
+    expect(schema.properties?.models).toBeDefined();
+    expect(schema.properties.models.additionalProperties).toBe(false);
+    // codex sub-section must enumerate default / reasoningEffort / aliases.
+    expect(schema.properties.models.properties?.codex?.properties?.default)
+      .toBeDefined();
+    expect(
+      schema.properties.models.properties?.codex?.properties?.reasoningEffort
+        ?.enum,
+    ).toEqual(["minimal", "low", "medium", "high", "xhigh"]);
+    expect(schema.properties.models.properties?.codex?.properties?.aliases)
+      .toBeDefined();
+    // Per-agent override surface must exist under `agents`.
+    expect(schema.properties.models.properties?.agents).toBeDefined();
+  });
+
+  it("codex-sync agent documents `harness model resolve codex-sync` fallback", () => {
+    const source = readAgent("codex-sync");
+    expect(source).toContain("harness model resolve codex-sync");
+    // Caller-precedence wording is load-bearing — keep the invariant in
+    // docs even as the command shape evolves.
+    expect(source).toMatch(/caller[\s\S]{0,80}harness model resolve[\s\S]{0,80}Codex config default/i);
+  });
+
+  it("coderabbit-mimic agent injects `--model` via harness resolve", () => {
+    const source = readAgent("coderabbit-mimic");
+    expect(source).toContain("harness model resolve coderabbit-mimic");
+    expect(source).toContain("MODEL_FLAG");
+  });
+
+  it("codex-team command resolves once and propagates $MODEL_FLAG", () => {
+    const source = readCommand("codex-team");
+    expect(source).toContain("harness model resolve codex-team");
+    // Each sub-mode body must carry $MODEL_FLAG through to the codex call.
+    expect(source).toMatch(/codex review\s+\$MODEL_FLAG/);
+    expect(source).toMatch(/codex exec\s+\$MODEL_FLAG/);
+  });
+
+  it("schema default for codex.default tracks the shipped HARNESS_DEFAULT_MODEL slug (gpt-5.5)", () => {
+    const schema = JSON.parse(schemaSource);
+    expect(schema.properties.models.properties.codex.properties.default.default)
+      .toBe("gpt-5.5");
+    expect(
+      schema.properties.models.properties.codex.properties.reasoningEffort
+        .default,
+    ).toBe("medium");
+  });
+});
