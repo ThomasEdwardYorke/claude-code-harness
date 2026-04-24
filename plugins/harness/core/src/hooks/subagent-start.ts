@@ -28,17 +28,19 @@
  *
  * - **Fail-open**: config read failure / `enabled: false` → silent skip +
  *   `approve` with no additionalContext.
- * - **Sanitize**: agent_type / agent_id / note values: CR / LF / CRLF →
- *   literal `\n`, all other C0 (0x00-0x1F) + DEL (0x7F) → `\x{HH}`.
- *   Newlines are preserved in note text for multi-line guidance (LF only).
+ * - **Sanitize**: agent_type / agent_id / note values share the same
+ *   policy — CR / LF / CRLF → literal `\n`, TAB (`\x09`) + other C0
+ *   (0x00-0x1F) + DEL (0x7F) → `\x{HH}`. Notes are rendered single-line
+ *   (see `sanitizeNote()` for rationale: config values are attack
+ *   surface, preserving raw LF would allow multi-line pseudo-section
+ *   injection inside `additionalContext`).
  * - **Truncate**: agent_type > `maxIdentifierLength` → truncate + inline
- *   marker; note content > `maxTotalBytes` → truncate + marker.
+ *   marker (char-based); total bytes > `maxTotalBytes` → byte-safe
+ *   UTF-8 truncation (multi-byte characters kept whole).
  * - **agentTypeNotes injection**: config provides per-type guidance (e.g.
  *   `{ "harness:worker": "Remember: TDD first..." }`). When agent_type
  *   matches a key, the note value is sanitized and injected into
  *   additionalContext.
- * - **Harness reload hint**: agent_type containing "harness:" suggests
- *   harness plugin interaction — optional hint for tracing (no block).
  * - **Nonce-fenced diagnostic**: 12 hex (48-bit entropy) fence markers +
  *   inline nonce to defend against fake-marker injection attacks (attacker
  *   config cannot pre-compute matching nonce).
@@ -48,15 +50,18 @@
  * An attacker-controlled config (or malicious config admin) can craft
  * agent_type / agent_id / agentTypeNotes values to (a) spoof fence
  * boundaries, (b) inject ANSI escape sequences that corrupt terminal
- * rendering, or (c) confuse parsing via embedded newlines. Mitigations:
- *   1. Replace newline / CR with the literal `\n` token in agent_type /
- *      agent_id, but preserve LF newlines in note content for
- *      multi-line guidance.
- *   2. Replace all other C0 (0x00-0x1F, excluding LF 0x0A in notes) + DEL
- *      → `\x{HH}` form.
+ * rendering, (c) confuse parsing via embedded newlines, or (d) smuggle
+ * multi-line content that looks like new section boundaries. Mitigations:
+ *   1. Replace CR / LF / CRLF with the literal `\n` token in **both**
+ *      identifiers and note content (single-line output — config values
+ *      are attack surface, multi-line preservation would enable pseudo-
+ *      section injection).
+ *   2. Replace all other C0 (0x00-0x1F, TAB included) + DEL (0x7F) with
+ *      the `\x{HH}` form — ANSI escape + visual alignment attacks denied.
  *   3. Per-request 48-bit nonce in the header so attacker cannot
  *      pre-compute a spoofed literal (collision probability 2^-48).
- *   4. Truncation markers for overlong identifiers and total content.
+ *   4. Truncation markers for overlong identifiers; byte-safe UTF-8
+ *      truncation for total `additionalContext` length.
  *
  * ## Related docs
  * - `docs/maintainer/research-anthropic-official-2026-04-22.md` (hook spec)
