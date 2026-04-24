@@ -235,6 +235,45 @@ describe("ConfigChange — file_path sanitization", () => {
     expect(result.additionalContext).not.toMatch(/file_path truncated/);
     expect(result.additionalContext).toContain(normalPath);
   });
+
+  // CodeRabbit chill nitpick 2026-04-24: declared max を pre-sanitize で honour する
+  it("maxFilePathLength >= marker 長 → slice + marker が pre-sanitize で max に収まる", async () => {
+    // markerSuffix 長 ~56 chars (nonce 含む)、max=256 → available=~200、
+    // slice=available + marker=56 → pre-sanitize total = 256。
+    // sanitizePathLine で marker 内 `\n` → `\\n` escape により +1 char 膨張、
+    // 最終 displayPath ≤ 257 chars + `file=` prefix (5 chars) = ≤ 262 chars。
+    const root = makeTempProject({ configChange: { maxFilePathLength: 256 } });
+    const longPath = "/a".repeat(200); // 400 chars
+    const result = await call(root, { file_path: longPath });
+    const fileLine = (result.additionalContext ?? "")
+      .split("\n")
+      .find((l) => l.startsWith("file="));
+    expect(fileLine).toBeDefined();
+    // max 256 + prefix `file=` (5) + sanitize buffer (≤5、marker 内 control char escape 分)
+    expect(fileLine!.length).toBeLessThanOrEqual(266);
+    expect(result.additionalContext).toMatch(
+      /file_path truncated at 256 chars/,
+    );
+  });
+
+  it("maxFilePathLength < marker 長 → marker 省略で厳密に max に収める (boundary)", async () => {
+    // markerSuffix ~55 chars; max=40 < 55 → available=-15、marker 省略
+    const root = makeTempProject({ configChange: { maxFilePathLength: 40 } });
+    const longPath = "/a".repeat(100); // 200 chars
+    const result = await call(root, { file_path: longPath });
+    // marker がないことを確認 (`file_path truncated at 40 chars` が出ない)
+    expect(result.additionalContext).not.toMatch(
+      /file_path truncated at 40 chars/,
+    );
+    // `file=` 行の path 部分が 40 chars 以内に厳密に収まる
+    const fileLine = (result.additionalContext ?? "")
+      .split("\n")
+      .find((l) => l.startsWith("file="));
+    expect(fileLine).toBeDefined();
+    // path portion (strip "file=" prefix) は max を超えない
+    const pathPortion = fileLine!.slice("file=".length);
+    expect(pathPortion.length).toBeLessThanOrEqual(40);
+  });
 });
 
 // ============================================================

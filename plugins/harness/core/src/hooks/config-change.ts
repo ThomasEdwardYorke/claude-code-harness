@@ -309,17 +309,28 @@ export async function handleConfigChange(
   // sanitizePathLine — intentional: the marker still reads sensibly in
   // the rendered output.
   //
-  // Codex review 2026-04-24 MAJOR #5 fix: we deduct the marker length from
-  // the slice point so the total path-segment length stays at
-  // `maxFilePathLength` (was previously exceeding by the marker length).
-  // A 16-char floor guards against pathologically small `maxFilePathLength`
-  // producing a negative slice length.
+  // Codex review 2026-04-24 MAJOR #5 + CodeRabbit chill nitpick:
+  // The final string MUST NOT exceed `maxFilePathLength`. We compute
+  // `available = maxFilePathLength - markerSuffix.length`, and:
+  //   - `available > 0` → slice to `available` chars + append marker
+  //     (total = maxFilePathLength exactly).
+  //   - `available <= 0` → maxFilePathLength is smaller than the marker
+  //     itself, so we omit the marker and slice strictly to
+  //     maxFilePathLength. Observability signal is sacrificed here, but
+  //     declared max is honoured (the configured value was the user's
+  //     choice). Practically reached only when maxFilePathLength ≈ 32-56,
+  //     deep inside the configurable range floor.
   const markerSuffix = `\n[harness ${nonce}] file_path truncated at ${cfg.maxFilePathLength} chars`;
-  const sliceLength = Math.max(16, cfg.maxFilePathLength - markerSuffix.length);
-  const truncatedPathRaw =
-    rawPath.length > cfg.maxFilePathLength
-      ? rawPath.slice(0, sliceLength) + markerSuffix
-      : rawPath;
+  const available = cfg.maxFilePathLength - markerSuffix.length;
+  let truncatedPathRaw: string;
+  if (rawPath.length > cfg.maxFilePathLength) {
+    truncatedPathRaw =
+      available > 0
+        ? rawPath.slice(0, available) + markerSuffix
+        : rawPath.slice(0, cfg.maxFilePathLength);
+  } else {
+    truncatedPathRaw = rawPath;
+  }
   const displayPath =
     rawPath.length > 0 ? sanitizePathLine(truncatedPathRaw) : "<unknown>";
 
