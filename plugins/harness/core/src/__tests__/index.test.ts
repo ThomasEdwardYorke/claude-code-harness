@@ -18,7 +18,12 @@ import { tmpdir } from "node:os";
 import { spawnSync, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-import { route, errorToResult } from "../index.js";
+import {
+  route,
+  errorToResult,
+  sanitizeSafeFallbackReason,
+  MAX_SAFE_FALLBACK_REASON_CHARS,
+} from "../index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -727,4 +732,363 @@ describe("main() entrypoint fail-open (e2e child-process contract)", () => {
       expect(buildSkipReason).toContain("not built");
     });
   }
+});
+
+describe("main() safe-fallback diagnostic surfacing", () => {
+  // Guards against silent-exception serialization in the hookSpecificOutput
+  // branch (user-prompt-submit / post-tool-use-failure / config-change /
+  // subagent-start). Before the fix, a thrown handler + errorToResult() →
+  // `decision: "approve"` produced an empty `{}` on stdout because the
+  // reason string was only serialized under the `decision === "block"` path.
+  // Critical diagnostics were hidden from the developer.
+  //
+  // Post-fix invariants (per Anthropic Claude Code hook spec,
+  // https://code.claude.com/docs/en/hooks):
+  //   1. exit code 0 (fail-open — the action must still proceed)
+  //   2. stderr receives the reason (debug log + transcript first-line notice)
+  //   3. stdout JSON carries `systemMessage` with the reason
+  //      (top-level universal field — shown to user + delivered to Claude
+  //       as context on the next conversation turn, per the spec)
+  //   4. stdout JSON is NOT literally `{}`
+  //
+  // These tests intentionally spawn the built `dist/index.js` via child
+  // process so the full readStdin → parse → route → serialize pipeline is
+  // exercised end-to-end.
+  const distPath = resolve(__dirname, "../../dist/index.js");
+  const distExists = existsSync(distPath);
+
+  // Malformed stdin forces `parseSessionInput()` → `JSON.parse()` to throw,
+  // which is caught by main()'s catch block and routed through errorToResult().
+  // This is the canonical way to exercise the fail-safe path from a child
+  // process without monkey-patching imports.
+  const MALFORMED_JSON = "{not valid json}";
+
+  const MODERN_HOOK_TYPES = [
+    "user-prompt-submit",
+    "post-tool-use-failure",
+    "config-change",
+    "subagent-start",
+  ] as const;
+
+  for (const hookType of MODERN_HOOK_TYPES) {
+    it.skipIf(!distExists)(
+      `${hookType}: core engine error surfaces via stderr + systemMessage (no silent {} drop)`,
+      () => {
+        const result = spawnSync(process.execPath, [distPath, hookType], {
+          input: MALFORMED_JSON,
+          encoding: "utf-8",
+          timeout: 5_000,
+        });
+
+        // 1. fail-open preserved — action proceeds
+        expect(result.status).toBe(0);
+
+        // 2. stderr carries the diagnostic (goes to debug log; non-zero exit
+        //    would put first line in transcript — exit 0 + stderr is the
+        //    Anthropic-recommended "keep stdout clean for JSON" pattern for
+        //    fail-open surfaces)
+        expect(result.stderr).toContain("Core engine error");
+
+        // 3. stdout JSON is a non-empty object with systemMessage populated
+        //    (NOT the pre-fix silent `{}`)
+        const stdoutTrim = result.stdout.trim();
+        expect(stdoutTrim).not.toBe("{}");
+        const parsed = JSON.parse(stdoutTrim) as Record<string, unknown>;
+        expect(typeof parsed["systemMessage"]).toBe("string");
+        expect(parsed["systemMessage"] as string).toContain(
+          "Core engine error",
+        );
+      },
+    );
+  }
+
+  it.skipIf(!distExists)(
+    "classic branch (pre-tool) regression: existing behaviour preserved — reason remains on stdout JSON",
+    () => {
+      // The classic output branch already includes reason via JSON.stringify(result).
+      // The new safe-fallback stderr write must be additive, not disruptive.
+      const result = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: MALFORMED_JSON,
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      expect(parsed["decision"]).toBe("approve");
+      expect(parsed["reason"]).toContain("Core engine error");
+      // Classic branch ALSO gets the new stderr surfacing for consistency.
+      expect(result.stderr).toContain("Core engine error");
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "safe-fallback reason sanitised: ANSI escape sequences + DEL + NUL stripped out of stderr / systemMessage",
+    () => {
+      // Claude Code hooks spec notes that `systemMessage` is delivered to
+      // Claude as context on the next conversation turn — so a hostile or
+      // accidentally noisy reason (ANSI colour codes, terminal-clear
+      // escapes, raw NUL bytes) must be neutralised before it is surfaced
+      // to the user OR to Claude. We stuff an embedded escape sequence +
+      // NUL + DEL into stdin; `parseSessionInput` throws a SyntaxError
+      // whose .message is echoed back into reason, but the sanitiser at
+      // the boundary strips the bytes.
+      //
+      // Construct stdin with a literal escape (\x1B = ESC, 0x07 = BEL,
+      // 0x00 = NUL, 0x7F = DEL). Node's JSON.parse will throw on the
+      // binary bytes; the resulting error message from V8 incorporates
+      // them into its diagnostic.
+      const hostile = "\x1B[31m\x07\x00\x7F{";
+      const result = spawnSync(
+        process.execPath,
+        [distPath, "user-prompt-submit"],
+        {
+          input: hostile,
+          encoding: "utf-8",
+          timeout: 5_000,
+        },
+      );
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      const systemMessage = parsed["systemMessage"] as string | undefined;
+      expect(systemMessage).toBeDefined();
+      // Neither stderr nor systemMessage may contain raw C0 / C1 / DEL
+      // bytes. ESC (0x1B) / BEL (0x07) / NUL (0x00) / DEL (0x7F) must be
+      // replaced with the safe placeholder `?`.
+      expect(systemMessage!).not.toMatch(/[\x00\x07\x1B\x7F]/);
+      expect(result.stderr).not.toMatch(/[\x00\x07\x1B\x7F]/);
+      // But human-readable whitespace (LF / TAB) is preserved if present,
+      // because stack traces need newlines to be readable. We assert that
+      // the sanitiser did not clobber every byte — the diagnostic prefix
+      // ("Core engine error") must remain.
+      expect(systemMessage!).toContain("Core engine error");
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "safe-fallback reason truncated when very long: systemMessage stays bounded to avoid context-window pressure",
+    () => {
+      // Unit-level guarantee: sanitizeSafeFallbackReason enforces the cap.
+      // We exercise the in-process helper directly because constructing
+      // a > 2000-char error message from malformed JSON is brittle across
+      // Node versions.
+      const huge = "x".repeat(MAX_SAFE_FALLBACK_REASON_CHARS + 500);
+      const sanitised = sanitizeSafeFallbackReason(huge);
+      expect(sanitised.length).toBeLessThanOrEqual(
+        MAX_SAFE_FALLBACK_REASON_CHARS + "…[truncated]".length,
+      );
+      expect(sanitised).toContain("…[truncated]");
+      // Short inputs must pass through unchanged (no false truncation).
+      const short = "small diagnostic";
+      expect(sanitizeSafeFallbackReason(short)).toBe(short);
+    },
+  );
+
+  it("sanitizeSafeFallbackReason preserves human-readable whitespace (TAB / LF / CR)", () => {
+    // Stack-trace style multi-line content must remain readable after
+    // sanitisation. TAB / LF / CR are non-hostile formatting chars.
+    const multiline = "line 1\n\tindented\r\nline 2";
+    expect(sanitizeSafeFallbackReason(multiline)).toBe(multiline);
+  });
+
+  it("sanitizeSafeFallbackReason strips C1 control bytes (0x80-0x9F)", () => {
+    // C1 controls are produced by 8-bit ANSI variants. Must be stripped
+    // even though they are above 0x7F.
+    const withC1 = "foo\x9Bbar\x9Fbaz";
+    const sanitised = sanitizeSafeFallbackReason(withC1);
+    expect(sanitised).toBe("foo?bar?baz");
+  });
+
+  it("sanitizeSafeFallbackReason truncates at Unicode code-point boundaries (no orphan surrogate)", () => {
+    // Construct an input where a supplementary-plane char (😀 = U+1F600,
+    // 2 UTF-16 code units) straddles the truncation cap. A naive
+    // `stripped.slice(0, MAX)` would leave a lone high surrogate (\uD83D)
+    // at the end — technically valid UTF-16 but invalid Unicode scalar
+    // and rendered as garbage.
+    //
+    // Padding of exactly (MAX - 1) `x` followed by an emoji places the
+    // emoji's high surrogate at index MAX - 1 and the low surrogate at
+    // index MAX. `slice(0, MAX)` would therefore include the high
+    // surrogate and drop the low one; the code-point-aware truncator
+    // must drop the emoji entirely (keeping only the padding).
+    const pad = "x".repeat(MAX_SAFE_FALLBACK_REASON_CHARS - 1);
+    const withEmojiAtBoundary = pad + "😀" + "trailing";
+    const sanitised = sanitizeSafeFallbackReason(withEmojiAtBoundary);
+
+    // Must round-trip through JSON without producing invalid escapes.
+    expect(() => JSON.parse(JSON.stringify(sanitised))).not.toThrow();
+    // Must NOT end with a lone high surrogate (U+D800-U+DBFF).
+    const lastChar = sanitised.slice(-"…[truncated]".length - 1).charCodeAt(0);
+    expect(lastChar < 0xd800 || lastChar > 0xdbff).toBe(true);
+    // The truncation marker must be present.
+    expect(sanitised.endsWith("…[truncated]")).toBe(true);
+  });
+
+  it("sanitizeSafeFallbackReason preserves multi-byte content below the cap", () => {
+    // Japanese / emoji input well under the cap must pass through
+    // unmodified (no false truncation, no surrogate corruption).
+    const mixed = "エラー: 😀 stack trace\n  at foo (a.ts:1:1)";
+    expect(sanitizeSafeFallbackReason(mixed)).toBe(mixed);
+  });
+
+  it.skipIf(!distExists)(
+    "worktree-create failure path: stderr emitted exactly once (no fail-safe double-write)",
+    () => {
+      // worktree-create has its own blocking-protocol failure branch
+      // that writes `result.reason` to stderr on exit 1. The fail-safe
+      // stderr write must skip this hook type so the diagnostic is
+      // emitted exactly once — not twice.
+      //
+      // We trigger the fail-safe + worktree-create combination by
+      // sending malformed JSON to the worktree-create entry point.
+      // `parseSessionInput` throws, main() catches, `errorToResult()`
+      // produces `{decision: "approve", reason: "Core engine error ..."}`
+      // with no `worktreePath` set → worktree-create's own branch writes
+      // reason to stderr + exits 1. If the fail-safe path ALSO writes,
+      // stderr has two copies of the same message.
+      const result = spawnSync(
+        process.execPath,
+        [distPath, "worktree-create"],
+        {
+          input: "{not valid json}",
+          encoding: "utf-8",
+          timeout: 5_000,
+        },
+      );
+      // Blocking-protocol failure → exit non-zero
+      expect(result.status).not.toBe(0);
+      // The reason should appear in stderr exactly once — count
+      // occurrences of the prefix "Core engine error" (every emission
+      // carries it) and verify the count is 1, not 2+.
+      const occurrences = result.stderr.split("Core engine error").length - 1;
+      expect(occurrences).toBe(1);
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "classic branch sanitisation: JSON.stringify(result).reason also scrubbed (not only stderr / systemMessage)",
+    () => {
+      // When the safe-fallback path fires, the sanitised reason is now
+      // propagated back into `result.reason` so the classic output branch
+      // (pre-tool / post-tool / permission / session / pre-compact / …)
+      // also emits the scrubbed text inside its stdout JSON. Otherwise a
+      // raw ANSI/NUL byte from an exception message could slip through
+      // `JSON.stringify(result)` (where JSON.stringify would escape it as
+      // `\uXXXX`, but a downstream display could still un-escape on render).
+      //
+      // We cannot easily inject control bytes via V8's JSON.parse error
+      // path on every Node release, so we assert the weaker invariant
+      // that the `reason` in stdout JSON equals the text on stderr —
+      // both must be the single sanitised surface, not two divergent
+      // strings.
+      const result = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: "{not valid json}",
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      const stdoutReason = parsed["reason"] as string;
+      const stderrTrim = result.stderr.trim();
+      expect(stdoutReason).toBe(stderrTrim);
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "handler-throws path (not JSON.parse) also routes through errorToResult + safe-fallback surfacing",
+    () => {
+      // Previously we only covered the stdin-JSON-parse exception path.
+      // This test exercises the case where the handler itself throws
+      // (e.g., a dynamic-import failure on a malformed hook). We trigger
+      // this by feeding a session-hook-shaped JSON that lacks fields the
+      // handler expects, then monkey-observes that the safe-fallback path
+      // is still invoked end-to-end.
+      //
+      // Reality check: the modern handlers are defensive (they accept
+      // unknown / missing fields gracefully), so a "pure" handler throw
+      // is hard to force from stdin alone without monkey-patching. We
+      // therefore use a different route: feed a hook type that ISN'T
+      // recognised as a "session-shaped" hook (so it falls through to
+      // the parseInput() branch) AND is on the modern list. Because
+      // parseInput() requires `tool_name`, passing a minimal object
+      // WITHOUT tool_name forces parseInput to throw — which is caught
+      // by main() and routed through errorToResult. This is semantically
+      // equivalent to a handler throw for our purposes: exception caught
+      // by the outer try/catch → safeFallbackUsed=true → surfaced to
+      // stderr + systemMessage.
+      //
+      // Note: we pick "pre-tool" here deliberately — for modern session
+      // hooks, parseSessionInput does NOT require tool_name, so we can't
+      // trigger the same failure mode. Classic-branch coverage is
+      // sufficient to assert the contract, and the previous malformed-JSON
+      // test already confirms the modern branch.
+      const result = spawnSync(process.execPath, [distPath, "pre-tool"], {
+        input: JSON.stringify({ no_tool_name_field: true }),
+        encoding: "utf-8",
+        timeout: 5_000,
+      });
+      expect(result.status).toBe(0);
+      // parseInput throws ("Invalid hook input: missing required field
+      // 'tool_name'"), which lands in errorToResult → safeFallback surface.
+      expect(result.stderr).toContain("Core engine error");
+      const parsed = JSON.parse(result.stdout.trim()) as Record<
+        string,
+        unknown
+      >;
+      // Classic branch: reason is on the top-level JSON.
+      expect(parsed["reason"]).toContain("Invalid hook input");
+    },
+  );
+
+  it.skipIf(!distExists)(
+    "modern hook happy path: no safe-fallback → no systemMessage injection (no regression on normal flows)",
+    () => {
+      // Normal invocation of subagent-start with valid input returns
+      // additionalContext via hookSpecificOutput. systemMessage must NOT
+      // be injected on the happy path — the lift is strictly safe-fallback
+      // gated to avoid polluting every subagent spawn with a bogus warning.
+      const tmpRootHappy = mkTmp("harness-happy-path");
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [distPath, "subagent-start"],
+          {
+            input: JSON.stringify({
+              hook_event_name: "SubagentStart",
+              cwd: tmpRootHappy,
+              agent_type: "harness:worker",
+              agent_id: "agent-happy",
+            }),
+            encoding: "utf-8",
+            timeout: 5_000,
+          },
+        );
+        expect(result.status).toBe(0);
+        // No stderr on happy path (no diagnostic to surface).
+        expect(result.stderr).toBe("");
+        const parsed = JSON.parse(result.stdout.trim()) as Record<
+          string,
+          unknown
+        >;
+        // Happy path must NOT carry systemMessage (that would leak a false
+        // warning to the user on every subagent spawn).
+        expect(parsed["systemMessage"]).toBeUndefined();
+        // Existing invariant: hookSpecificOutput with additionalContext.
+        expect(parsed["hookSpecificOutput"]).toBeDefined();
+        const hso = parsed["hookSpecificOutput"] as Record<string, unknown>;
+        expect(hso["hookEventName"]).toBe("SubagentStart");
+        expect(hso["additionalContext"]).toBeDefined();
+      } finally {
+        rmSync(tmpRootHappy, { recursive: true, force: true });
+      }
+    },
+  );
 });

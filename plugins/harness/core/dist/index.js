@@ -353,9 +353,81 @@ export function errorToResult(err) {
         reason: `Core engine error (safe fallback): ${message}`,
     };
 }
+/**
+ * Maximum Unicode code-point length of the safe-fallback reason body
+ * BEFORE appending a truncation suffix, when surfaced via stderr or
+ * lifted into `systemMessage`. The final emitted string may therefore be
+ * slightly longer than this constant — `sanitizeSafeFallbackReason()`
+ * appends `…[truncated]` (12 code units) when the body exceeds the cap.
+ *
+ * Chosen empirically: 2000 code points fits ~30 stack frames or a
+ * multi-line error message without crowding Claude's context window on
+ * the next conversation turn (systemMessage is "delivered to Claude as
+ * context on the next conversation turn" per
+ * https://code.claude.com/docs/en/hooks).
+ *
+ * @internal
+ */
+export const MAX_SAFE_FALLBACK_REASON_CHARS = 2000;
+/**
+ * Neutralises control characters and bounds the length of a safe-fallback
+ * reason before it is surfaced via stderr or lifted into `systemMessage`.
+ *
+ * Rationale:
+ *   - `systemMessage` is delivered to Claude as context on the next turn
+ *     (per the hooks spec), so its content must be treated as untrusted
+ *     text that could try to alter Claude's behaviour (prompt-injection
+ *     defence). Stripping C0/C1 control bytes neutralises ANSI escape
+ *     sequences, terminal-clear tricks, and NUL-byte logging attacks.
+ *   - Keep `\t` (0x09), `\n` (0x0A), `\r` (0x0D) so stack traces remain
+ *     readable — these are non-hostile formatting characters.
+ *   - Bound the BODY at MAX_SAFE_FALLBACK_REASON_CHARS Unicode code
+ *     points (the truncation suffix `…[truncated]` is appended AFTER
+ *     the cap, so the emitted string is at most 2012 code points — the
+ *     cap applies to the pre-suffix body, not the final output length).
+ *     A multi-megabyte stack trace can therefore not spam the debug log
+ *     or crowd out Claude's context window.
+ *   - Truncate at Unicode code-point boundaries (via `Array.from`) rather
+ *     than UTF-16 code-unit boundaries (`String.prototype.slice`) so that
+ *     a supplementary-plane character (e.g., emoji 😀 = surrogate pair)
+ *     straddling the cap is never split — otherwise we would emit a
+ *     lone high surrogate, which `JSON.stringify` would encode as a
+ *     `\uXXXX` escape but which renders as garbage in user-facing UIs.
+ *
+ * @internal
+ */
+export function sanitizeSafeFallbackReason(raw) {
+    // Replace every C0 control (0x00-0x1F) EXCEPT TAB / LF / CR, DEL (0x7F),
+    // and every C1 control (0x80-0x9F) with `?`. This catches ANSI escapes
+    // (which start with ESC = 0x1B) and assorted terminal-control bytes.
+    // eslint-disable-next-line no-control-regex
+    const stripped = raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "?");
+    // Array.from iterates by Unicode code point, so supplementary-plane
+    // characters occupy a single array slot instead of two surrogate halves.
+    // Cheap inline length probe — we only allocate the code-point array on
+    // the slow path where truncation is actually needed.
+    if (stripped.length <= MAX_SAFE_FALLBACK_REASON_CHARS) {
+        return stripped;
+    }
+    const codepoints = Array.from(stripped);
+    if (codepoints.length <= MAX_SAFE_FALLBACK_REASON_CHARS) {
+        // `length` (UTF-16 code units) > cap but `codepoints.length` ≤ cap
+        // means the excess was composed of surrogate pairs that collapsed
+        // into fewer code points. No truncation necessary.
+        return stripped;
+    }
+    return (codepoints.slice(0, MAX_SAFE_FALLBACK_REASON_CHARS).join("") +
+        "…[truncated]");
+}
 async function main() {
     const hookType = (process.argv[2] ?? "pre-tool");
     let result;
+    // Tracks whether main() landed on the `errorToResult()` fail-safe path.
+    // Used to surface the engine-level diagnostic (reason string) on stderr
+    // and — for the hookSpecificOutput serialization branch — lift it to
+    // `systemMessage` so the reason is not silently dropped by the stdout
+    // JSON emitter when `decision === "approve"`.
+    let safeFallbackUsed = false;
     try {
         const raw = await readStdin();
         if (hookType === "session-start" ||
@@ -384,6 +456,56 @@ async function main() {
     }
     catch (err) {
         result = errorToResult(err);
+        safeFallbackUsed = true;
+    }
+    // Fail-safe diagnostic surfacing: when main() reached the
+    // `errorToResult()` fallback, write the sanitised reason to stderr so
+    // the developer sees it even in the hookSpecificOutput branch where the
+    // stdout JSON would otherwise drop `reason` (only serialised on
+    // `decision === "block"`).
+    //
+    // Per the Claude Code hooks spec (https://code.claude.com/docs/en/hooks):
+    //   - exit 0 keeps fail-open (the action proceeds)
+    //   - stderr on exit 0 lands in the debug log
+    //   - a non-zero exit would spam the transcript with a `hook error` notice
+    //     on every transient failure, which is noisier than Anthropic's
+    //     recommended fail-open pattern ("write the error to stderr, keep
+    //     stdout clean for JSON, exit 0")
+    // We therefore retain exit 0 and rely on stderr + systemMessage to carry
+    // the diagnostic.
+    //
+    // `sanitizeSafeFallbackReason` strips terminal-control bytes and bounds
+    // the length — the reason text may contain stack-trace content that we
+    // cannot fully trust when it is surfaced to the user or delivered to
+    // Claude as context on the next turn.
+    //
+    // Explicit length check (not a truthy shortcut) so a handler returning
+    // `reason: ""` does not slip through silently — currently impossible
+    // because `errorToResult()` prefixes with `"Core engine error ..."`
+    // (length > 0 guaranteed), but the explicit guard also future-proofs
+    // against code that rebinds `result` to a different fail-safe shape.
+    const safeFallbackSurface = safeFallbackUsed &&
+        typeof result.reason === "string" &&
+        result.reason.length > 0
+        ? sanitizeSafeFallbackReason(result.reason)
+        : undefined;
+    if (safeFallbackSurface !== undefined) {
+        // `worktree-create` has its own blocking-protocol failure branch
+        // further down that writes `result.reason` to stderr on exit 1.
+        // Emitting here as well would duplicate the same diagnostic in the
+        // log. Skip the fail-safe stderr write for that hook and let the
+        // blocking branch own stderr — the propagation into `result.reason`
+        // below still ensures the blocking branch writes the scrubbed text.
+        if (hookType !== "worktree-create") {
+            process.stderr.write(safeFallbackSurface + "\n");
+        }
+        // Propagate the sanitised form back into `result.reason` so every
+        // downstream output path (the classic `JSON.stringify(result)`
+        // branch, the hookSpecificOutput `systemMessage` lift, and the
+        // worktree-create failure stderr write) emits the single scrubbed
+        // surface rather than a raw reason that could still carry ANSI
+        // escapes or other terminal-control bytes.
+        result.reason = safeFallbackSurface;
     }
     if (hookType === "permission" && result.systemMessage !== undefined) {
         process.stdout.write(result.systemMessage + "\n");
@@ -446,6 +568,31 @@ async function main() {
             out["decision"] = "block";
             if (result.reason)
                 out["reason"] = result.reason;
+        }
+        // Silent-exception safeguard: lift the sanitised safe-fallback reason
+        // to `systemMessage` so a handler exception surfaces as a
+        // user-visible warning + is delivered to Claude as context on the
+        // next turn. Without this, the stdout JSON below would be literal
+        // `{}` (silent approve with no diagnostic).
+        //
+        // `systemMessage` is a top-level universal field per the spec
+        // (https://code.claude.com/docs/en/hooks): "Warning message shown to
+        // the user"; hooks docs also state that "if the hook produced a JSON
+        // response with a `systemMessage` or `additionalContext` field, that
+        // content is delivered to Claude as context on the next conversation
+        // turn" — covering both audiences.
+        //
+        // We reuse the already-sanitised `safeFallbackSurface` so stderr and
+        // stdout-systemMessage carry identical, length-bounded text. If a
+        // handler explicitly sets `result.systemMessage` (future use), we
+        // preserve it; the safe-fallback reason takes precedence because it
+        // represents a core-engine-level failure that overrides any partial
+        // handler output.
+        if (safeFallbackSurface !== undefined) {
+            out["systemMessage"] = safeFallbackSurface;
+        }
+        else if (result.systemMessage !== undefined) {
+            out["systemMessage"] = result.systemMessage;
         }
         const hso = { hookEventName };
         let hsoHasPayload = false;
