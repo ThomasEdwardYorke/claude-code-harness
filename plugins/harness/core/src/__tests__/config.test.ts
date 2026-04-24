@@ -474,16 +474,15 @@ describe("loadConfig / loadConfigSafe", () => {
     });
   });
 
-  describe("codex.sync section (codex-sync truncate mitigation, v0.4.0 final)", () => {
+  describe("codex.sync section (codex-sync truncate mitigation)", () => {
     // Context: Claude Code runtime defaults `TASK_MAX_OUTPUT_LENGTH` to
     // 32000 characters; subagent outputs exceeding that are middle-truncated
     // (full output auto-saved to disk, but the subagent response visible
     // to the caller loses the middle). codex-sync routinely returns
-    // multi-KB Codex review output and hit this truncation 6 times in
-    // 2026-04 alone (backlog 1c). Harness ships guidance to bump the
-    // env var to Claude Code's documented maximum (160000) and lets
-    // `harness doctor` warn when the effective limit is below the
-    // runtime default.
+    // multi-KB Codex review output and hit this truncation cap multiple
+    // times in development. Harness ships guidance to bump the env var
+    // to Claude Code's documented maximum (160000) and lets `harness
+    // doctor` warn when the effective limit is below the runtime default.
     it("DEFAULT_CONFIG.codex.sync exposes TASK_MAX_OUTPUT_LENGTH thresholds", () => {
       expect(DEFAULT_CONFIG.codex.sync).toBeDefined();
       expect(DEFAULT_CONFIG.codex.sync?.recommendedTaskMaxOutputLength).toBe(160000);

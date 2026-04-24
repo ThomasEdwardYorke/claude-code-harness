@@ -2952,14 +2952,14 @@ describe("harness model registry (v0.4.0 resolver)", () => {
   });
 });
 
-describe("codex-sync truncate mitigation (v0.4.0 final, backlog 1c)", () => {
+describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", () => {
   // Background: Claude Code runtime's `TASK_MAX_OUTPUT_LENGTH` env var
   // defaults to 32000 and caps at 160000 (official env-vars docs).
   // Subagent outputs exceeding the effective limit are middle-truncated;
   // the full payload is auto-saved to disk but the truncated copy visible
   // to the caller loses its middle. codex-sync regularly returned multi-KB
-  // Codex output and hit truncation 6 times between 2026-04-21 and
-  // 2026-04-24, forcing manual `SendMessage` recovery every time.
+  // Codex output and hit the truncation cap multiple times in late-stage
+  // development, forcing manual `SendMessage` recovery every time.
   //
   // The invariants below lock in the v0.4.0 final mitigation surface:
   //   1. codex-sync.md must document the root cause (TASK_MAX_OUTPUT_LENGTH)
