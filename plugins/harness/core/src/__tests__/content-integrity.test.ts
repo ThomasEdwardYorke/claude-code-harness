@@ -2203,11 +2203,11 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 
 
 // ============================================================
-// session-handoff archive: design decision ask step (9b)
+// session-handoff archive: design decision ask step
 // archive subcommand に「恒久 design decision を `design-decisions.md` に
-// 追記するか」を operator に問う step を強制する。直近セッションで
-// 6 件の confirmed design decision を archive 直前まで忘れかけた事案を
-// 再発防止するための structural reminder。
+// 追記するか」を operator に問う step を強制する。recent session で複数の
+// confirmed design decision を archive 直前まで忘れかけた状況を再発防止
+// するための structural reminder。
 // 設計要点:
 //   - ask は archive subcommand のみで発火 (init / update では出さない)
 //   - non-blocking (operator は skip 可) だが、skip 時は理由を archive footer に
@@ -2215,7 +2215,7 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 //   - archive file が初期書出された後に走る (operator が session context を
 //     既に確認した状態で問う)
 // ============================================================
-describe("session-handoff skill — archive design-decision ask step (9b)", () => {
+describe("session-handoff skill — archive design-decision ask step", () => {
   const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
   const readSkill = (): string => readFileSync(skillPath, "utf-8");
   const archiveSection = (): string => {
