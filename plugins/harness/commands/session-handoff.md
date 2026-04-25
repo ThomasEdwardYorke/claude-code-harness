@@ -241,7 +241,7 @@ touch .docs/handoff/<project>-design-decisions.md
 2. 上記「archive ファイルの推奨構造」テンプレートに従って構造化:
    - **最小 (必須)**: Session summary / Design decisions / Open issues
    - **拡張 (任意)**: Commits / Review statistics / 対象 PR ref (PR-based workflow や review tool を持つプロジェクトでのみ追加、無ければ省略可)
-3. `current.md` を backup (例: `<project>-current.prev.md`) した後、今セッション
+3. `current.md` を backup (例: `<project>-current.prev.md`) した後、今セッションの
    成果を反映した最新状態で `current.md` を更新する (archive 内容の流し込みでは
    なく、current.md は「今の状態」の新しい snapshot に書き換える)
 4. **Design decision ask** (non-blocking, archive 限定、`init` / `update` では発火させない) — archive を書き出した後 (after the archive is written) に operator に問う: 「本セッションで確定した **permanent design decision (恒久方針)** で `design-decisions.md` に追記すべきものは?」YES → 各項目を append (append-only) し archive の `Design decisions` から相互参照 / NO・skip → archive 末尾の **Archive footer** に skip 理由を 1 行記録。skip 可 (non-blocking) だが skip 理由の記録は必須 (audit 用)
