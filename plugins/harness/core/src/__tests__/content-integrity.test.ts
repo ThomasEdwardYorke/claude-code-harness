@@ -3333,3 +3333,63 @@ describe("imageGeneration schema invariants (run-ai-images / ai-image-edit regis
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 / 3 / 5)
+// CR Major (320e760 review) で「handoff 分岐後の後続手順がまだ Plans.md 固定」と
+// 指摘されたため、各 Step に handoff サブセクションが存在することを契約として固定。
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 / Step 3 / Step 5)", () => {
+  const content = readCommand("harness-work");
+
+  it("Pre-flight が taskTrackerMode で task source を分岐確認する", () => {
+    // Pre-flight bash block 内で taskTrackerMode を読み、handoff branch を持つ
+    const preflight = /### Pre-flight[\s\S]*?(?=\n### |\n## )/.exec(content)?.[0] ?? "";
+    expect(preflight).toMatch(/taskTrackerMode/);
+    expect(preflight).toMatch(/handoffPaths\.backlog/);
+    expect(preflight).toMatch(/case[\s\S]{0,400}?handoff\)/);
+  });
+
+  it("Step 1 で handoff モード時の parseBacklog 経路が記述されている", () => {
+    const step1 = /### Step 1:[\s\S]*?(?=\n### Step 2)/.exec(content)?.[0] ?? "";
+    expect(step1).toMatch(/Plans-mode/);
+    expect(step1).toMatch(/Handoff-mode/);
+    expect(step1).toMatch(/parseBacklog\(/);
+    expect(step1).toMatch(/BacklogEntry/);
+    expect(step1).toMatch(/status\s*===?\s*"pending"|status:\s*pending/i);
+  });
+
+  it("Step 1 handoff サブセクションが Plans.md を読まない旨を明示", () => {
+    const step1 = /### Step 1:[\s\S]*?(?=\n### Step 2)/.exec(content)?.[0] ?? "";
+    // handoff モードで Plans.md を読まないことを spec 上で明示
+    expect(step1).toMatch(/Handoff-mode[\s\S]{0,800}?Plans\.md.*(読まない|不要|参照しない)|Plans\.md.{0,40}読まない/);
+  });
+
+  it("Step 3 で handoff モード時の current.md / backlog.md 更新が記述されている", () => {
+    const step3 = /### Step 3:[\s\S]*?(?=\n### Step 4)/.exec(content)?.[0] ?? "";
+    expect(step3).toMatch(/Plans-mode/);
+    expect(step3).toMatch(/Handoff-mode/);
+    expect(step3).toMatch(/current\.md/);
+    expect(step3).toMatch(/backlog\.md/);
+    expect(step3).toMatch(/in_progress/);
+  });
+
+  it("Step 3 が design-decisions.md の append-only invariant を破らない記述", () => {
+    const step3 = /### Step 3:[\s\S]*?(?=\n### Step 4)/.exec(content)?.[0] ?? "";
+    expect(step3).toMatch(/design-decisions\.md[\s\S]{0,200}?(append-only|append only|触らない)/);
+  });
+
+  it("Step 5 で handoff モード時の backlog entry done 化 + archive trigger が記述されている", () => {
+    const step5 = /### Step 5:[\s\S]*?(?=\n## |\n---)/.exec(content)?.[0] ?? "";
+    expect(step5).toMatch(/Plans-mode/);
+    expect(step5).toMatch(/Handoff-mode/);
+    expect(step5).toMatch(/backlog\.md[\s\S]{0,400}?done/);
+    expect(step5).toMatch(/session-handoff archive|archive\/session-/);
+  });
+
+  it("Step 5 handoff が current.md update / next session 即着手の記述を含む", () => {
+    const step5 = /### Step 5:[\s\S]*?(?=\n## |\n---)/.exec(content)?.[0] ?? "";
+    expect(step5).toMatch(/current\.md[\s\S]{0,300}?(update|最新化|Latest state)/);
+  });
+});
