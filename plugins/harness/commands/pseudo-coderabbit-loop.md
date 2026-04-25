@@ -2,7 +2,7 @@
 name: pseudo-coderabbit-loop
 description: "Codex による疑似 CodeRabbit レビューを内部ループで回し、本物 CodeRabbit へは絞り込んだ状態で push する統合スキル。CodeRabbit の rate limit (Pro: 5/h) を回避しつつレビュー品質を維持する。Use after implementing a feature, before requesting real CodeRabbit review, especially in parallel worktree workflows. Also used to resume a loop when CodeRabbit is rate-limited."
 allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
-argument-hint: "[pr-number|--local] [--profile=chill|assertive|strict] [--worktree=<path>]"
+argument-hint: "[pr-number|local|profile|worktree|max-codex-parallel]"
 ---
 
 # `/pseudo-coderabbit-loop` — Codex 疑似 CodeRabbit → 本物 CodeRabbit の反復ループ
@@ -43,6 +43,7 @@ argument-hint: "[pr-number|--local] [--profile=chill|assertive|strict] [--worktr
 - `pr-number`: 既存 PR 番号 (例: `8`)。`--local` なら未 push 状態を対象
 - `--profile=chill|assertive|strict`: Codex に適用する profile (未指定なら `.coderabbit.yaml` の `reviews.profile` を読む、fallback は `chill`)
 - `--worktree=<path>`: 対象の worktree 絶対パス (未指定なら `git rev-parse --show-toplevel` の結果)
+- `--max-codex-parallel=N` (default 1, integer >= 1): **本 skill 内では現状 no-op**。本 skill は Step 2 で `coderabbit-mimic` agent を 1 個だけ spawn するため、複数 Codex を同時に走らせる経路はない。実際の Codex 並列度制御は `/parallel-worktree` Phase 4 (各 worker の `node codex-companion.mjs task` 呼出) で `scripts/codex-semaphore.sh` 経由で発火する。本 skill が flag を受け取るのは将来 multi-spawn 設計 (例: 同 PR 内 stage 1 軽量 + stage 2 詳細の並列、または 1 PR を chunk 化して coderabbit-mimic を複数 spawn する設計) に備えた**先取り argv 接点**としての位置付けで、現時点で値を渡しても動作は変わらない。誤解を避けるためこの no-op 性は本 spec で明示する
 
 ---
 
@@ -89,6 +90,7 @@ CLI_PROFILE=""
 CLI_WORKTREE=""
 CLI_LOCAL=""
 CLI_PR=""
+CLI_MAX_CODEX_PARALLEL=""
 for tok in "${TOKENS[@]}"; do
   case "$tok" in
     --profile=chill|--profile=assertive|--profile=strict)
@@ -99,6 +101,17 @@ for tok in "${TOKENS[@]}"; do
       ;;
     --worktree=*)
       CLI_WORKTREE="${tok#--worktree=}"
+      ;;
+    --max-codex-parallel=*)
+      v="${tok#--max-codex-parallel=}"
+      # 整数 >= 1 強制 (codex-semaphore.sh acquire は max=0 を許容しないため、
+      # ここで早期 fail させて runtime のわかりにくい error を避ける)。
+      if [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -ge 1 ]; then
+        CLI_MAX_CODEX_PARALLEL="$v"
+      else
+        echo "ERROR: --max-codex-parallel must be integer >= 1 (got '$v')" >&2
+        exit 1
+      fi
       ;;
     --local)
       CLI_LOCAL="yes"
@@ -112,6 +125,9 @@ for tok in "${TOKENS[@]}"; do
       ;;
   esac
 done
+# default 1 (sequential、subagent context overflow 防止の安全側 default)。
+# CLI > env の precedence (caller が明示なら勝つ、未指定なら inherited env or 1)。
+MAX_CODEX_PARALLEL="${CLI_MAX_CODEX_PARALLEL:-${MAX_CODEX_PARALLEL:-1}}"
 
 WORKTREE="${CLI_WORKTREE:-${WORKTREE:-$(git rev-parse --show-toplevel)}}"
 cd "$WORKTREE"
@@ -286,6 +302,40 @@ fi  # Step 1.2 is PR-mode only
 ```
 
 返り値: findings の JSON (coderabbit-mimic の output 仕様参照)。
+
+#### Step 2 補遺: parent subagent context 保護 (output file-redirect)
+
+長文 findings JSON が parent subagent context を埋めて 100% timeout する事故を
+防ぐため、`coderabbit-mimic` が `codex-sync` の Output File Redirect 契約を実装した
+将来形態 (separate work — coderabbit-mimic.md 改修待ち) では、本 skill が agent
+prompt 末尾に出力 redirect マーカーを inject する:
+
+```bash
+TMP_RESULT="$(mktemp -t pseudo-cr-XXXXXX.json)"
+# Agent prompt body 末尾に必ず以下行を含める (codex-sync の Output File Redirect 契約):
+#   [output-file: ${TMP_RESULT}]
+# agent は Codex stdout を ${TMP_RESULT} に書き、return value は
+#   OUTPUT_PATH=${TMP_RESULT}
+#   OUTPUT_BYTES=<n>
+# のみ。caller (本 skill) は Read tool で ${TMP_RESULT} を ingest し findings JSON を parse。
+# 完了後 ${TMP_RESULT} は明示的に rm する (tmp file は系次第で GC 漏れする可能性)。
+```
+
+**現状 (本 skill v1.x)**: `coderabbit-mimic` agent は内部で Codex を直接呼ぶため
+`[output-file:` marker は agent 側で interpret されない。よって本マーカー inject
+は将来 work (`coderabbit-mimic` を `codex-sync` 経由に refactor 後) で有効化される
+forward-looking 配線である。本 PR では skill spec で marker inject 方針を明記し、
+複数 PR を並列で本 skill から走らせる場合の coordinator 側上限 (`--max-codex-parallel`)
+だけ先行配線する。
+
+#### Step 2 補遺: Codex 並列度
+
+複数 PR を並列で本 skill から走らせる coordinator (例: `/parallel-worktree`) が
+存在する場合、coordinator は `--max-codex-parallel=N` を本 skill に forward する。
+本 skill は単発 spawn のため `N>=1` なら no-op だが、将来 multi-spawn 設計
+(例: 同 PR 内 stage 1 軽量 + stage 2 詳細の並列) に備えて argv は配線済。
+Codex semaphore 本体 (`scripts/codex-semaphore.sh`) は `parallel-worktree` worker 側で
+発火する。
 
 ### Step 3. Findings 対応
 
