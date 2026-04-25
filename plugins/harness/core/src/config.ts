@@ -819,10 +819,9 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
         ...(partial.subagentStart?.agentTypeNotes ?? {}),
       },
     },
-    imageGeneration: validateImageGeneration({
-      ...DEFAULT_CONFIG.imageGeneration,
-      ...(partial.imageGeneration ?? {}),
-    }),
+    imageGeneration: validateImageGeneration(
+      mergeImageGenerationConfig(partial.imageGeneration),
+    ),
     ...(() => {
       const merged = mergeModelsConfig(partial.models);
       return merged ? { models: merged } : {};
@@ -916,16 +915,78 @@ const VALID_IMAGE_ASPECT_RATIOS: readonly ImageAspectRatio[] = [
 ];
 
 /**
- * Guard against `imageGeneration.defaultReasoning` / `defaultAspect`
- * being set to a string outside their respective unions (e.g. typo
- * like `"ultra"` or unsupported aspect like `"21:9"`). Falls back to
- * the default and writes a single warning line to stderr per offending
- * field so consumers (skill scripts, `harness model resolve image-gen`)
- * never need to defensively handle an unknown enum value.
+ * Type-guard the user-supplied `imageGeneration` partial before
+ * spreading it over `DEFAULT_CONFIG.imageGeneration`. Without this
+ * guard, malformed shapes (`null`, `42`, `"oops"`, `[]`, etc.) would
+ * silently spread as `{}` (or worse, splice array indices into the
+ * merged object) and the user would never learn that their config
+ * was ignored.
  *
- * Numeric / array fields are passed through unchanged — JSON schema
- * already enforces the integer range and array shape; runtime
- * validation here would duplicate that work.
+ * Codex adversarial review 2026-04-25 MINOR-2.
+ */
+function mergeImageGenerationConfig(
+  partial: unknown,
+): ImageGenerationConfig {
+  if (partial === undefined) {
+    return { ...DEFAULT_CONFIG.imageGeneration };
+  }
+  if (
+    partial === null ||
+    typeof partial !== "object" ||
+    Array.isArray(partial)
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration=${sanitiseConfigValueForStderr(
+        partial,
+      )} must be a JSON object; falling back to defaults.\n`,
+    );
+    return { ...DEFAULT_CONFIG.imageGeneration };
+  }
+  return {
+    ...DEFAULT_CONFIG.imageGeneration,
+    ...(partial as Partial<ImageGenerationConfig>),
+  };
+}
+
+/**
+ * Sanitise a value before writing it to stderr. The user-supplied input
+ * may carry ANSI escape sequences, NUL bytes, or other C0 / DEL / C1
+ * control characters that downstream log scrapers would interpret as
+ * terminal cursor / colour controls. Replace them with `?` so the
+ * report stays readable and audit-safe.
+ *
+ * Codex adversarial review 2026-04-25 MINOR-1.
+ */
+function sanitiseConfigValueForStderr(value: unknown): string {
+  return JSON.stringify(value).replace(
+    // C0 (excluding LF / CR / TAB which JSON.stringify already escapes
+    // to \\n / \\r / \\t) + DEL + C1 range. Anything that survives is
+    // printable ASCII or properly escaped Unicode.
+    /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,
+    "?",
+  );
+}
+
+/**
+ * Guard against `imageGeneration.defaultReasoning` / `defaultAspect` /
+ * `defaultCount` / `refImageAllowlistPrefixes` carrying invalid shapes.
+ * Falls back to the default for the offending field (rather than
+ * rejecting the whole section) so a malformed knob does not pull down
+ * adjacent valid overrides.
+ *
+ * - **defaultReasoning** / **defaultAspect**: enum check, fall back to
+ *   `DEFAULT_CONFIG.imageGeneration.*`.
+ * - **defaultCount**: integer in [1, 16]. Schema enforces this for
+ *   schema-aware tools, but the loader runs before schema validation
+ *   so we duplicate the range check here. (Codex MAJOR-1.)
+ * - **refImageAllowlistPrefixes**: each entry must be a non-empty
+ *   absolute path string (`/...`) without `..` segments or control
+ *   characters. Invalid entries are dropped (preserving the rest of
+ *   the array). (Codex MAJOR-2.)
+ *
+ * stderr output uses `sanitiseConfigValueForStderr` so attacker-
+ * controlled values cannot inject ANSI escape codes / NUL bytes into
+ * harness diagnostics. (Codex MINOR-1.)
  */
 function validateImageGeneration(
   cfg: ImageGenerationConfig,
@@ -937,7 +998,7 @@ function validateImageGeneration(
     )
   ) {
     process.stderr.write(
-      `[harness config] imageGeneration.defaultReasoning=${JSON.stringify(
+      `[harness config] imageGeneration.defaultReasoning=${sanitiseConfigValueForStderr(
         next.defaultReasoning,
       )} is not one of ${JSON.stringify(
         VALID_IMAGE_REASONING_EFFORTS,
@@ -954,7 +1015,7 @@ function validateImageGeneration(
     )
   ) {
     process.stderr.write(
-      `[harness config] imageGeneration.defaultAspect=${JSON.stringify(
+      `[harness config] imageGeneration.defaultAspect=${sanitiseConfigValueForStderr(
         next.defaultAspect,
       )} is not one of ${JSON.stringify(
         VALID_IMAGE_ASPECT_RATIOS,
@@ -964,6 +1025,85 @@ function validateImageGeneration(
       ...next,
       defaultAspect: DEFAULT_CONFIG.imageGeneration.defaultAspect,
     };
+  }
+  // defaultCount range guard (Codex MAJOR-1). Schema declares
+  // minimum 1 / maximum 16 but loadConfig runs before schema
+  // validation, so re-enforce here.
+  if (
+    typeof next.defaultCount !== "number" ||
+    !Number.isInteger(next.defaultCount) ||
+    next.defaultCount < 1 ||
+    next.defaultCount > 16
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultCount=${sanitiseConfigValueForStderr(
+        next.defaultCount,
+      )} is not an integer in [1, 16]; falling back to ${
+        DEFAULT_CONFIG.imageGeneration.defaultCount
+      }.\n`,
+    );
+    next = {
+      ...next,
+      defaultCount: DEFAULT_CONFIG.imageGeneration.defaultCount,
+    };
+  }
+  // refImageAllowlistPrefixes element guard (Codex MAJOR-2). Drop
+  // any entry that is not a non-empty absolute path without `..`
+  // segments or control characters. Falls through to the default
+  // (empty array) when the entire input is malformed (non-array).
+  if (!Array.isArray(next.refImageAllowlistPrefixes)) {
+    process.stderr.write(
+      `[harness config] imageGeneration.refImageAllowlistPrefixes=${sanitiseConfigValueForStderr(
+        next.refImageAllowlistPrefixes,
+      )} is not an array; falling back to ${JSON.stringify(
+        DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes,
+      )}.\n`,
+    );
+    next = {
+      ...next,
+      refImageAllowlistPrefixes:
+        DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes,
+    };
+  } else {
+    const dropped: number[] = [];
+    const cleanPrefixes: string[] = [];
+    for (let i = 0; i < next.refImageAllowlistPrefixes.length; i += 1) {
+      const entry = next.refImageAllowlistPrefixes[i];
+      if (
+        typeof entry === "string" &&
+        entry.length > 0 &&
+        // Absolute path on POSIX (and the harness shipped target). A
+        // future Windows port can extend this with a drive-letter
+        // check.
+        entry.startsWith("/") &&
+        // No traversal segments. We forbid the literal `..` substring
+        // rather than just `/../` segments because `foo..bar/` is
+        // unconventional and rejection is cheaper than a normaliser.
+        !entry.includes("..") &&
+        // No control characters / NUL byte / DEL / C1 range — these
+        // would confuse downstream path comparison and log output.
+        !/[\x00-\x1f\x7f-\x9f]/.test(entry)
+      ) {
+        cleanPrefixes.push(entry);
+      } else {
+        dropped.push(i);
+      }
+    }
+    if (dropped.length > 0) {
+      process.stderr.write(
+        `[harness config] imageGeneration.refImageAllowlistPrefixes dropped ${
+          dropped.length
+        } invalid entr${
+          dropped.length === 1 ? "y" : "ies"
+        } (indices ${JSON.stringify(
+          dropped,
+        )}); each entry must be a non-empty absolute path without ".." segments or control characters.\n`,
+      );
+      next = {
+        ...next,
+        refImageAllowlistPrefixes: cleanPrefixes,
+      };
+    }
   }
   return next;
 }

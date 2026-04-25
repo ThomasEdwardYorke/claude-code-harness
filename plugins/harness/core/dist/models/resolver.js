@@ -212,8 +212,14 @@ export function resolveImageModel(imageConfig, modelsConfig, agentName) {
         ? "agent-override"
         : modelSource;
     // Backend resolution is independent — agent overrides do not (yet)
-    // touch the backend.
-    const backend = imageConfig?.defaultBackend ?? HARNESS_IMAGE_DEFAULT_BACKEND;
+    // touch the backend. An empty string is rejected as well as undefined
+    // (an empty backend would resolve to a non-existent script
+    // `${SKILL_DIR}/scripts/backends/.sh`, which is worse than falling
+    // back to the shipped default). Codex adversarial NITPICK 2026-04-25.
+    const backend = typeof imageConfig?.defaultBackend === "string" &&
+        imageConfig.defaultBackend.length > 0
+        ? imageConfig.defaultBackend
+        : HARNESS_IMAGE_DEFAULT_BACKEND;
     return {
         model,
         reasoningEffort,

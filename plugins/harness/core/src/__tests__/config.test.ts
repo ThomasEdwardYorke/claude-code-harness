@@ -690,5 +690,284 @@ describe("loadConfig / loadConfigSafe", () => {
           originalWrite;
       }
     });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Adversarial follow-ups (Codex review 2026-04-25):
+    // MAJOR-1 defaultCount range / MAJOR-2 refImageAllowlistPrefixes /
+    // MINOR-1 stderr sanitisation / MINOR-2 type-confusion guard.
+    // ─────────────────────────────────────────────────────────────────
+    it("MAJOR-1: loadConfig falls back to default defaultCount on out-of-range value (with stderr warn)", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultCount: 100 }, // > 16
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultCount).toBe(4); // default
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("imageGeneration.defaultCount");
+        expect(warnings).toContain("100");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MAJOR-1: loadConfig falls back to default defaultCount on negative / zero value", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultCount: 0 },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultCount).toBe(4);
+        expect(stderrWrites.join("")).toContain("imageGeneration.defaultCount");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MAJOR-1: loadConfig falls back when defaultCount is non-integer", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultCount: 3.5 }, // non-integer
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultCount).toBe(4);
+        expect(stderrWrites.join("")).toContain("imageGeneration.defaultCount");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MAJOR-2: loadConfig drops refImageAllowlistPrefixes entries with .. / non-absolute paths", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              refImageAllowlistPrefixes: [
+                "/srv/safe/",
+                "../../etc/", // path traversal
+                "relative/path/", // non-absolute
+                "/srv/other/",
+              ],
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        // Only the two valid absolute paths survive.
+        expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+          "/srv/safe/",
+          "/srv/other/",
+        ]);
+        expect(stderrWrites.join("")).toContain(
+          "imageGeneration.refImageAllowlistPrefixes",
+        );
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MAJOR-2: loadConfig drops refImageAllowlistPrefixes entries with control characters / NUL bytes", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              refImageAllowlistPrefixes: [
+                "/srv/clean/",
+                "/srv/with-\x00null/", // NUL byte
+                "/srv/with-\x1bansi/", // ESC
+              ],
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+          "/srv/clean/",
+        ]);
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MAJOR-2: loadConfig drops non-string refImageAllowlistPrefixes entries", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              refImageAllowlistPrefixes: [
+                "/srv/clean/",
+                42, // wrong type
+                null,
+                "", // empty
+              ],
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+          "/srv/clean/",
+        ]);
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MINOR-1: stderr warnings sanitize ANSI escape sequences in offending values", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              defaultReasoning: "medium\x1b[31mEVIL", // ANSI escape sequence
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultReasoning).toBe("medium"); // fallback
+        const warnings = stderrWrites.join("");
+        // Control chars must be filtered out — no raw ESC byte (0x1b) leaks
+        // through. The reported value is sanitised so log scrapers see a
+        // stable surface.
+        expect(warnings).not.toContain("\x1b");
+        expect(warnings).not.toContain("");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MINOR-2: imageGeneration: <non-object> falls back to defaults with stderr warn", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: 123, // primitive, not an object
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        // Falls back to DEFAULT_CONFIG.imageGeneration entirely.
+        expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
+        expect(stderrWrites.join("")).toContain("imageGeneration");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("MINOR-2: imageGeneration: null falls back to defaults", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: null,
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
+    });
+
+    it("MINOR-2: imageGeneration: [] (array) falls back to defaults", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: ["/srv/whatever/"], // array, not object
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
+        expect(stderrWrites.join("")).toContain("imageGeneration");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
   });
 });

@@ -600,4 +600,62 @@ describe("models/resolver — resolveImageModel", () => {
       expect(result.backend).toBe(HARNESS_IMAGE_DEFAULT_BACKEND);
     });
   });
+
+  describe("edge cases (Codex adversarial NITPICK-5)", () => {
+    it("falls back to defaults when agentName is empty string", () => {
+      const result = resolveImageModel(undefined, undefined, "");
+      expect(result.model).toBe(HARNESS_IMAGE_DEFAULT_MODEL);
+      expect(result.source).toBe("harness-default");
+    });
+
+    it("falls back to defaults when agentName is whitespace only", () => {
+      const result = resolveImageModel(undefined, undefined, "   ");
+      expect(result.source).toBe("harness-default");
+    });
+
+    it("treats null/undefined agentName gracefully (does not throw)", () => {
+      // The TypeScript type signature requires a string, but `bin/harness`
+      // could pass `String(undefined)` = "undefined" or arrays. The
+      // resolver must coerce defensively rather than throw.
+      const result = resolveImageModel(
+        undefined,
+        undefined,
+        null as unknown as string,
+      );
+      expect(result.source).toBe("harness-default");
+    });
+
+    it("handles empty aliases map {} the same as absent aliases", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "no-such-alias",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        codex: { aliases: {} },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      expect(result.model).toBe("no-such-alias"); // verbatim
+      expect(result.aliasResolved).toBe(false);
+    });
+
+    it("handles empty-string defaultBackend by falling back to harness default", () => {
+      // Defensive: an empty string should not silently propagate as the
+      // backend identifier (would resolve to a non-existent script
+      // `${SKILL_DIR}/scripts/backends/.sh`).
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "",
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      expect(result.backend).toBe(HARNESS_IMAGE_DEFAULT_BACKEND);
+    });
+  });
 });
