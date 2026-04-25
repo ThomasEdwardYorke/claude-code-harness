@@ -57,6 +57,75 @@ argument-hint: "[all|task-number|N-M] [--fix <説明>|--feature <機能名>] [--
 >
 > 完全な DAG 判定は Claude Agent SDK or dedicated Python/TS parser で実装予定 (次セッション以降)。
 
+### Step 0 — タスクソースの判定 (4 層 handoff 対応、v4.2 追加)
+
+依存グラフ判定の前に、まず**どこからタスクを取り出すか**を決定する。`harness.config.json`
+の `work.taskTrackerMode` を読み、handoff モードの場合は backlog parser、
+plans モードの場合は従来の `Plans.md` 経路を使う。
+
+**判定フロー**:
+
+```text
+1. harness.config.json を読み込み (`work.taskTrackerMode`)
+   ├─ "handoff" + work.handoffPaths.backlog 設定済
+   │    → parseBacklog(handoffPaths.backlog) で BacklogEntry[] を取得
+   │      (`plugins/harness/core/src/work/backlog-parser.ts`)
+   │
+   └─ "plans" (default) または config 未設定
+        → 従来の Plans.md 経路 (work.plansFile = "Plans.md") を使う
+```
+
+**handoff モードの設定例** (project-local `harness.config.json`):
+
+```json
+{
+  "work": {
+    "taskTrackerMode": "handoff",
+    "handoffPaths": {
+      "roadmap":   ".docs/handoff/<project>-roadmap.md",
+      "backlog":   ".docs/handoff/<project>-backlog.md",
+      "current":   ".docs/handoff/<project>-current.md",
+      "decisions": ".docs/handoff/<project>-design-decisions.md"
+    }
+  }
+}
+```
+
+**handoffPaths が不完全 / 不正値**だった場合、loader (`config.ts`) が stderr
+警告を出して silent fallback で `taskTrackerMode = "plans"` に降格する。
+`/harness-work` は降格後の値を信頼してよい (loader が `handoffPaths` 未定義の
+ままで handoff モードに残ることはない)。
+
+#### Handoff Mode Tasks (handoff モードのタスク取り出し)
+
+`parseBacklog()` の戻り値 `BacklogEntry` は次の構造を持つ:
+
+```typescript
+interface BacklogEntry {
+  id: string;                                      // heading or YAML override
+  priority: "Critical" | "High" | "Med" | "Low";   // dispatcher ordering
+  status: "pending" | "in_progress" | "review" | "done";
+  title: string;
+  roadmapRef?: string;                             // pointer into roadmap.md
+  worktree?: string;                               // 既に走っている worktree path
+  pr?: string;                                     // 関連 PR
+  rawHeading: string;
+  lineNumber: number;
+}
+```
+
+**dispatcher が `BacklogEntry[]` から実装対象を選ぶアルゴリズム**:
+
+1. `status === "pending"` のものだけを対象に絞る (in_progress / review / done は除外)
+2. `priority` で安定ソート (Critical → High → Med → Low、同 priority 内は file order を維持)
+3. 上から `--parallel N` 件 (auto detection の場合は task 数で Solo/Parallel/Breezing 判定)
+4. 各 entry の `worktree` 既設定があれば再利用、無ければ新規 worktree 作成
+5. `roadmapRef` を `roadmap.md` に解決して AC / depends_on / estimated を取得
+   (Phase 2 スコープ、現行 v4.2 では handoffPaths.roadmap の存在確認のみ)
+
+**Plans.md mode (legacy)**: 既存ロジックを変更せず、`Plans.md` 担当表 + assignmentSectionMarkers
+で抽出する従来経路を継続。**zero-diff for existing users**。
+
 ### 判定フロー
 
 ```python
