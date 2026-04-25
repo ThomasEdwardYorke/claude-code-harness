@@ -3336,8 +3336,9 @@ describe("imageGeneration schema invariants (run-ai-images / ai-image-edit regis
 
 // ─────────────────────────────────────────────────────────────────────────
 // commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 / 3 / 5)
-// CR Major (320e760 review) で「handoff 分岐後の後続手順がまだ Plans.md 固定」と
-// 指摘されたため、各 Step に handoff サブセクションが存在することを契約として固定。
+// 内部レビューで「handoff 分岐後の後続手順が plans-mode 固定にならないこと」を
+// 契約として固定するため、各 Step に Plans-mode / Handoff-mode 両サブセクションが
+// 存在することを regression として強制する。
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 / Step 3 / Step 5)", () => {
@@ -3362,8 +3363,12 @@ describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 
 
   it("Step 1 handoff サブセクションが Plans.md を読まない旨を明示", () => {
     const step1 = /### Step 1:[\s\S]*?(?=\n### Step 2)/.exec(content)?.[0] ?? "";
-    // handoff モードで Plans.md を読まないことを spec 上で明示
-    expect(step1).toMatch(/Handoff-mode[\s\S]{0,800}?Plans\.md.*(読まない|不要|参照しない)|Plans\.md.{0,40}読まない/);
+    // handoff モードで Plans.md を読まないことを spec 上で明示。
+    // Handoff-mode コンテキスト内に Plans.md への "読まない/不要/参照しない" 否定が
+    // 連続することを 2 要件組合せで強制 (lone alternation だと false-positive する)。
+    expect(step1).toMatch(
+      /Handoff-mode[\s\S]{0,800}?Plans\.md[\s\S]{0,120}?(?:読まない|不要|参照しない)/i,
+    );
   });
 
   it("Step 3 で handoff モード時の current.md / backlog.md 更新が記述されている", () => {
@@ -3390,6 +3395,10 @@ describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 
 
   it("Step 5 handoff が current.md update / next session 即着手の記述を含む", () => {
     const step5 = /### Step 5:[\s\S]*?(?=\n## |\n---)/.exec(content)?.[0] ?? "";
-    expect(step5).toMatch(/current\.md[\s\S]{0,300}?(update|最新化|Latest state)/);
+    // case-insensitive + 日本語/英語の synonym (update / 更新 / 最新化 / latest state)
+    // を許容して大小文字・語彙差分に対する false-negative を回避。
+    expect(step5).toMatch(
+      /current\.md[\s\S]{0,300}?(?:update|更新|最新化|latest state)/i,
+    );
   });
 });
