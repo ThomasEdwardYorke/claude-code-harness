@@ -188,7 +188,61 @@ describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse (Task 9a)", 
   });
 
   // -----------------------------------------------------------------
-  // 5. 全体不変条件 (size, frontmatter)
+  // 5. Step 3 LLM prompt template への R2 / per-file context 浸透
+  // -----------------------------------------------------------------
+  describe("Step 3 prompt template に R2 / per-file context が反映されている", () => {
+    // Step 0 で walk-up + per-file matching の workflow が書いてあっても、
+    // Step 3 (実際に Codex LLM へ送る prompt template) にその semantics が
+    // 反映されていないと、LLM は per-file rule も R2 enforcement も認識しない。
+    // worker B の self-review で発見された落ち穴を test で固定する。
+
+    it("prompt template が per-file context placeholder を含む (single blob ではない)", () => {
+      // 旧設計の `<PATH_INSTRUCTIONS_INLINED>` (single blob) から、
+      // `<PER_FILE_REQUIRED_CONTEXT>` 等の per-file map 形式へ進化したこと
+      // を agent prompt 全体から確認する。
+      // (extractStepBlock は `## Inputs` のような level-2 heading で打ち切る
+      //  ため、Step 3 内部の Inputs / Rules を確認する用途では entire content
+      //  に対する match の方が頑強。)
+      expect(content).toMatch(
+        /<PER[_-]FILE[_-]REQUIRED[_-]CONTEXT>|<PER[_-]FILE[_-]CONTEXT>|per[_-]file\s+(?:required\s+)?context/i,
+      );
+    });
+
+    it("per-file context が REQUIRED として扱われる (optional でない)", () => {
+      // LLM 視点で「optional hint」ではなく「REQUIRED」と読める表現を要求。
+      expect(content).toMatch(
+        /REQUIRED\s+CONTEXT[\s\S]{0,400}?(?:per[_-]?file|each\s+entry|reviewed\s+file|each\s+file)/i,
+      );
+    });
+
+    it("Rules セクションに R2 / internal tracker ID enforcement rule が列挙される", () => {
+      // Codex に渡る prompt の Rules セクションに番号付き rule として並ぶことで
+      // LLM が scoring 段階で R2 を読む。Step 0.4 だけだと workflow narrative に
+      // 留まり、prompt template に届かない。
+      expect(content).toMatch(
+        /Rules?\s*\n[\s\S]{0,3500}?\d+\.\s*[\s\S]{0,400}?(?:internal\s+tracker|内部\s*トラッカー|tracker\s+ID|R2)/im,
+      );
+    });
+
+    it("R2 rule が actionable severity を major 以上に格上げする旨を書く", () => {
+      // 「flag するが minor」だと profile=chill で抑制される運用ハザード。
+      // major 以上を要求する文言を契約する。
+      expect(content).toMatch(
+        /(?:severity\s*[=:]?\s*major|severity\s+(?:to\s+)?(?:at\s+least\s+)?major|major\s+(?:or\s+(?:above|higher))|major\s+以上|major\s+severity|raise\s+(?:to|severity\s+to)\s+(?:at\s+least\s+)?major)/i,
+      );
+    });
+
+    it("R2 rule が exemption grammar (4-field) を唯一の bypass として明示", () => {
+      // agent が誤って R2 を緩和しないよう、exemption grammar 以外の bypass を
+      // 認めない強制力ある表現を契約。
+      expect(content).toMatch(
+        /(?:generality-?exemption|4-?field\s+(?:exemption|grammar)|exemption\s+grammar|the\s+only\s+(?:acceptable\s+)?bypass|唯一の\s*bypass)/i,
+      );
+    });
+  });
+
+  // -----------------------------------------------------------------
+  // 6. 全体不変条件 (size, frontmatter)
   // -----------------------------------------------------------------
   describe("agent prompt の skill discipline 不変条件", () => {
     it("agent prompt は 500 行未満 (skill discipline)", () => {
