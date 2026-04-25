@@ -2266,9 +2266,12 @@ describe("session-handoff skill — archive design-decision ask step", () => {
 
   it("ask step は non-blocking (skip 可) であることを明示する", () => {
     const sec = archiveSection();
-    // operator が skip できる (non-blocking) ことを明示
+    // operator が skip できる (non-blocking) ことを明示。
+    // CodeRabbit (PR #26 R2 nitpick): "skip(?:pable)?(?!\\s*reason)" は "skip 理由"
+    // のような非許可語の前でも通過するため、明示的な「許可」トークン (may/can skip,
+    // skip 可/可能/may/allowed/optional/permitted, スキップ可/可能) のみに限定する。
     expect(sec).toMatch(
-      /non[-\s]?blocking|skip(?:pable)?(?!\s*reason)|skip\s*(?:可|可能|may|allowed)|スキップ(?:可|可能)/i,
+      /non[-\s]?blocking|(?:may|can)\s+skip|skip\s*(?:可|可能|may|allowed|optional|permitted)|スキップ(?:可|可能)/i,
     );
   });
 
