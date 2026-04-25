@@ -2,7 +2,7 @@
 name: pseudo-coderabbit-loop
 description: "Codex による疑似 CodeRabbit レビューを内部ループで回し、本物 CodeRabbit へは絞り込んだ状態で push する統合スキル。CodeRabbit の rate limit (Pro: 5/h) を回避しつつレビュー品質を維持する。Use after implementing a feature, before requesting real CodeRabbit review, especially in parallel worktree workflows. Also used to resume a loop when CodeRabbit is rate-limited."
 allowed-tools: ["Read", "Grep", "Glob", "Bash", "Edit", "Write", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
-argument-hint: "[pr-number|--local] [--profile=chill|assertive|strict] [--worktree=<path>] [--max-codex-parallel=N]"
+argument-hint: "[pr-number|local|profile|worktree|max-codex-parallel]"
 ---
 
 # `/pseudo-coderabbit-loop` — Codex 疑似 CodeRabbit → 本物 CodeRabbit の反復ループ
@@ -303,7 +303,7 @@ fi  # Step 1.2 is PR-mode only
 
 返り値: findings の JSON (coderabbit-mimic の output 仕様参照)。
 
-#### Step 2 補遺: parent subagent context 保護 (output file-redirect、9g 案 A)
+#### Step 2 補遺: parent subagent context 保護 (output file-redirect)
 
 長文 findings JSON が parent subagent context を埋めて 100% timeout する事故を
 防ぐため、`coderabbit-mimic` が `codex-sync` の Output File Redirect 契約を実装した
@@ -328,7 +328,7 @@ forward-looking 配線である。本 PR では skill spec で marker inject 方
 複数 PR を並列で本 skill から走らせる場合の coordinator 側上限 (`--max-codex-parallel`)
 だけ先行配線する。
 
-#### Step 2 補遺: Codex 並列度 (9g 案 C)
+#### Step 2 補遺: Codex 並列度
 
 複数 PR を並列で本 skill から走らせる coordinator (例: `/parallel-worktree`) が
 存在する場合、coordinator は `--max-codex-parallel=N` を本 skill に forward する。

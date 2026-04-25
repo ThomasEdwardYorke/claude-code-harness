@@ -209,8 +209,17 @@ describe("tdd-implement command の profile 引数伝播", () => {
 describe("parallel-worktree command の profile 引数伝播", () => {
   const content = readCommand("parallel-worktree");
 
-  it("argument-hint に --profile= allowlist を含む", () => {
-    expect(content).toMatch(/argument-hint[\s\S]{0,300}?--profile=\(?chill\|assertive\|strict/);
+  // argument-hint は strict format `[word|word|...]` (token のみ) なので、`--profile=...` の
+  // allowlist は frontmatter ではなく spec 本文側に記述する。token 存在 + body allowlist の 2 段でチェック。
+  it("argument-hint frontmatter に profile token を含む (strict format)", () => {
+    const fm = extractFrontmatter(content);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)+\])"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("profile");
+  });
+
+  it("spec 本文に --profile= allowlist (chill|assertive|strict) が記述されている", () => {
+    expect(content).toMatch(/--profile=\(?chill\|assertive\|strict/);
   });
 
   it("<profile> 抽象 placeholder を使わず、$PROFILE / 実値例に置き換える", () => {
@@ -3387,7 +3396,9 @@ describe("commands/parallel-worktree.md の --max-codex-parallel flag", () => {
 
   it("argument-hint frontmatter にも flag が含まれる", () => {
     const fm = extractFrontmatter(content);
-    expect(fm).toMatch(/--max-codex-parallel=/);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)+\])"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("max-codex-parallel");
   });
 
   it("scripts/codex-semaphore.sh への参照あり (実装本体の場所を spec から特定可能)", () => {
@@ -3414,7 +3425,9 @@ describe("commands/pseudo-coderabbit-loop.md の --max-codex-parallel flag + out
 
   it("argument-hint frontmatter にも flag が含まれる", () => {
     const fm = extractFrontmatter(content);
-    expect(fm).toMatch(/--max-codex-parallel=/);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)+\])"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("max-codex-parallel");
   });
 
   it("coderabbit-mimic spawn 時に [output-file: marker を prompt body に inject する旨", () => {

@@ -2,7 +2,7 @@
 name: parallel-worktree
 description: "複数サブタスクを git worktree 並列で開発するオーケストレータスキル (Model A: 単一 Claude + Agent-tool subagent)。coordinator が worktree 生成 / worker dispatch / 担当表同期 / マージ順序 / コンフリクト解消を orchestrate する。各 worker は TDD + Codex Phase 4-5 を実行し、Phase 5.5-7 は coordinator が取りまとめて実行する。単一リポジトリ (worktree なし) でもサブタスク数 1 の縮退モードとして利用可。Use when implementing 2+ independent sub-tasks in parallel with maximum quality."
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
-argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N] [--max-codex-parallel=N] [--profile=chill|assertive|strict] [--dry-run] [--no-commit]"
+argument-hint: "[spec|feature-branch|max-parallel|max-codex-parallel|profile|dry-run|no-commit]"
 ---
 
 # `/parallel-worktree` — worktree 並列 TDD 開発オーケストレータ (Model A)
