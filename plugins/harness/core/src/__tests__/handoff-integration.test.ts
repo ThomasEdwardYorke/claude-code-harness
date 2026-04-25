@@ -137,25 +137,25 @@ describe("4-layer handoff integration", () => {
         [
           "# Backlog — my-project",
           "",
-          "### [Critical] T-001 Add login screen",
+          "### [Critical] entry-alpha Add login screen",
           "",
           "```yaml",
-          "id: T-001",
+          "id: entry-alpha",
           "priority: Critical",
           "status: pending",
           "roadmap_ref: phase-1.week-1",
           "```",
           "",
-          "### [High] T-002 Add session token issuer",
+          "### [High] entry-bravo Add session token issuer",
           "",
           "```yaml",
-          "id: T-002",
+          "id: entry-bravo",
           "priority: High",
           "status: in_progress",
           "worktree: ../my-project-wt-session",
           "```",
           "",
-          "### [Med] T-003 Documentation polish",
+          "### [Med] entry-charlie Documentation polish",
           "",
         ].join("\n"),
       );
@@ -167,19 +167,19 @@ describe("4-layer handoff integration", () => {
       );
       expect(result.entries).toHaveLength(3);
       expect(result.entries[0]).toMatchObject({
-        id: "T-001",
+        id: "entry-alpha",
         priority: "Critical",
         status: "pending",
         roadmapRef: "phase-1.week-1",
       });
       expect(result.entries[1]).toMatchObject({
-        id: "T-002",
+        id: "entry-bravo",
         priority: "High",
         status: "in_progress",
         worktree: "../my-project-wt-session",
       });
       expect(result.entries[2]).toMatchObject({
-        id: "T-003",
+        id: "entry-charlie",
         priority: "Med",
         status: "pending", // heading-only default
       });
@@ -208,31 +208,31 @@ describe("4-layer handoff integration", () => {
         projectRoot,
         "b.md",
         [
-          "### [Critical] T-001 Already shipped",
+          "### [Critical] entry-alpha Already shipped",
           "",
           "```yaml",
           "status: done",
           "```",
           "",
-          "### [Critical] T-002 In review",
+          "### [Critical] entry-bravo In review",
           "",
           "```yaml",
           "status: review",
           "```",
           "",
-          "### [High] T-003 Currently being worked",
+          "### [High] entry-charlie Currently being worked",
           "",
           "```yaml",
           "status: in_progress",
           "```",
           "",
-          "### [Med] T-004 Pending pickup",
+          "### [Med] entry-delta Pending pickup",
           "",
         ].join("\n"),
       );
       const { entries } = pickDispatchSource(projectRoot);
       const pending = entries.filter((e) => e.status === "pending");
-      expect(pending.map((e) => e.id)).toEqual(["T-004"]);
+      expect(pending.map((e) => e.id)).toEqual(["entry-delta"]);
     });
 
     it("missing backlog file in handoff mode yields zero entries (no throw)", () => {
@@ -335,7 +335,7 @@ describe("4-layer handoff integration", () => {
       writeFile(
         projectRoot,
         ".docs/handoff/my-project-backlog.md",
-        "### [High] T-001 New handoff entry\n",
+        "### [High] entry-alpha New handoff entry\n",
       );
 
       // Author has not flipped the mode yet → stays on plans path.
@@ -367,7 +367,7 @@ describe("4-layer handoff integration", () => {
       result = pickDispatchSource(projectRoot);
       expect(result.mode).toBe("handoff");
       expect(result.entries).toHaveLength(1);
-      expect(result.entries[0]).toMatchObject({ id: "T-001" });
+      expect(result.entries[0]).toMatchObject({ id: "entry-alpha" });
     });
   });
 });

@@ -182,7 +182,19 @@
           }
         },
         "failFast": { "type": "boolean", "default": true }
-      }
+      },
+      "allOf": [
+        {
+          "description": "When taskTrackerMode is 'handoff', require handoffPaths so the dispatcher cannot fall through to undefined behavior.",
+          "if": {
+            "properties": { "taskTrackerMode": { "const": "handoff" } },
+            "required": ["taskTrackerMode"]
+          },
+          "then": {
+            "required": ["handoffPaths"]
+          }
+        }
+      ]
     },
     "security": {
       "type": "object",

@@ -126,6 +126,22 @@ interface BacklogEntry {
 **Plans.md mode (legacy)**: 既存ロジックを変更せず、`Plans.md` 担当表 + assignmentSectionMarkers
 で抽出する従来経路を継続。**zero-diff for existing users**。
 
+#### Step 0 が確定する dispatch source は以降の全 step に適用される (重要)
+
+Step 0 で得た **dispatch source** (Plans.md path もしくは BacklogEntry[]) と **mode tag** (`plans` / `handoff`) は、以降の **Pre-flight / Step 1 / Step 3 / Step 5 / state-update** すべてで参照される。各 step は次のアダプタ規約に従う:
+
+| step | Plans-mode 動作 | Handoff-mode 動作 |
+|---|---|---|
+| **Pre-flight** | Plans.md 担当表 / assignmentSectionMarkers を読む | `current.md` 担当表セクション (handoffPaths.current) を読む |
+| **Step 1 タスク抽出** | Plans.md から `[label]` 行を抽出 | `BacklogEntry[]` から `status === "pending"` を抽出 (priority ソート + file order tie-break) |
+| **Step 3 担当表更新** | Plans.md 担当表に `status=in_progress` 行追加 | `current.md` 担当表 + `backlog.md` の対象 entry の YAML `status` を `in_progress` に書換 (append-only `decisions.md` は触らない) |
+| **Step 5 完了処理** | Plans.md 担当表から行削除 + `## 完了` セクションへ追記 | `current.md` 担当表から行削除 + `backlog.md` の entry を `status: done` (もしくは entry 削除 + 完了 archive 切出) + `archive/session-<date>-<slug>.md` 自動 trigger 連携 |
+| **state-update logic** | Plans.md 直接 edit | `parseBacklog()` 結果 → 編集箇所特定 → BacklogEntry 単位で書換 |
+
+dispatcher / state mutation を行うコードは **両 task 形式を accept する adapter** を実装するか、あるいは **mode tag で early branch** する。`work.taskTrackerMode === "handoff"` だが `handoffPaths` が無効なケースは loader が `plans` に降格させるため、Step 1 以降が undefined dispatch source を見ることはない。
+
+未対応の旧コードパス (Plans.md 直書き hardcode 等) があれば Step 0 で警告を出し、`taskTrackerMode === "plans"` のときに限定して動作させる (handoff mode では skip)。
+
 ### 判定フロー
 
 ```python

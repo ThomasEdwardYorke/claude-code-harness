@@ -218,12 +218,12 @@ session-<YYYY-MM-DD>-<phase-slug>.md
 
 ```bash
 mkdir -p .docs/handoff/archive
-touch .docs/handoff/<project>-current.md
-touch .docs/handoff/<project>-backlog.md
-touch .docs/handoff/<project>-design-decisions.md
+touch .docs/handoff/<project>-{current,backlog,design-decisions,roadmap}.md
+# roadmap.md は 4-layer 完全構造の 4 つ目。handoff mode で必須 (Gate 4 / roadmap_ref 前提)、
+# Plans-mode 運用でも空 file で残しておけば後の mode 切替で再 init 不要。
 ```
 
-各 file に skeleton を書き込む。`<project>` placeholder を実名に置換。
+各 file に skeleton を書き込む。`<project>` placeholder を実名に置換。`taskTrackerMode === "handoff"` 有効化時は `harness.config.json` の `work.handoffPaths` 4 キーに上記 path を設定 (schema `if/then` で missing 早期検出)。
 
 ### `update`
 

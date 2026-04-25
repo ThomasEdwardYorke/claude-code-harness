@@ -127,12 +127,12 @@ describe("parseBacklog", () => {
     it("parses a heading without YAML, defaulting status to 'pending'", () => {
       const path = writeBacklog(
         projectRoot,
-        "### [High] T-001 Add login screen\n",
+        "### [High] entry-alpha Add login screen\n",
       );
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({
-        id: "T-001",
+        id: "entry-alpha",
         priority: "High",
         title: "Add login screen",
         status: "pending",
@@ -149,13 +149,13 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [Critical] T-001 First",
+          "### [Critical] entry-alpha First",
           "",
-          "### [High] T-002 Second",
+          "### [High] entry-bravo Second",
           "",
-          "### [Med] T-003 Third",
+          "### [Med] entry-charlie Third",
           "",
-          "### [Low] T-004 Fourth",
+          "### [Low] entry-delta Fourth",
           "",
         ].join("\n"),
       );
@@ -168,10 +168,10 @@ describe("parseBacklog", () => {
         "Low",
       ]);
       expect(entries.map((e) => e.id)).toEqual([
-        "T-001",
-        "T-002",
-        "T-003",
-        "T-004",
+        "entry-alpha",
+        "entry-bravo",
+        "entry-charlie",
+        "entry-delta",
       ]);
     });
 
@@ -179,11 +179,11 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [Low] T-300 Last in file",
+          "### [Low] entry-x300 Last in file",
           "",
-          "### [Critical] T-100 First in file",
+          "### [Critical] entry-x100 First in file",
           "",
-          "### [Med] T-200 Middle",
+          "### [Med] entry-x200 Middle",
           "",
         ].join("\n"),
       );
@@ -191,14 +191,14 @@ describe("parseBacklog", () => {
       // No re-ordering by priority — file-order is the contract so the
       // dispatcher can apply its own ordering policy without losing the
       // author's intent.
-      expect(entries.map((e) => e.id)).toEqual(["T-300", "T-100", "T-200"]);
+      expect(entries.map((e) => e.id)).toEqual(["entry-x300", "entry-x100", "entry-x200"]);
     });
 
     it("accepts ids with hyphens, dots, and digits", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Hyphen id",
+          "### [High] entry-alpha Hyphen id",
           "",
           "### [High] phase-1.task-2 Mixed dot+hyphen",
           "",
@@ -211,7 +211,7 @@ describe("parseBacklog", () => {
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(4);
       expect(entries.map((e) => e.id)).toEqual([
-        "T-001",
+        "entry-alpha",
         "phase-1.task-2",
         "MYPROJ-001",
         "2026.04.25",
@@ -221,7 +221,7 @@ describe("parseBacklog", () => {
     it("accepts a heading whose title contains spaces, punctuation, and unicode", () => {
       const path = writeBacklog(
         projectRoot,
-        "### [High] T-001 日本語タイトル — with em-dash and (parens)\n",
+        "### [High] entry-alpha 日本語タイトル — with em-dash and (parens)\n",
       );
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
@@ -238,19 +238,19 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [Urgent] T-001 Wrong priority",
+          "### [Urgent] entry-alpha Wrong priority",
           "",
-          "### T-002 Missing brackets",
+          "### entry-bravo Missing brackets",
           "",
-          "## [High] T-003 Wrong heading level",
+          "## [High] entry-charlie Wrong heading level",
           "",
-          "### [High] T-004 Valid entry",
+          "### [High] entry-delta Valid entry",
           "",
         ].join("\n"),
       );
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
-      expect(entries[0]?.id).toBe("T-004");
+      expect(entries[0]?.id).toBe("entry-delta");
     });
   });
 
@@ -259,15 +259,15 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Add login screen",
+          "### [High] entry-alpha Add login screen",
           "",
           "```yaml",
-          "id: T-001",
+          "id: entry-alpha",
           "priority: High",
           "status: in_progress",
           "roadmap_ref: phase-1.week-2",
           "worktree: ../my-app-wt-login",
-          "pr: '#42'",
+          "pr: 'pr-link-alpha'",
           "```",
           "",
         ].join("\n"),
@@ -275,13 +275,13 @@ describe("parseBacklog", () => {
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({
-        id: "T-001",
+        id: "entry-alpha",
         priority: "High",
         status: "in_progress",
         title: "Add login screen",
         roadmapRef: "phase-1.week-2",
         worktree: "../my-app-wt-login",
-        pr: "#42",
+        pr: "pr-link-alpha",
       });
     });
 
@@ -289,10 +289,10 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [Low] T-001 Heading title",
+          "### [Low] entry-alpha Heading title",
           "",
           "```yaml",
-          "id: T-001-override",
+          "id: entry-alpha-override",
           "priority: Critical",
           "status: review",
           "```",
@@ -302,7 +302,7 @@ describe("parseBacklog", () => {
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
       // YAML keys win over heading-derived defaults.
-      expect(entries[0]?.id).toBe("T-001-override");
+      expect(entries[0]?.id).toBe("entry-alpha-override");
       expect(entries[0]?.priority).toBe("Critical");
       expect(entries[0]?.status).toBe("review");
       // Title still comes from the heading (no `title` YAML key spec'd).
@@ -317,7 +317,7 @@ describe("parseBacklog", () => {
         const path = writeBacklog(
           projectRoot,
           [
-            "### [High] T-001 Heading title",
+            "### [High] entry-alpha Heading title",
             "",
             "```yaml",
             "this is not valid yaml: it has",
@@ -330,7 +330,7 @@ describe("parseBacklog", () => {
         );
         const entries = parseBacklog(path);
         expect(entries).toHaveLength(1);
-        expect(entries[0]?.id).toBe("T-001");
+        expect(entries[0]?.id).toBe("entry-alpha");
         expect(entries[0]?.priority).toBe("High");
         // Status still defaults to pending because nothing parsed cleanly.
         expect(entries[0]?.status).toBe("pending");
@@ -346,10 +346,10 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Title",
+          "### [High] entry-alpha Title",
           "",
           "```yaml",
-          "id: T-001",
+          "id: entry-alpha",
           "priority: High",
           "future_field: ignored",
           "anothere_unknown: also-ignored",
@@ -360,7 +360,7 @@ describe("parseBacklog", () => {
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
       expect(entries[0]).toMatchObject({
-        id: "T-001",
+        id: "entry-alpha",
         priority: "High",
       });
       const keys = Object.keys(entries[0] ?? {});
@@ -373,10 +373,10 @@ describe("parseBacklog", () => {
         const path = writeBacklog(
           projectRoot,
           [
-            "### [High] T-001 Title",
+            "### [High] entry-alpha Title",
             "",
             "```yaml",
-            "id: T-001",
+            "id: entry-alpha",
             "priority: High",
             "status: shipping-soon",
             "```",
@@ -396,10 +396,10 @@ describe("parseBacklog", () => {
         const path = writeBacklog(
           projectRoot,
           [
-            "### [High] T-001 Title",
+            "### [High] entry-alpha Title",
             "",
             "```yaml",
-            "id: T-001",
+            "id: entry-alpha",
             "priority: Urgent",
             "```",
             "",
@@ -418,10 +418,10 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Title",
+          "### [High] entry-alpha Title",
           "",
           "```yaml",
-          'id: "T-001"',
+          'id: "entry-alpha"',
           "priority: 'High'",
           'roadmap_ref: "phase-1"',
           "```",
@@ -430,7 +430,7 @@ describe("parseBacklog", () => {
       );
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
-      expect(entries[0]?.id).toBe("T-001");
+      expect(entries[0]?.id).toBe("entry-alpha");
       expect(entries[0]?.priority).toBe("High");
       expect(entries[0]?.roadmapRef).toBe("phase-1");
     });
@@ -442,16 +442,16 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Title",
+          "### [High] entry-alpha Title",
           "",
-          "id: T-001",
+          "id: entry-alpha",
           "status: in_progress",
           "",
         ].join("\n"),
       );
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
-      expect(entries[0]?.id).toBe("T-001");
+      expect(entries[0]?.id).toBe("entry-alpha");
       expect(entries[0]?.status).toBe("pending");
     });
 
@@ -462,12 +462,12 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Title",
+          "### [High] entry-alpha Title",
           "",
           "Some prose paragraph that intervenes.",
           "",
           "```yaml",
-          "id: T-001",
+          "id: entry-alpha",
           "status: in_progress",
           "```",
           "",
@@ -485,10 +485,10 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Title",
+          "### [High] entry-alpha Title",
           "",
           "```ts",
-          "id: T-001",
+          "id: entry-alpha",
           "status: in_progress",
           "```",
           "",
@@ -509,13 +509,13 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Unclosed fence entry",
+          "### [High] entry-alpha Unclosed fence entry",
           "",
           "```yaml",
           "priority: Critical",
           "status: in_progress",
           "",
-          "### [High] T-002 Recovered next entry",
+          "### [High] entry-bravo Recovered next entry",
           "",
           "```yaml",
           "status: review",
@@ -526,13 +526,13 @@ describe("parseBacklog", () => {
       const entries = parseBacklog(path);
       // Both entries must be present — recovery worked.
       expect(entries).toHaveLength(2);
-      expect(entries[0]?.id).toBe("T-001");
+      expect(entries[0]?.id).toBe("entry-alpha");
       // Partial YAML body was parsed before recovery: priority + status
       // applied to the first entry from the unclosed block.
       expect(entries[0]?.priority).toBe("Critical");
       expect(entries[0]?.status).toBe("in_progress");
       // Second entry's own YAML block was parsed independently.
-      expect(entries[1]?.id).toBe("T-002");
+      expect(entries[1]?.id).toBe("entry-bravo");
       expect(entries[1]?.status).toBe("review");
     });
 
@@ -543,7 +543,7 @@ describe("parseBacklog", () => {
       const path = writeBacklog(
         projectRoot,
         [
-          "### [High] T-001 Last entry, unclosed fence",
+          "### [High] entry-alpha Last entry, unclosed fence",
           "",
           "```yaml",
           "status: in_progress",
@@ -553,7 +553,7 @@ describe("parseBacklog", () => {
       );
       const entries = parseBacklog(path);
       expect(entries).toHaveLength(1);
-      expect(entries[0]?.id).toBe("T-001");
+      expect(entries[0]?.id).toBe("entry-alpha");
       // Partial body parsed despite missing closing fence.
       expect(entries[0]?.status).toBe("in_progress");
       expect(entries[0]?.priority).toBe("Critical");
@@ -569,20 +569,20 @@ describe("parseBacklog", () => {
           "",
           "Some prose.",
           "",
-          "### [Critical] T-001 First with full YAML",
+          "### [Critical] entry-alpha First with full YAML",
           "",
           "```yaml",
-          "id: T-001",
+          "id: entry-alpha",
           "priority: Critical",
           "status: in_progress",
           "roadmap_ref: phase-1.week-1",
           "worktree: ../proj-wt-1",
-          "pr: '#10'",
+          "pr: 'pr-link-bravo'",
           "```",
           "",
-          "### [High] T-002 Second heading-only",
+          "### [High] entry-bravo Second heading-only",
           "",
-          "### [Med] T-003 Third with partial YAML",
+          "### [Med] entry-charlie Third with partial YAML",
           "",
           "```yaml",
           "status: review",
@@ -596,18 +596,18 @@ describe("parseBacklog", () => {
 
       // Entry 0: full YAML.
       expect(entries[0]).toMatchObject({
-        id: "T-001",
+        id: "entry-alpha",
         priority: "Critical",
         status: "in_progress",
         title: "First with full YAML",
         roadmapRef: "phase-1.week-1",
         worktree: "../proj-wt-1",
-        pr: "#10",
+        pr: "pr-link-bravo",
       });
 
       // Entry 1: heading-only.
       expect(entries[1]).toMatchObject({
-        id: "T-002",
+        id: "entry-bravo",
         priority: "High",
         status: "pending",
         title: "Second heading-only",
@@ -618,7 +618,7 @@ describe("parseBacklog", () => {
 
       // Entry 2: partial YAML inheriting heading defaults for priority/id/title.
       expect(entries[2]).toMatchObject({
-        id: "T-003",
+        id: "entry-charlie",
         priority: "Med",
         status: "review",
         title: "Third with partial YAML",
@@ -637,18 +637,18 @@ describe("parseBacklog", () => {
         const path = writeBacklog(
           projectRoot,
           [
-            "### [High] T-001 First instance",
+            "### [High] entry-alpha First instance",
             "",
-            "### [High] T-001 Second instance",
+            "### [High] entry-alpha Second instance",
             "",
           ].join("\n"),
         );
         const entries = parseBacklog(path);
         expect(entries).toHaveLength(2);
         const ids = entries.map((e) => e.id);
-        expect(ids).toEqual(["T-001", "T-001"]);
+        expect(ids).toEqual(["entry-alpha", "entry-alpha"]);
         const warnings = stderrWrites.join("");
-        expect(warnings).toContain("T-001");
+        expect(warnings).toContain("entry-alpha");
         expect(warnings).toContain("duplicate");
       });
     });
@@ -663,9 +663,9 @@ describe("parseBacklog", () => {
           "",
           "Prose.",
           "",
-          "### [High] T-001 First", // line 5
+          "### [High] entry-alpha First", // line 5
           "",
-          "### [High] T-002 Second", // line 7
+          "### [High] entry-bravo Second", // line 7
           "",
         ].join("\n"),
       );

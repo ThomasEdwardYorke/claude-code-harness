@@ -76,8 +76,8 @@ export interface BacklogEntry {
 
 // Heading grammar: `### [Priority] <id> <title>`. The id token is
 // permissive — letters, digits, hyphens, dots, and underscores — so
-// project-specific id schemes (`T-001`, `phase-1.task-2`, `MYPROJ-001`,
-// `2026.04.25`) all parse without configuration.
+// project-specific id schemes (`entry-alpha`, `phase-section.subitem`,
+// `work-item-beta`, `2026.04.25`) all parse without configuration.
 const HEADING_RE =
   /^###[ \t]+\[(Critical|High|Med|Low)\][ \t]+([A-Za-z0-9._-]+)[ \t]+(.+?)[ \t]*$/;
 
@@ -256,15 +256,15 @@ export function parseBacklog(filepath: string): BacklogEntry[] {
     }
     const fenceLine = lines[lookahead] ?? "";
     const fenceMatch = FENCE_OPEN_RE.exec(fenceLine);
-    if (
-      fenceMatch !== null &&
-      typeof fenceMatch[1] === "string" &&
-      fenceMatch[1].toLowerCase() === "yaml"
-    ) {
-      // Walk forward to the matching close fence. Recovery: if we hit the
-      // next entry heading before a closing fence, treat the fence as
-      // unclosed and resume from that heading — otherwise an unterminated
-      // YAML block would silently swallow every following entry until EOF.
+    if (fenceMatch !== null) {
+      // Treat any fenced code block as opaque — only YAML-tagged fences
+      // contribute to entry metadata, but every fence (yaml / ts / bash /
+      // none / etc.) must be scanned to its close so its body cannot
+      // contain a heading-shaped line that the parser would mistake for
+      // a new entry.
+      const isYamlFence =
+        typeof fenceMatch[1] === "string" &&
+        fenceMatch[1].toLowerCase() === "yaml";
       const bodyStart = lookahead + 1;
       let bodyEnd = bodyStart;
       let closedProperly = false;
@@ -275,37 +275,44 @@ export function parseBacklog(filepath: string): BacklogEntry[] {
           closedProperly = true;
           break;
         }
+        // Recovery for an unterminated fence: scanning to EOF would
+        // silently swallow every following entry. Stop at the next
+        // heading-shaped line and resume from it (after warning).
         if (HEADING_RE.test(candidate)) {
           nextHeadingHit = true;
           break;
         }
         bodyEnd += 1;
       }
-      const bodyLines = lines.slice(bodyStart, bodyEnd);
-      const { fields, malformed } = parseYamlBlockBody(bodyLines);
-      if (malformed) {
-        process.stderr.write(
-          `[harness backlog] ${filepath}:${lineNumber} YAML metadata block is malformed (one or more lines did not match key:value); falling back to heading defaults for unparsable lines.\n`,
-        );
+      if (isYamlFence) {
+        const bodyLines = lines.slice(bodyStart, bodyEnd);
+        const { fields, malformed } = parseYamlBlockBody(bodyLines);
+        if (malformed) {
+          process.stderr.write(
+            `[harness backlog] ${filepath}:${lineNumber} YAML metadata block is malformed (one or more lines did not match key:value); falling back to heading defaults for unparsable lines.\n`,
+          );
+        }
+        entry = applyYamlOverrides(entry, fields, filepath);
       }
       if (!closedProperly) {
-        // Unterminated fence: warn so the operator can fix the markdown,
-        // but still parse the partial body so the entry's metadata is
-        // not entirely lost.
+        // Unterminated fence — warn so the operator can fix the markdown.
+        // The YAML branch already parsed the partial body so its metadata
+        // is not entirely lost.
         process.stderr.write(
-          `[harness backlog] ${filepath}:${lineNumber} YAML fence opened with \`\`\`yaml but no closing \`\`\` before ${
+          `[harness backlog] ${filepath}:${lineNumber} ${
+            isYamlFence ? "YAML fence opened with ```yaml" : "fenced block"
+          } but no closing \`\`\` before ${
             nextHeadingHit ? `next heading at line ${bodyEnd + 1}` : "end of file"
           }; treating fence as unclosed and recovering.\n`,
         );
       }
-      entry = applyYamlOverrides(entry, fields, filepath);
       if (nextHeadingHit) {
         // Resume *at* the heading so it is parsed in the next iteration
-        // (do not skip past it).
+        // (do not skip past it). Same behavior for YAML and non-YAML.
         i = bodyEnd;
       } else {
-        // Resume after the closing fence (or end-of-file when unclosed
-        // with no following heading).
+        // Resume after the closing fence (or end-of-file when unclosed).
+        // Same behavior for YAML and non-YAML — fence is always opaque.
         i = bodyEnd + 1;
       }
     } else {
