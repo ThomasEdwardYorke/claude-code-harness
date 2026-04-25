@@ -427,15 +427,26 @@ async function loadProjectModelsConfig() {
  * Load the project's full image-generation surface (`imageGeneration` +
  * `models` for the shared alias map / per-agent override). Returns
  * `{ imageGeneration: undefined, models: undefined }` when the core
- * build is missing — the resolver tolerates undefined inputs and falls
- * back to compile-time defaults.
+ * build is missing **or** the project has no `harness.config.json`.
+ *
+ * The "no config file" case is critical for the CLI: without this
+ * check, `loadConfigSafe` would synthesise `DEFAULT_CONFIG.imageGeneration`
+ * and the resolver would emit `source: "image-default"` for an
+ * unconfigured project — masking the distinction between shipped
+ * behaviour and explicit user intent. Returning undefined makes
+ * `harness model resolve image-gen` correctly emit
+ * `source: "harness-default"` until the user pins something.
  */
 async function loadProjectImageGenerationConfig() {
   const corePath = resolveCorePath();
   if (corePath === null) return { imageGeneration: undefined, models: undefined };
+  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const userConfigPath = resolve(projectDir, "harness.config.json");
+  if (!existsSync(userConfigPath)) {
+    return { imageGeneration: undefined, models: undefined };
+  }
   const configPath = corePath.replace("index.js", "config.js");
   const mod = await import(`file://${configPath.replace(/\\/g, "/")}`);
-  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   const cfg = mod.loadConfigSafe
     ? mod.loadConfigSafe(projectDir)
     : mod.loadConfig(projectDir);

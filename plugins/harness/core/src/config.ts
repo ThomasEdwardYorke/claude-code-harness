@@ -991,6 +991,37 @@ function validateImageGeneration(
       defaultAspect: DEFAULT_CONFIG.imageGeneration.defaultAspect,
     };
   }
+  // defaultBackend basename guard. Backend script names resolve
+  // against `${SKILL_DIR}/scripts/backends/<name>.sh` at invocation
+  // time — a value containing path separators or `..` segments could
+  // escape the backends directory and execute arbitrary scripts.
+  // Reject malformed values (path separators / control chars / empty
+  // / whitespace-only) at load time and fall back to the shipped
+  // backend.
+  if (
+    typeof next.defaultBackend !== "string" ||
+    next.defaultBackend.trim().length === 0 ||
+    next.defaultBackend.includes("/") ||
+    next.defaultBackend.includes("\\") ||
+    next.defaultBackend.split(/[\\/]/).some((seg) => seg === "..") ||
+    /[\x00-\x1f\x7f-\x9f]/.test(next.defaultBackend)
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultBackend=${sanitiseConfigValueForStderr(
+        next.defaultBackend,
+      )} must be a non-empty basename without path separators or control characters; falling back to "${
+        DEFAULT_CONFIG.imageGeneration.defaultBackend
+      }".\n`,
+    );
+    next = {
+      ...next,
+      defaultBackend: DEFAULT_CONFIG.imageGeneration.defaultBackend,
+    };
+  } else if (next.defaultBackend !== next.defaultBackend.trim()) {
+    // Surrounding whitespace is benign; normalise so downstream
+    // consumers do not see padded backend names.
+    next = { ...next, defaultBackend: next.defaultBackend.trim() };
+  }
   // defaultCount range guard. Schema declares minimum 1 / maximum 16
   // but loadConfig runs before schema validation, so re-enforce here.
   if (

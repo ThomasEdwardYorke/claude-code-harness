@@ -22,6 +22,29 @@ function mkTmp(): string {
   return dir;
 }
 
+/**
+ * Capture lines written to `process.stderr.write` during the supplied
+ * callback. Restores the original write implementation in a `finally`
+ * block so a thrown assertion does not leak the mock to subsequent
+ * tests. The callback receives the live `stderrWrites` array so it can
+ * assert on warnings produced by the function under test.
+ */
+function withCapturedStderr(run: (stderrWrites: string[]) => void): void {
+  const stderrWrites: string[] = [];
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  (process.stderr.write as unknown as (chunk: string) => boolean) = (
+    chunk: string,
+  ) => {
+    stderrWrites.push(chunk);
+    return true;
+  };
+  try {
+    run(stderrWrites);
+  } finally {
+    (process.stderr.write as unknown as typeof originalWrite) = originalWrite;
+  }
+}
+
 describe("loadConfig / loadConfigSafe", () => {
   let projectRoot: string;
 
@@ -609,15 +632,7 @@ describe("loadConfig / loadConfigSafe", () => {
       // Mirrors the validateRelease / validateTddEnforce pattern: invalid
       // enum values fall back to DEFAULT_CONFIG so consumers never need a
       // fifth `default:` branch in their switch statements.
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -629,22 +644,11 @@ describe("loadConfig / loadConfigSafe", () => {
         const warnings = stderrWrites.join("");
         expect(warnings).toContain("imageGeneration.defaultReasoning");
         expect(warnings).toContain("ultra");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("loadConfig falls back to default defaultAspect on non-enum value (with stderr warn)", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -656,22 +660,11 @@ describe("loadConfig / loadConfigSafe", () => {
         const warnings = stderrWrites.join("");
         expect(warnings).toContain("imageGeneration.defaultAspect");
         expect(warnings).toContain("21:9");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("valid enum values pass through without warning", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -685,10 +678,7 @@ describe("loadConfig / loadConfigSafe", () => {
         expect(cfg.imageGeneration.defaultReasoning).toBe("high");
         expect(cfg.imageGeneration.defaultAspect).toBe("9:16");
         expect(stderrWrites.join("")).toBe("");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     // ─────────────────────────────────────────────────────────────────
@@ -697,15 +687,7 @@ describe("loadConfig / loadConfigSafe", () => {
     // validation, so the runtime guards must mirror the static contract).
     // ─────────────────────────────────────────────────────────────────
     it("loadConfig falls back to default defaultCount on out-of-range value (with stderr warn)", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -717,22 +699,11 @@ describe("loadConfig / loadConfigSafe", () => {
         const warnings = stderrWrites.join("");
         expect(warnings).toContain("imageGeneration.defaultCount");
         expect(warnings).toContain("100");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("loadConfig falls back to default defaultCount on negative / zero value", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -742,22 +713,11 @@ describe("loadConfig / loadConfigSafe", () => {
         const cfg = loadConfig(projectRoot);
         expect(cfg.imageGeneration.defaultCount).toBe(4);
         expect(stderrWrites.join("")).toContain("imageGeneration.defaultCount");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("loadConfig falls back when defaultCount is non-integer", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -767,22 +727,11 @@ describe("loadConfig / loadConfigSafe", () => {
         const cfg = loadConfig(projectRoot);
         expect(cfg.imageGeneration.defaultCount).toBe(4);
         expect(stderrWrites.join("")).toContain("imageGeneration.defaultCount");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("loadConfig drops refImageAllowlistPrefixes entries with .. / non-absolute paths", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -805,22 +754,11 @@ describe("loadConfig / loadConfigSafe", () => {
         expect(stderrWrites.join("")).toContain(
           "imageGeneration.refImageAllowlistPrefixes",
         );
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("loadConfig drops refImageAllowlistPrefixes entries with control characters / NUL bytes", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -837,22 +775,11 @@ describe("loadConfig / loadConfigSafe", () => {
         expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
           "/srv/clean/",
         ]);
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("loadConfig drops non-string refImageAllowlistPrefixes entries", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -870,22 +797,11 @@ describe("loadConfig / loadConfigSafe", () => {
         expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
           "/srv/clean/",
         ]);
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("stderr warnings sanitize ANSI escape sequences in offending values", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -902,22 +818,11 @@ describe("loadConfig / loadConfigSafe", () => {
         // stable surface.
         expect(warnings).not.toContain("\x1b");
         expect(warnings).not.toContain("");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("imageGeneration: <non-object> falls back to defaults with stderr warn", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -928,10 +833,7 @@ describe("loadConfig / loadConfigSafe", () => {
         // Falls back to DEFAULT_CONFIG.imageGeneration entirely.
         expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
         expect(stderrWrites.join("")).toContain("imageGeneration");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
     });
 
     it("imageGeneration: null falls back to defaults", () => {
@@ -946,15 +848,7 @@ describe("loadConfig / loadConfigSafe", () => {
     });
 
     it("imageGeneration: [] (array) falls back to defaults", () => {
-      const stderrWrites: string[] = [];
-      const originalWrite = process.stderr.write.bind(process.stderr);
-      (process.stderr.write as unknown as (chunk: string) => boolean) = (
-        chunk: string,
-      ) => {
-        stderrWrites.push(chunk);
-        return true;
-      };
-      try {
+      withCapturedStderr((stderrWrites) => {
         writeFileSync(
           join(projectRoot, "harness.config.json"),
           JSON.stringify({
@@ -964,10 +858,74 @@ describe("loadConfig / loadConfigSafe", () => {
         const cfg = loadConfig(projectRoot);
         expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
         expect(stderrWrites.join("")).toContain("imageGeneration");
-      } finally {
-        (process.stderr.write as unknown as typeof originalWrite) =
-          originalWrite;
-      }
+      });
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // defaultBackend basename guard: backend script names resolve against
+    // ${SKILL_DIR}/scripts/backends/<name>.sh — path separators / .. /
+    // control characters could escape the backends directory or break
+    // shell invocation. Reject malformed values at load time.
+    // ─────────────────────────────────────────────────────────────────
+    it("loadConfig rejects defaultBackend containing path separators", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultBackend: "../escape/script" },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultBackend).toBe(
+          DEFAULT_CONFIG.imageGeneration.defaultBackend,
+        );
+        expect(stderrWrites.join("")).toContain(
+          "imageGeneration.defaultBackend",
+        );
+      });
+    });
+
+    it("loadConfig rejects defaultBackend with control characters / NUL bytes", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultBackend: "evil\x00null" },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultBackend).toBe(
+          DEFAULT_CONFIG.imageGeneration.defaultBackend,
+        );
+      });
+    });
+
+    it("loadConfig rejects empty / whitespace-only defaultBackend", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultBackend: "" },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultBackend).toBe(
+          DEFAULT_CONFIG.imageGeneration.defaultBackend,
+        );
+      });
+    });
+
+    it("loadConfig accepts a clean basename for defaultBackend", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: { defaultBackend: "anthropic-claude-image" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.defaultBackend).toBe(
+        "anthropic-claude-image",
+      );
     });
   });
 });

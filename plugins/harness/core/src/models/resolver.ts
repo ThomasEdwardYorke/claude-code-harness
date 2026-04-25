@@ -323,21 +323,27 @@ export function resolveImageModel(
   const normalizedAgent = normalizeAgentName(agentName);
   const agentCfg = modelsConfig?.agents?.[normalizedAgent];
 
-  // Resolve model + source.
+  // Resolve model + source. Use trimmed values for the predicate so
+  // whitespace-only entries fall through to the next layer instead of
+  // being treated as valid model identifiers.
+  const agentModelRaw = agentCfg?.model;
+  const agentModel =
+    typeof agentModelRaw === "string" ? agentModelRaw.trim() : "";
+  const imageModelRaw = imageConfig?.defaultModel;
+  const imageModel =
+    typeof imageModelRaw === "string" ? imageModelRaw.trim() : "";
+
   let model: string;
   let modelSource: ImageResolutionSource;
   let aliasName: string | undefined;
 
-  if (agentCfg?.model) {
-    const { concrete, alias } = resolveAlias(modelsConfig, agentCfg.model);
+  if (agentModel.length > 0) {
+    const { concrete, alias } = resolveAlias(modelsConfig, agentModel);
     model = concrete;
     modelSource = "agent-override";
     aliasName = alias;
-  } else if (imageConfig?.defaultModel) {
-    const { concrete, alias } = resolveAlias(
-      modelsConfig,
-      imageConfig.defaultModel,
-    );
+  } else if (imageModel.length > 0) {
+    const { concrete, alias } = resolveAlias(modelsConfig, imageModel);
     model = concrete;
     modelSource = "image-default";
     aliasName = alias;
@@ -367,14 +373,15 @@ export function resolveImageModel(
       : modelSource;
 
   // Backend resolution is independent — agent overrides do not (yet)
-  // touch the backend. An empty string is rejected as well as undefined
-  // (an empty backend would resolve to a non-existent script
-  // `${SKILL_DIR}/scripts/backends/.sh`, which is worse than falling
-  // back to the shipped default).
+  // touch the backend. Empty / whitespace-only strings are rejected as
+  // well as undefined (an empty backend would resolve to a non-existent
+  // script `${SKILL_DIR}/scripts/backends/.sh`).
+  const backendRaw = imageConfig?.defaultBackend;
+  const backendCandidate =
+    typeof backendRaw === "string" ? backendRaw.trim() : "";
   const backend =
-    typeof imageConfig?.defaultBackend === "string" &&
-    imageConfig.defaultBackend.length > 0
-      ? imageConfig.defaultBackend
+    backendCandidate.length > 0
+      ? backendCandidate
       : HARNESS_IMAGE_DEFAULT_BACKEND;
 
   return {

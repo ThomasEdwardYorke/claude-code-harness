@@ -657,5 +657,68 @@ describe("models/resolver — resolveImageModel", () => {
       const result = resolveImageModel(imageConfig, undefined, "image-gen");
       expect(result.backend).toBe(HARNESS_IMAGE_DEFAULT_BACKEND);
     });
+
+    it("treats whitespace-only defaultModel as invalid (falls through to harness-default)", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "   ", // whitespace-only
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      expect(result.model).toBe(HARNESS_IMAGE_DEFAULT_MODEL);
+      expect(result.source).toBe("harness-default");
+    });
+
+    it("treats whitespace-only defaultBackend as invalid (falls back to harness backend)", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "  \t  ", // whitespace-only
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      expect(result.backend).toBe(HARNESS_IMAGE_DEFAULT_BACKEND);
+    });
+
+    it("treats whitespace-only agent model override as invalid (falls back to image-default)", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        agents: {
+          "image-gen": { model: "   " }, // whitespace-only
+        },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      // Falls through to imageConfig.defaultModel — whitespace-only must
+      // not be treated as a real override.
+      expect(result.model).toBe("gpt-5.4");
+      expect(result.source).toBe("image-default");
+    });
+
+    it("trims surrounding whitespace from valid model values", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "  gpt-5.5  ", // surrounded by whitespace
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      // Trimmed value is used so downstream consumers do not see padding.
+      expect(result.model).toBe("gpt-5.5");
+      expect(result.source).toBe("image-default");
+    });
   });
 });
