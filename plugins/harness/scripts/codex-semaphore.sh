@@ -69,18 +69,45 @@ ensure_lock_dir() {
   fi
 }
 
-# reap_stale — remove slot dirs whose marker file is older than STALE_SECS.
-# Uses `find -mmin` (POSIX-ish; supported on BSD/macOS and GNU find).
-# Silent best-effort: rmdir failures (slot still contains marker file we
-# don't own) are ignored.
+# reap_stale — remove slot dirs whose marker file is older than STALE_SECS
+# AND whose owning pid is no longer alive. The two-condition check prevents
+# the TOCTOU race (Codex Phase 7 Major M2) where a long-running but still
+# active worker has its slot reaped, then a peer acquires the same slot id
+# while the original owner is mid-Codex — causing two workers to think
+# they own the same slot.
+#
+# liveness check: `kill -0 <pid>` returns 0 if the process exists and is
+# signalable by the current user, non-zero otherwise. We extract the pid
+# from the marker filename (pid-<n>). Multiple markers per slot are
+# unlikely (acquire writes exactly one) but tolerated — the slot is kept
+# alive as long as ANY marker has a live owner.
+#
+# Silent best-effort: rmdir / rm failures are ignored. The function uses
+# `find -mmin` (POSIX-ish; supported on BSD/macOS and GNU find).
 reap_stale() {
   # mmin uses minutes; convert seconds -> ceil(minutes).
   local mmin=$(( (STALE_SECS + 59) / 60 ))
   # shellcheck disable=SC2044
   for slot_dir in "$LOCK_DIR"/slot-*/; do
     [ -d "$slot_dir" ] || continue
+    # Check if any pid-* marker has a live owner; if so, skip this slot
+    # entirely (don't even consider mtime — a process blocked for 31 minutes
+    # on a slow Codex review is still alive and rightfully holds the slot).
+    local has_live_owner=0
+    for marker in "$slot_dir"pid-*; do
+      [ -f "$marker" ] || continue
+      # marker filename is pid-<n>; extract <n> from the basename.
+      local pid="${marker##*/pid-}"
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        has_live_owner=1
+        break
+      fi
+    done
+    if [ "$has_live_owner" = "1" ]; then
+      continue
+    fi
     if find "$slot_dir" -maxdepth 1 -type f -name 'pid-*' -mmin +"$mmin" 2>/dev/null | grep -q .; then
-      # remove marker files first, then rmdir the slot.
+      # No live owner AND mtime exceeded threshold → safe to reap.
       rm -f "$slot_dir"/pid-* 2>/dev/null || true
       rmdir "$slot_dir" 2>/dev/null && echo "REAPED stale slot $slot_dir" >&2 || true
     fi

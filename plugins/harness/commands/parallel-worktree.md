@@ -252,7 +252,11 @@ else
     echo "       fix: ensure the harness plugin (cc-triad-relay) is installed and codex-semaphore.sh is executable." >&2
     exit 1
   fi
-  echo "WARN: scripts/codex-semaphore.sh not found; running Codex without semaphore (MAX_PAR=$MAX_PAR=1, sequential is safe)" >&2
+  # MAX_PAR=1: caller intent is "no parallel Codex anyway", so the missing
+  # semaphore degrades cleanly. WARN explicitly so an operator who *did*
+  # set MAX_CODEX_PARALLEL=1 in env (vs default-1) can still see that the
+  # semaphore install is missing and would silently fail if they raise N.
+  echo "WARN: scripts/codex-semaphore.sh not found. MAX_CODEX_PARALLEL=$MAX_PAR is honored as sequential, but raising it without installing the semaphore script will fall back to fatal exit. Install: ensure cc-triad-relay marketplace plugin is present and codex-semaphore.sh is executable." >&2
   node "$CODEX_COMPANION" task "実装レビュー: <task概要>" --effort medium
 fi
 ```

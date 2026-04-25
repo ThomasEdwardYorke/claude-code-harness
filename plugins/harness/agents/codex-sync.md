@@ -182,8 +182,12 @@ The contract:
 
 # Step 1: extract optional output-file marker from the prompt body
 # (case-insensitive, tolerates spaces around the colon).
+# Path body is restricted to printable chars only so a malicious caller
+# cannot smuggle control characters / null bytes / newlines through the
+# marker — those would bypass the `case` validation below and reach the
+# `> "$OUTPUT_FILE"` redirect (Codex Phase 7 minor m1: regex narrowing).
 OUTPUT_FILE="$(printf '%s' "$PROMPT_BODY" \
-  | grep -oiE '\[output-file:[[:space:]]*[^]]+\]' \
+  | grep -oiE '\[output-file:[[:space:]]*[[:print:]]+\]' \
   | head -1 \
   | sed -E 's/^\[[oO][uU][tT][pP][uU][tT]-[fF][iI][lL][eE]:[[:space:]]*//' \
   | sed 's/]$//')"

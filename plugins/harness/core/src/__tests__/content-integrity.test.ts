@@ -3485,6 +3485,41 @@ describe("scripts/codex-semaphore.sh — 9g 案 C 実装本体", () => {
     // timeout 値は DEADLINE_SECS であることを caller に明示。
     expect(content).toMatch(/timed out after \$\{DEADLINE_SECS\}s/);
   });
+
+  it("stale reap が pid liveness check (kill -0) で active worker を保護する (Codex Phase 7 M2)", () => {
+    // Stale reap の TOCTOU race 対策: marker file の mtime が STALE_SECS を
+    // 超えていても、owning pid が `kill -0` で生存確認できる場合は slot を
+    // reap しない。長い Codex review (>30 min) で blocked な worker の slot
+    // が reap されて peer が二重所有する事故を防ぐ。
+    expect(content).toMatch(/kill\s+-0\s+"\$pid"/);
+    // 仕様 invariant: `has_live_owner=1` なら continue (skip reap)
+    expect(content).toMatch(/has_live_owner[\s\S]{0,200}continue/);
+  });
+});
+
+describe("agents/codex-sync.md — output-file marker の regex narrowing (Codex Phase 7 m1)", () => {
+  const content = readAgent("codex-sync");
+
+  it("marker 内 path は printable chars のみ受理 (control chars / null byte 拒否)", () => {
+    // grep regex `[[:print:]]+` で control characters / null bytes / 改行を
+    // marker 抽出段階で reject。redirect target に shell metacharacter が
+    // 流れ込む経路を 1 段早くで遮断する defensive narrowing。
+    expect(content).toMatch(/grep\s+-oiE[\s\S]{0,80}\[\[:print:\]\]\+/);
+    // [^]]+ (非 narrow) パターンが残っていないことを併せ確認 (regression guard)。
+    expect(content).not.toMatch(/grep\s+-oiE[\s\S]{0,80}\[\^\]\]\+\\\]/);
+  });
+});
+
+describe("commands/parallel-worktree.md — semaphore 不在時 WARN message 明示化 (Codex Phase 7 M3)", () => {
+  const content = readCommand("parallel-worktree");
+
+  it("WARN message が 'install ... codex-semaphore.sh' に言及 (operator が修復可能)", () => {
+    // semaphore 不在 + MAX_PAR=1 で silent unconstrained に落ちると、operator が
+    // MAX_PAR を後から上げた時に突然 fatal exit になる (operator 視点で意図不明)。
+    // WARN で install 手段を明示することで、修復経路を runtime に提示。
+    expect(content).toMatch(/MAX_CODEX_PARALLEL[\s\S]{0,150}sequential[\s\S]{0,150}fatal\s+exit/i);
+    expect(content).toMatch(/Install[\s\S]{0,150}codex-semaphore\.sh/);
+  });
 });
 
 describe("commands/parallel-worktree.md — semaphore 不在時の silent fallback ガード (Codex review C3)", () => {
@@ -3499,7 +3534,9 @@ describe("commands/parallel-worktree.md — semaphore 不在時の silent fallba
 
   it("MAX_PAR == 1 で SEM_BIN 不在の場合は WARN + continue (sequential は安全)", () => {
     // sequential (default) で semaphore が無いのは致命傷ではない (overflow しない)。
-    expect(content).toMatch(/WARN[\s\S]{0,300}sequential\s+is\s+safe/i);
+    // WARN message は "honored as sequential" の文言で sequential degrade を明示
+    // (Codex Phase 7 M3 で文言拡張済 — install 手段も併記)。
+    expect(content).toMatch(/WARN[\s\S]{0,400}honored\s+as\s+sequential/i);
   });
 });
 
