@@ -6,6 +6,8 @@
  * Every guardrail that depends on project-specific values (R10/R11 etc.)
  * reads from the `HarnessConfig` on `RuleContext.config`.
  */
+import { type ImageAspectRatio, type ImageGenerationConfig, type ImageReasoningEffort } from "./models/resolver.js";
+export { type ImageAspectRatio, type ImageGenerationConfig, type ImageReasoningEffort, };
 export type HarnessLanguage = "en" | "ja";
 export type TamperingSeverity = "approve" | "ask" | "deny";
 /**
@@ -458,53 +460,6 @@ export interface ModelsAgentRegistryConfig {
 export interface ModelsConfig {
     codex?: ModelsCodexRegistryConfig;
     agents?: Record<string, ModelsAgentRegistryConfig>;
-}
-/**
- * Image-generation skill registry. Populated via DEFAULT_CONFIG so
- * downstream consumers (skill scripts, `harness model resolve image-gen`)
- * never need optional chaining. Mirrors the JSON schema's
- * `imageGeneration.*` keys 1:1.
- *
- * The compile-time fallback for the model is intentionally distinct
- * from the text-side `HARNESS_DEFAULT_MODEL` (image_gen tool dependency
- * — see `HARNESS_IMAGE_DEFAULT_MODEL` in `src/models/resolver.ts` for
- * the canonical value). The resolver
- * (`src/models/resolver.ts::resolveImageModel`) emits precedence:
- *   agent-override > image-default > harness-default.
- */
-export type ImageReasoningEffort = "medium" | "high";
-export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";
-export interface ImageGenerationConfig {
-    /**
-     * Backend script name. Resolved against
-     * `${SKILL_DIR}/scripts/backends/<name>.sh` at invocation time.
-     * v0 ships `codex-image-gen`.
-     */
-    defaultBackend: string;
-    /**
-     * Codex model slug used by the default backend. May reference an
-     * alias declared in `models.codex.aliases`. Default is the
-     * `HARNESS_IMAGE_DEFAULT_MODEL` constant exported from
-     * `src/models/resolver.ts` (currently the only Codex model that
-     * exposes the OpenAI image_gen tool).
-     */
-    defaultModel: string;
-    /** `codex exec --effort` value injected into the backend invocation. */
-    defaultReasoning: ImageReasoningEffort;
-    /** Default aspect ratio when callers do not pass `--aspect`. */
-    defaultAspect: ImageAspectRatio;
-    /**
-     * Default number of parallel images when callers do not pass `-n`.
-     * Range 1-16 (matches `work.maxParallel` upper bound).
-     */
-    defaultCount: number;
-    /**
-     * Absolute path prefixes that ref-image arguments must start with.
-     * Empty array (default) = unrestricted (local-user trust boundary).
-     * Non-empty = caller-supplied `--ref-image` paths must resolve under
-     * one of the listed prefixes.
-     */
-    refImageAllowlistPrefixes: string[];
 }
 export interface HarnessConfig {
     /** Human-readable project name (shown in messages). */

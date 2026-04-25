@@ -15,7 +15,25 @@ import {
   HARNESS_IMAGE_DEFAULT_COUNT,
   HARNESS_IMAGE_DEFAULT_MODEL,
   HARNESS_IMAGE_DEFAULT_REASONING_EFFORT,
+  VALID_IMAGE_ASPECT_RATIOS,
+  VALID_IMAGE_REASONING_EFFORTS,
+  type ImageAspectRatio,
+  type ImageGenerationConfig,
+  type ImageReasoningEffort,
 } from "./models/resolver.js";
+
+// Re-export the types so config.ts consumers (HarnessConfig field
+// callers, downstream skill scripts that import from `@cc-triad-relay/core`)
+// can pick up the canonical definitions without reaching into the
+// `models/resolver` subpath. resolver.ts is the single source of truth
+// — duplicating the declarations here would let the two files drift
+// silently on enum extensions (Codex pseudo-CodeRabbit MAJOR-1
+// 2026-04-25).
+export {
+  type ImageAspectRatio,
+  type ImageGenerationConfig,
+  type ImageReasoningEffort,
+};
 
 // ============================================================
 // Type definitions
@@ -507,54 +525,11 @@ export interface ModelsConfig {
   agents?: Record<string, ModelsAgentRegistryConfig>;
 }
 
-/**
- * Image-generation skill registry. Populated via DEFAULT_CONFIG so
- * downstream consumers (skill scripts, `harness model resolve image-gen`)
- * never need optional chaining. Mirrors the JSON schema's
- * `imageGeneration.*` keys 1:1.
- *
- * The compile-time fallback for the model is intentionally distinct
- * from the text-side `HARNESS_DEFAULT_MODEL` (image_gen tool dependency
- * — see `HARNESS_IMAGE_DEFAULT_MODEL` in `src/models/resolver.ts` for
- * the canonical value). The resolver
- * (`src/models/resolver.ts::resolveImageModel`) emits precedence:
- *   agent-override > image-default > harness-default.
- */
-export type ImageReasoningEffort = "medium" | "high";
-export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";
-
-export interface ImageGenerationConfig {
-  /**
-   * Backend script name. Resolved against
-   * `${SKILL_DIR}/scripts/backends/<name>.sh` at invocation time.
-   * v0 ships `codex-image-gen`.
-   */
-  defaultBackend: string;
-  /**
-   * Codex model slug used by the default backend. May reference an
-   * alias declared in `models.codex.aliases`. Default is the
-   * `HARNESS_IMAGE_DEFAULT_MODEL` constant exported from
-   * `src/models/resolver.ts` (currently the only Codex model that
-   * exposes the OpenAI image_gen tool).
-   */
-  defaultModel: string;
-  /** `codex exec --effort` value injected into the backend invocation. */
-  defaultReasoning: ImageReasoningEffort;
-  /** Default aspect ratio when callers do not pass `--aspect`. */
-  defaultAspect: ImageAspectRatio;
-  /**
-   * Default number of parallel images when callers do not pass `-n`.
-   * Range 1-16 (matches `work.maxParallel` upper bound).
-   */
-  defaultCount: number;
-  /**
-   * Absolute path prefixes that ref-image arguments must start with.
-   * Empty array (default) = unrestricted (local-user trust boundary).
-   * Non-empty = caller-supplied `--ref-image` paths must resolve under
-   * one of the listed prefixes.
-   */
-  refImageAllowlistPrefixes: string[];
-}
+// `ImageReasoningEffort`, `ImageAspectRatio`, and `ImageGenerationConfig`
+// are re-exported from `./models/resolver.js` (see top-of-file imports).
+// resolver.ts is the canonical source of truth for the image surface —
+// duplicating the declarations here would let the two files drift on
+// enum extensions.
 
 export interface HarnessConfig {
   /** Human-readable project name (shown in messages). */
@@ -902,17 +877,11 @@ function validateTddEnforce(cfg: TddEnforceConfig): TddEnforceConfig {
   return cfg;
 }
 
-const VALID_IMAGE_REASONING_EFFORTS: readonly ImageReasoningEffort[] = [
-  "medium",
-  "high",
-];
-const VALID_IMAGE_ASPECT_RATIOS: readonly ImageAspectRatio[] = [
-  "1:1",
-  "3:2",
-  "2:3",
-  "16:9",
-  "9:16",
-];
+// `VALID_IMAGE_REASONING_EFFORTS` and `VALID_IMAGE_ASPECT_RATIOS` are
+// imported from `./models/resolver.js` at the top of this file —
+// resolver.ts is the canonical source of truth so the runtime allowlist
+// tracks the type union without manual sync. (Codex pseudo-CodeRabbit
+// nitpick 2026-04-25.)
 
 /**
  * Type-guard the user-supplied `imageGeneration` partial before
@@ -1076,10 +1045,11 @@ function validateImageGeneration(
         // future Windows port can extend this with a drive-letter
         // check.
         entry.startsWith("/") &&
-        // No traversal segments. We forbid the literal `..` substring
-        // rather than just `/../` segments because `foo..bar/` is
-        // unconventional and rejection is cheaper than a normaliser.
-        !entry.includes("..") &&
+        // No traversal *segments*. Splitting on `/` lets a legitimate
+        // filename like `foo..bar` survive while the `..` segment
+        // (which is the actual path-traversal vector) is rejected.
+        // Codex pseudo-CodeRabbit nitpick 2026-04-25.
+        !entry.split("/").some((segment) => segment === "..") &&
         // No control characters / NUL byte / DEL / C1 range — these
         // would confuse downstream path comparison and log output.
         !/[\x00-\x1f\x7f-\x9f]/.test(entry)

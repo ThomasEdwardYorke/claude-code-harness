@@ -247,6 +247,16 @@ export interface ImageGenerationConfig {
   defaultReasoning: ImageReasoningEffort;
   defaultAspect: ImageAspectRatio;
   defaultCount: number;
+  /**
+   * Sanitised at config-load time (see `validateImageGeneration` in
+   * `config.ts`) — entries are guaranteed to be non-empty absolute
+   * paths free of `..` segments / control characters. **v0**: the
+   * resolver carries this list through but does not itself enforce
+   * it; the consuming skill script (run-ai-images / ai-image-edit
+   * after P2 plugin migration) is responsible for rejecting
+   * `--ref-image` paths that fall outside the allowlist before the
+   * backend runs.
+   */
   refImageAllowlistPrefixes: string[];
 }
 

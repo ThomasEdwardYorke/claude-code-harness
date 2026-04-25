@@ -387,7 +387,7 @@
           "type": "array",
           "items": { "type": "string" },
           "default": [],
-          "description": "Absolute path prefixes that ref-image arguments must start with. Empty array (default) = unrestricted (local-user trust boundary, matches the P0 threat model). Non-empty array = caller-supplied `--ref-image` paths must resolve under one of the listed prefixes (security-sensitive when callers feed LLM-generated paths). Wholesale-replace semantics — overriding the array drops the empty default entirely."
+          "description": "Absolute path prefixes that ref-image arguments are intended to start with. Empty array (default) = unrestricted (local-user trust boundary, matches the P0 threat model). Non-empty array = the harness loader sanitises the list so each entry is a non-empty absolute path free of `..` segments / control characters. **v0 enforcement scope**: validation runs at config load time (see `validateImageGeneration` in `core/src/config.ts`); skill scripts (run-ai-images / ai-image-edit) consume this list when they apply `--ref-image` to backend invocations — wiring the consumer to enforce the prefix at invocation time is part of the P2 plugin-skill migration. Wholesale-replace semantics — overriding the array drops the empty default entirely."
         }
       }
     },

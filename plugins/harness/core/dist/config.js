@@ -8,7 +8,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { HARNESS_IMAGE_DEFAULT_ASPECT, HARNESS_IMAGE_DEFAULT_BACKEND, HARNESS_IMAGE_DEFAULT_COUNT, HARNESS_IMAGE_DEFAULT_MODEL, HARNESS_IMAGE_DEFAULT_REASONING_EFFORT, } from "./models/resolver.js";
+import { HARNESS_IMAGE_DEFAULT_ASPECT, HARNESS_IMAGE_DEFAULT_BACKEND, HARNESS_IMAGE_DEFAULT_COUNT, HARNESS_IMAGE_DEFAULT_MODEL, HARNESS_IMAGE_DEFAULT_REASONING_EFFORT, VALID_IMAGE_ASPECT_RATIOS, VALID_IMAGE_REASONING_EFFORTS, } from "./models/resolver.js";
 // ============================================================
 // Defaults
 // ============================================================
@@ -290,17 +290,11 @@ function validateTddEnforce(cfg) {
     }
     return cfg;
 }
-const VALID_IMAGE_REASONING_EFFORTS = [
-    "medium",
-    "high",
-];
-const VALID_IMAGE_ASPECT_RATIOS = [
-    "1:1",
-    "3:2",
-    "2:3",
-    "16:9",
-    "9:16",
-];
+// `VALID_IMAGE_REASONING_EFFORTS` and `VALID_IMAGE_ASPECT_RATIOS` are
+// imported from `./models/resolver.js` at the top of this file —
+// resolver.ts is the canonical source of truth so the runtime allowlist
+// tracks the type union without manual sync. (Codex pseudo-CodeRabbit
+// nitpick 2026-04-25.)
 /**
  * Type-guard the user-supplied `imageGeneration` partial before
  * spreading it over `DEFAULT_CONFIG.imageGeneration`. Without this
@@ -414,10 +408,11 @@ function validateImageGeneration(cfg) {
                 // future Windows port can extend this with a drive-letter
                 // check.
                 entry.startsWith("/") &&
-                // No traversal segments. We forbid the literal `..` substring
-                // rather than just `/../` segments because `foo..bar/` is
-                // unconventional and rejection is cheaper than a normaliser.
-                !entry.includes("..") &&
+                // No traversal *segments*. Splitting on `/` lets a legitimate
+                // filename like `foo..bar` survive while the `..` segment
+                // (which is the actual path-traversal vector) is rejected.
+                // Codex pseudo-CodeRabbit nitpick 2026-04-25.
+                !entry.split("/").some((segment) => segment === "..") &&
                 // No control characters / NUL byte / DEL / C1 range — these
                 // would confuse downstream path comparison and log output.
                 !/[\x00-\x1f\x7f-\x9f]/.test(entry)) {
