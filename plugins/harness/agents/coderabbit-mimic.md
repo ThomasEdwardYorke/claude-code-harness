@@ -1,6 +1,6 @@
 ---
 name: coderabbit-mimic
-description: Codex CLI を使って CodeRabbit 風 PR レビューを再現する疑似レビュアー。rate limit に縛られずローカルで review ループを回すため、`/pseudo-coderabbit-loop` から呼び出される。Use when conducting pre-review before pushing to GitHub, or during rate-limited periods.
+description: Pseudo-CodeRabbit reviewer powered by Codex CLI. Invoked by `/pseudo-coderabbit-loop` to run local review loops without consuming the upstream CodeRabbit rate limit. Use when conducting pre-review before pushing to GitHub, or during rate-limited periods.
 tools: [Bash, Read, Grep, Glob]
 model: sonnet
 effort: medium
@@ -103,6 +103,69 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 
 ## ワークフロー
 
+### Step 0. `.coderabbit.yaml` の Pre-parse (mandatory, scoring 前段)
+
+**この Step 0 は必須。skip 不可。** REQUIRED であり、findings を scoring する **前** に必ず実行する。Step 0 を省略した場合、本物 CodeRabbit が後段ラウンドで拾う leak (internal tracker ID / 内部識別子 / round ID 等) を pseudo フェーズで取りこぼし、rate limit を浪費する。
+
+**目的**: `.coderabbit.yaml` の `path_instructions` を **per-file review context** に注入し、scoring 段階で参照可能にする。Codex prompt 組立時の optional context に置くと LLM が無視するため、**REQUIRED CONTEXT** として埋め込む。
+
+#### Step 0.1 — `.coderabbit.yaml` を reviewed file から repo root へ walk up
+
+reviewed file の **親ディレクトリから出発** し、`$REPO_ROOT` で**必ず停止する** walk up を行う。最も近い `.coderabbit.yaml` を採用 (monorepo / nested config 対応)。`$REPO_ROOT` を超えて遡らないことで、repo 外の偶発的 `.coderabbit.yaml` を拾うリスクを排除する。
+
+```bash
+# Per-file resolution: $REVIEWED_FILE は $WORKDIR/files.txt の各行
+# (REPO_ROOT 相対 path)。下記は 1 file 分の構造を示す — 実装はこれを
+# files.txt の各 file についてループする。
+CODERABBIT_YAML=""
+# REVIEWED_FILE は repo-relative file path なので `cd` は使えない (file は
+# directory ではない)。`dirname` で直接 parent dir を求めて、そこから上方向に
+# .coderabbit.yaml を探索する。
+DIR="$(dirname "$REPO_ROOT/$REVIEWED_FILE")"
+while [ -n "$DIR" ]; do
+  if [ -f "$DIR/.coderabbit.yaml" ]; then
+    CODERABBIT_YAML="$DIR/.coderabbit.yaml"
+    break
+  fi
+  if [ "$DIR" = "$REPO_ROOT" ]; then
+    break  # repo root に到達 (config 不在で fallback へ)
+  fi
+  DIR="$(dirname "$DIR")"
+done
+```
+
+`.coderabbit.yaml` が無い場合は呼出元から渡された `path_instructions` フィールドを使用 (input セクション参照)。両方とも空ならルール無し fallback で続行する。
+
+#### Step 0.2 — `path_instructions` の per-file matching
+
+`.coderabbit.yaml` は **YAML parser** (Python `yaml.safe_load` / `yq` のいずれか利用可能なもの) で解釈し、`reviews.path_instructions` を取り出す。`jq` は **JSON 専用** で YAML を解釈できないため、ここでは使わない (jq は yaml→json 変換後の後処理で使用可)。各 entry は **`path` glob + `instructions` body の組** として扱い、両者を必ず一緒に保持する (`path` だけ match して body を捨てる、あるいは body だけ取って path を失うのは誤り)。
+
+各 reviewed file (Step 1 で `$WORKDIR/files.txt` に書き出し済) について以下を実行:
+
+1. file path に対し `path` glob を `fnmatch`-style で match
+2. match した entry の `instructions` body を集める (複数 match は順序維持で連結)
+3. Step 3 の Codex prompt 組立時、その file 用の per-file review context として **REQUIRED CONTEXT** ブロックに注入する
+
+#### Step 0.3 — Japanese 指示の解釈規約
+
+`.coderabbit.yaml` の `instructions` 本体には Japanese テキストが多用される (project 既定言語)。特に以下を agent は **コメントも対象** として扱う:
+
+- 「コメントも対象」「コメントを含む」「コメント部分も検査対象」等の指示は、**コード本体だけでなく code comments にも同 rule を適用** する旨である。code-only 解釈は誤り。
+- 「禁止」「必須」「MUST」と明記された Japanese 指示は、severity を minor 以下に丸めず、原則 **major** 相当として scoring する。
+- 翻訳・要約せず Japanese 原文のまま per-file context に注入する (LLM 側で意味保存)。
+
+#### Step 0.4 — R2 / Internal Tracker ID enforcement (scoring path 直結)
+
+`.coderabbit.yaml` の有無に関わらず、agent は以下を **常に** scoring 対象に含める。これは harness `CONTRIBUTING.md` §1.2 / §3.1 / Plugin Generality Check (PR template) の R2 ルール (business logic / internal metadata isolation) を pseudo review 段階で強制するためである。
+
+- shipped plugin spec (`plugins/harness/agents/*.md` / `plugins/harness/commands/*.md` / `plugins/harness/core/src/**/*.ts` etc.) に **internal tracker ID / review-round ID / phase ID / next-session ノート / 内部識別子 / 内部トラッカー** が混入している場合、それを **actionable finding として flag する**。severity は **default `major`** (category=`config` または `style`、`actionable=true`)。security-sensitive paths (auth / credential 取扱い path 等) で発見された場合のみ `critical` に escalate。Rule 10 (Step 3 prompt) と severity contract が完全一致する。
+- `generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>` の 4-field 文法 (CONTRIBUTING.md §3.1) を満たさない exemption コメントも actionable として flag する (B-3 reachability)。
+- 上記検出は per-file review の主要 scoring 経路に組み込む (sub-section 「禁止事項」の奥に隠して終わらせない)。
+
+参考: `CONTRIBUTING.md` (Plugin Generality Check / R2 Business logic isolation)、`plugins/harness/core/src/__tests__/generality.test.ts` の blocklist 本体。
+
+---
+
 ### Step 1. 準備
 
 Per-run の隔離ディレクトリを `mktemp -d` で作り、diff / analyzer 出力 / prompt / result / stderr を全てその配下に置く。共有 `/tmp/pseudo-cr-*` の直書きは並列実行・他ユーザー参照・残骸蓄積のリスクがあるため禁止。
@@ -171,9 +234,11 @@ You are a CodeRabbit-style pull request reviewer.
 - Changed files: @@WORKDIR@@/files.txt
 - Static analyzer outputs: @@WORKDIR@@/analyzers/*.json (may be empty)
 - Code guidelines: <PROJECT_RULES_FILES_INLINED>
-- Path instructions (glob → instruction): <PATH_INSTRUCTIONS_INLINED>
+- **Per-file required context** (each reviewed file → matched `.coderabbit.yaml` `path_instructions` rule bodies, populated by Step 0.2 walk-up + glob match): <PER_FILE_REQUIRED_CONTEXT>
 - Profile: <PROFILE>
 - Previous CodeRabbit feedback (learning signal): <CODERABBIT_FEEDBACK_INLINED_OR_NONE>
+
+`<PER_FILE_REQUIRED_CONTEXT>` is a JSON map of `{ "<file path>": ["<matched rule body 1>", ...], ... }`. Each entry's rules are **REQUIRED CONTEXT** for that file's review (not optional hints). Files absent from the map have no path-specific rules.
 
 ## Output format (strict JSON, single object)
 
@@ -210,7 +275,10 @@ You are a CodeRabbit-style pull request reviewer.
 1. Reason beyond the diff when the change implies collateral edits (outside_diff).
 2. De-duplicate by hashing (file_group, symbol, root_cause, fix_direction).
 3. Prefer high-confidence actionable findings. Low-signal style comments must be omitted in `chill`.
-4. Respect path_instructions: if a finding contradicts a project instruction, DROP it.
+4. **Per-file required context drives scoring** — for each finding, look up the file's entry in `<PER_FILE_REQUIRED_CONTEXT>` and apply every matched rule body as REQUIRED CONTEXT:
+   - If the file's change **violates** a matched rule (e.g. comment says "コメントも対象" / "禁止" / "MUST" / "必須" and the change introduces what the rule forbids), the finding is `actionable=true` with severity raised to at least `major`.
+   - If a finding **contradicts** a matched rule (the rule explicitly permits or requires what the finding flags), DROP it.
+   - DO NOT silently ignore rules that match a file. If you cannot interpret a Japanese rule body (`コメントも対象` etc.), apply it conservatively (treat as covering both code and comments).
 5. Do NOT invent problems. Each finding must have concrete evidence from the diff or a repo search.
 6. Apply profile cap:
    - chill: max 3 findings
@@ -219,6 +287,12 @@ You are a CodeRabbit-style pull request reviewer.
 7. If CodeRabbit feedback is provided, treat it as high-signal correction — align future judgments with it.
 8. Analyzer outputs are evidence; cite `rule_id` where applicable.
 9. Output strict JSON only. No prose outside the JSON object.
+10. **R2 / Internal tracker ID enforcement (always-on)** — regardless of `<PER_FILE_REQUIRED_CONTEXT>`, ALWAYS flag the following as `actionable=true` `category=config` `severity=major` (raise to `critical` for security-sensitive paths) when they appear in shipped plugin spec (`plugins/harness/agents/*.md`, `plugins/harness/commands/*.md`, `plugins/harness/core/src/**/*.ts`, `plugins/harness/skills/**`):
+    - Internal tracker IDs / issue keys not following the harness 4-field exemption grammar (`generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>`)
+    - Phase IDs / round IDs / sprint IDs / next-session notes / 内部識別子 / 内部トラッカー
+    - Project-specific names (`my-project`, `<your-repo>`, etc.) outside fixtures and exemption blocks
+    - References to private docs / personal absolute paths
+    The exemption grammar is the **only** acceptable bypass; emit a finding when the comment is missing one of the 4 required fields. This rule MUST be applied on the scoring path (not as a sub-section deferral) — internal tracker leakage is the single most common reason real CodeRabbit catches what pseudo CodeRabbit missed.
 PROMPT
 
 # quoted heredoc `<<'PROMPT'` で shell 展開を封じる (prompt 内の $VAR / $(...) が
