@@ -1,6 +1,6 @@
 ---
 name: coderabbit-mimic
-description: Codex CLI を使って CodeRabbit 風 PR レビューを再現する疑似レビュアー。rate limit に縛られずローカルで review ループを回すため、`/pseudo-coderabbit-loop` から呼び出される。Use when conducting pre-review before pushing to GitHub, or during rate-limited periods.
+description: Pseudo-CodeRabbit reviewer powered by Codex CLI. Invoked by `/pseudo-coderabbit-loop` to run local review loops without consuming the upstream CodeRabbit rate limit. Use when conducting pre-review before pushing to GitHub, or during rate-limited periods.
 tools: [Bash, Read, Grep, Glob]
 model: sonnet
 effort: medium
@@ -118,8 +118,9 @@ reviewed file の **親ディレクトリから出発** し、`$REPO_ROOT` で**
 # (REPO_ROOT 相対 path)。下記は 1 file 分の構造を示す — 実装はこれを
 # files.txt の各 file についてループする。
 CODERABBIT_YAML=""
-DIR="$(cd "$REPO_ROOT/$REVIEWED_FILE" 2>/dev/null && pwd -P || dirname "$REPO_ROOT/$REVIEWED_FILE")"
-# `cd` は file path には適用できないので、parent dir を直接取る。
+# REVIEWED_FILE は repo-relative file path なので `cd` は使えない (file は
+# directory ではない)。`dirname` で直接 parent dir を求めて、そこから上方向に
+# .coderabbit.yaml を探索する。
 DIR="$(dirname "$REPO_ROOT/$REVIEWED_FILE")"
 while [ -n "$DIR" ]; do
   if [ -f "$DIR/.coderabbit.yaml" ]; then
