@@ -928,4 +928,252 @@ describe("loadConfig / loadConfigSafe", () => {
       );
     });
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4-layer handoff integration — work.taskTrackerMode + handoffPaths.
+  // Backward compatibility: existing Plans.md mode users see no
+  // behaviour change. New "handoff" mode is opt-in and requires
+  // handoffPaths to be fully populated; missing fields trigger a
+  // stderr warning and silent fall-back to "plans" mode.
+  // ─────────────────────────────────────────────────────────────────
+  describe("work.taskTrackerMode + handoffPaths (4-layer handoff)", () => {
+    it("DEFAULT_CONFIG.work.taskTrackerMode is 'plans' (backward compatible)", () => {
+      expect(DEFAULT_CONFIG.work.taskTrackerMode).toBe("plans");
+    });
+
+    it("DEFAULT_CONFIG.work.handoffPaths is undefined (opt-in only)", () => {
+      // The handoff layer is genuinely optional — no default scaffold so
+      // a project without `handoffPaths` set is unambiguously a Plans.md
+      // user. Detecting this absence is how downstream code (skills,
+      // hooks) decides whether the handoff layer applies at all.
+      expect(DEFAULT_CONFIG.work.handoffPaths).toBeUndefined();
+    });
+
+    it("loadConfig accepts taskTrackerMode='handoff' with full handoffPaths set", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: {
+            taskTrackerMode: "handoff",
+            handoffPaths: {
+              roadmap: ".docs/handoff/my-project-roadmap.md",
+              backlog: ".docs/handoff/my-project-backlog.md",
+              current: ".docs/handoff/my-project-current.md",
+              decisions: ".docs/handoff/my-project-design-decisions.md",
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.work.taskTrackerMode).toBe("handoff");
+      expect(cfg.work.handoffPaths).toEqual({
+        roadmap: ".docs/handoff/my-project-roadmap.md",
+        backlog: ".docs/handoff/my-project-backlog.md",
+        current: ".docs/handoff/my-project-current.md",
+        decisions: ".docs/handoff/my-project-design-decisions.md",
+      });
+    });
+
+    it("loadConfig keeps taskTrackerMode='plans' when explicitly set", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: { taskTrackerMode: "plans" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.work.taskTrackerMode).toBe("plans");
+      expect(cfg.work.handoffPaths).toBeUndefined();
+    });
+
+    it("loadConfig replaces handoffPaths wholesale (no shallow merge)", () => {
+      // handoffPaths follows the harness "arrays / required objects replace
+      // wholesale" convention — partial overrides would create silently
+      // incomplete configs. The merge replaces the user-provided object
+      // verbatim.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: {
+            taskTrackerMode: "handoff",
+            handoffPaths: {
+              roadmap: "custom/roadmap.md",
+              backlog: "custom/backlog.md",
+              current: "custom/current.md",
+              decisions: "custom/decisions.md",
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      // Exact match — no inherited defaults sneak in.
+      expect(cfg.work.handoffPaths).toEqual({
+        roadmap: "custom/roadmap.md",
+        backlog: "custom/backlog.md",
+        current: "custom/current.md",
+        decisions: "custom/decisions.md",
+      });
+    });
+
+    it("loadConfig falls back to 'plans' when taskTrackerMode='handoff' but handoffPaths is absent (with stderr warn)", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            work: { taskTrackerMode: "handoff" },
+            // handoffPaths intentionally omitted
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.taskTrackerMode).toBe("plans");
+        expect(cfg.work.handoffPaths).toBeUndefined();
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("taskTrackerMode");
+        expect(warnings).toContain("handoff");
+        expect(warnings).toContain("handoffPaths");
+      });
+    });
+
+    it("loadConfig falls back to 'plans' when handoffPaths has missing required field", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            work: {
+              taskTrackerMode: "handoff",
+              handoffPaths: {
+                roadmap: "r.md",
+                backlog: "b.md",
+                // current + decisions intentionally missing
+              },
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.taskTrackerMode).toBe("plans");
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("handoffPaths");
+      });
+    });
+
+    it("loadConfig rejects handoffPaths fields with empty strings", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            work: {
+              taskTrackerMode: "handoff",
+              handoffPaths: {
+                roadmap: "",
+                backlog: "b.md",
+                current: "c.md",
+                decisions: "d.md",
+              },
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.taskTrackerMode).toBe("plans");
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("handoffPaths");
+      });
+    });
+
+    it("loadConfig rejects handoffPaths fields containing path traversal segments", () => {
+      // Mirrors the userPromptSubmit.contextFiles rule: `..` segments
+      // are a path-traversal vector and would let a project escape its
+      // own root. Validation drops the whole handoff override rather
+      // than partially honouring a malformed path.
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            work: {
+              taskTrackerMode: "handoff",
+              handoffPaths: {
+                roadmap: "../escape/roadmap.md",
+                backlog: "b.md",
+                current: "c.md",
+                decisions: "d.md",
+              },
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.taskTrackerMode).toBe("plans");
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("handoffPaths");
+      });
+    });
+
+    it("loadConfig falls back when taskTrackerMode is an unknown enum value", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            work: { taskTrackerMode: "github-issues" }, // not in allowed enum
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.work.taskTrackerMode).toBe("plans");
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("taskTrackerMode");
+      });
+    });
+
+    it("loadConfig keeps handoffPaths when mode is 'plans' (no validation tripwire)", () => {
+      // An author who flips the mode to "handoff" later should not need
+      // to re-add the paths each time. Storing handoffPaths while the
+      // mode is "plans" is a benign forward-compat case.
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: {
+            taskTrackerMode: "plans",
+            handoffPaths: {
+              roadmap: "r.md",
+              backlog: "b.md",
+              current: "c.md",
+              decisions: "d.md",
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.work.taskTrackerMode).toBe("plans");
+      // Paths are preserved for forward compatibility.
+      expect(cfg.work.handoffPaths).toEqual({
+        roadmap: "r.md",
+        backlog: "b.md",
+        current: "c.md",
+        decisions: "d.md",
+      });
+    });
+
+    it("loadConfig deep-merges work alongside taskTrackerMode without losing other defaults", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          work: {
+            taskTrackerMode: "handoff",
+            handoffPaths: {
+              roadmap: "r.md",
+              backlog: "b.md",
+              current: "c.md",
+              decisions: "d.md",
+            },
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      // qualityGates default object is preserved.
+      expect(cfg.work.qualityGates.enforceTddImplement).toBe(true);
+      // plansFile default still present (handoff mode does not erase it —
+      // skills decide which one to use at dispatch time).
+      expect(cfg.work.plansFile).toBe("Plans.md");
+      // labelPriority / criticalLabels arrays still default to [].
+      expect(cfg.work.labelPriority).toEqual([]);
+      expect(cfg.work.criticalLabels).toEqual([]);
+    });
+  });
 });
