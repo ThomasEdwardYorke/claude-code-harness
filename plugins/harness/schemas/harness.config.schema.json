@@ -349,6 +349,48 @@
         }
       }
     },
+    "imageGeneration": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Image-generation skill registry consumed by `run-ai-images` (engine) and `ai-image-edit` (wrap). Sets the default backend, model, reasoning effort, aspect ratio, count, and ref-image allowlist for the OpenAI image_gen tool driven through the Codex CLI. Defaults match the v0 `codex-image-gen` backend (gpt-5.4 / medium / 1:1 / 4 images). Per-agent overrides flow through `models.agents.image-gen` / `models.agents.image-edit`; the resolver (`resolveImageModel` in `src/models/resolver.ts`) emits precedence: agent-override > image-default > harness-default. Schema is strict (additionalProperties: false) — adding a new knob requires updating both the schema and the resolver to consume it.",
+      "properties": {
+        "defaultBackend": {
+          "type": "string",
+          "default": "codex-image-gen",
+          "description": "Backend script name resolved against `${SKILL_DIR}/scripts/backends/<name>.sh`. v0 ships `codex-image-gen` (Codex CLI + OpenAI image_gen tool); future backends (Anthropic / OpenAI SDK direct) plug in by adding sibling scripts and updating this value. Override via `RUN_AI_IMAGES_DEFAULT_BACKEND` env var at invocation time."
+        },
+        "defaultModel": {
+          "type": "string",
+          "default": "gpt-5.4",
+          "description": "Codex model slug used by the default backend. Intentionally diverges from the text-side `HARNESS_DEFAULT_MODEL = gpt-5.5` because the OpenAI image_gen tool is currently only available on `gpt-5.4` (Codex CLI tool surface). May reference an alias declared in `models.codex.aliases`. Override at runtime via `RUN_AI_IMAGES_CODEX_MODEL` env var."
+        },
+        "defaultReasoning": {
+          "type": "string",
+          "enum": ["medium", "high"],
+          "default": "medium",
+          "description": "`codex exec --effort` value injected when the backend is invoked. Restricted to {medium, high} — image_gen tool does not benefit from minimal/low/xhigh in practice and a narrower surface keeps the validation predictable. Out-of-enum values fall back to `medium` with a stderr warning."
+        },
+        "defaultAspect": {
+          "type": "string",
+          "enum": ["1:1", "3:2", "2:3", "16:9", "9:16"],
+          "default": "1:1",
+          "description": "Default aspect ratio when callers do not pass `--aspect`. Backend honours these as native output (no resize) so quality is preserved. The 5 ratios cover the most common UX targets (square / horizontal photo / vertical photo / landscape video / portrait video). Out-of-enum values fall back to `1:1` with a stderr warning."
+        },
+        "defaultCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 4,
+          "description": "Default number of images generated in parallel when callers do not pass `-n`. 16 upper bound mirrors `work.maxParallel` / `worktree.maxParallel` to keep fan-out reasoning consistent across the surface; 1 lower bound prevents accidental zero-fan-outs."
+        },
+        "refImageAllowlistPrefixes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Absolute path prefixes that ref-image arguments are intended to start with. Empty array (default) = unrestricted (local-user trust boundary). Non-empty array = the harness loader sanitises the list so each entry is a non-empty absolute path free of `..` segments / control characters. Validation runs at config load time; runtime enforcement at invocation is the consumer's responsibility — skill scripts that drive the backend (such as `run-ai-images` / `ai-image-edit`) should reject `--ref-image` paths that fall outside the listed prefixes before the backend runs. Wholesale-replace semantics — overriding the array drops the empty default entirely."
+        }
+      }
+    },
     "models": {
       "type": "object",
       "additionalProperties": false,

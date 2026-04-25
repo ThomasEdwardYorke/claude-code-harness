@@ -22,6 +22,29 @@ function mkTmp(): string {
   return dir;
 }
 
+/**
+ * Capture lines written to `process.stderr.write` during the supplied
+ * callback. Restores the original write implementation in a `finally`
+ * block so a thrown assertion does not leak the mock to subsequent
+ * tests. The callback receives the live `stderrWrites` array so it can
+ * assert on warnings produced by the function under test.
+ */
+function withCapturedStderr(run: (stderrWrites: string[]) => void): void {
+  const stderrWrites: string[] = [];
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  (process.stderr.write as unknown as (chunk: string) => boolean) = (
+    chunk: string,
+  ) => {
+    stderrWrites.push(chunk);
+    return true;
+  };
+  try {
+    run(stderrWrites);
+  } finally {
+    (process.stderr.write as unknown as typeof originalWrite) = originalWrite;
+  }
+}
+
 describe("loadConfig / loadConfigSafe", () => {
   let projectRoot: string;
 
@@ -536,6 +559,373 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.codex.enabled).toBe(true);
       expect(cfg.codex.sync?.recommendedTaskMaxOutputLength).toBe(160000);
       expect(cfg.codex.sync?.checkTaskMaxOutputLength).toBe(true);
+    });
+  });
+
+  describe("imageGeneration section (run-ai-images / ai-image-edit skill registry)", () => {
+    // Background: harness ships two skills that drive the OpenAI image_gen
+    // tool through the Codex CLI — `run-ai-images` (engine) and
+    // `ai-image-edit` (wrap). The `imageGeneration` config surface lets
+    // projects pin the backend, default model, default aspect ratio, and
+    // ref-image allowlist once instead of repeating these knobs across
+    // every invocation. Defaults match the v0 codex-image-gen backend
+    // (gpt-5.4 — image_gen tool dependency).
+    it("DEFAULT_CONFIG.imageGeneration exposes the v0 codex-image-gen backend defaults", () => {
+      expect(DEFAULT_CONFIG.imageGeneration).toBeDefined();
+      expect(DEFAULT_CONFIG.imageGeneration.defaultBackend).toBe("codex-image-gen");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultModel).toBe("gpt-5.4");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultReasoning).toBe("medium");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultAspect).toBe("1:1");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultCount).toBe(4);
+      expect(DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes).toEqual([]);
+    });
+
+    it("loadConfig deep-merges imageGeneration partial overrides without dropping siblings", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: { defaultModel: "gpt-5.5" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.defaultModel).toBe("gpt-5.5");
+      // Sibling fields keep DEFAULT_CONFIG values.
+      expect(cfg.imageGeneration.defaultBackend).toBe("codex-image-gen");
+      expect(cfg.imageGeneration.defaultReasoning).toBe("medium");
+      expect(cfg.imageGeneration.defaultAspect).toBe("1:1");
+      expect(cfg.imageGeneration.defaultCount).toBe(4);
+      expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([]);
+    });
+
+    it("loadConfig accepts user override of defaultCount within 1-16 range", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: { defaultCount: 8, defaultAspect: "16:9" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.defaultCount).toBe(8);
+      expect(cfg.imageGeneration.defaultAspect).toBe("16:9");
+    });
+
+    it("loadConfig replaces refImageAllowlistPrefixes wholesale (array semantics)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: {
+            refImageAllowlistPrefixes: [
+              "/srv/projects/assets/",
+              "/tmp/safe/",
+            ],
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+        "/srv/projects/assets/",
+        "/tmp/safe/",
+      ]);
+    });
+
+    it("loadConfig falls back to default defaultReasoning on non-enum value (with stderr warn)", () => {
+      // Mirrors the validateRelease / validateTddEnforce pattern: invalid
+      // enum values fall back to DEFAULT_CONFIG so consumers never need a
+      // fifth `default:` branch in their switch statements.
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultReasoning: "ultra" }, // not in {medium, high}
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultReasoning).toBe("medium"); // default
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("imageGeneration.defaultReasoning");
+        expect(warnings).toContain("ultra");
+      });
+    });
+
+    it("loadConfig falls back to default defaultAspect on non-enum value (with stderr warn)", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultAspect: "21:9" }, // not in allowed enum
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultAspect).toBe("1:1"); // default
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("imageGeneration.defaultAspect");
+        expect(warnings).toContain("21:9");
+      });
+    });
+
+    it("valid enum values pass through without warning", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              defaultReasoning: "high",
+              defaultAspect: "9:16",
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultReasoning).toBe("high");
+        expect(cfg.imageGeneration.defaultAspect).toBe("9:16");
+        expect(stderrWrites.join("")).toBe("");
+      });
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // Defensive coverage: range / allowlist / sanitisation / type-confusion
+    // guards layered on top of the schema (loadConfig runs before schema
+    // validation, so the runtime guards must mirror the static contract).
+    // ─────────────────────────────────────────────────────────────────
+    it("loadConfig falls back to default defaultCount on out-of-range value (with stderr warn)", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultCount: 100 }, // > 16
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultCount).toBe(4); // default
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("imageGeneration.defaultCount");
+        expect(warnings).toContain("100");
+      });
+    });
+
+    it("loadConfig falls back to default defaultCount on negative / zero value", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultCount: 0 },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultCount).toBe(4);
+        expect(stderrWrites.join("")).toContain("imageGeneration.defaultCount");
+      });
+    });
+
+    it("loadConfig falls back when defaultCount is non-integer", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultCount: 3.5 }, // non-integer
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultCount).toBe(4);
+        expect(stderrWrites.join("")).toContain("imageGeneration.defaultCount");
+      });
+    });
+
+    it("loadConfig drops refImageAllowlistPrefixes entries with .. / non-absolute paths", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              refImageAllowlistPrefixes: [
+                "/srv/safe/",
+                "../../etc/", // path traversal
+                "relative/path/", // non-absolute
+                "/srv/other/",
+              ],
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        // Only the two valid absolute paths survive.
+        expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+          "/srv/safe/",
+          "/srv/other/",
+        ]);
+        expect(stderrWrites.join("")).toContain(
+          "imageGeneration.refImageAllowlistPrefixes",
+        );
+      });
+    });
+
+    it("loadConfig drops refImageAllowlistPrefixes entries with control characters / NUL bytes", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              refImageAllowlistPrefixes: [
+                "/srv/clean/",
+                "/srv/with-\x00null/", // NUL byte
+                "/srv/with-\x1bansi/", // ESC
+              ],
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+          "/srv/clean/",
+        ]);
+      });
+    });
+
+    it("loadConfig drops non-string refImageAllowlistPrefixes entries", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              refImageAllowlistPrefixes: [
+                "/srv/clean/",
+                42, // wrong type
+                null,
+                "", // empty
+              ],
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+          "/srv/clean/",
+        ]);
+      });
+    });
+
+    it("stderr warnings sanitize ANSI escape sequences in offending values", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              defaultReasoning: "medium\x1b[31mEVIL", // ANSI escape sequence
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultReasoning).toBe("medium"); // fallback
+        const warnings = stderrWrites.join("");
+        // Control chars must be filtered out — no raw ESC byte (0x1b) leaks
+        // through. The reported value is sanitised so log scrapers see a
+        // stable surface.
+        expect(warnings).not.toContain("\x1b");
+        expect(warnings).not.toContain("");
+      });
+    });
+
+    it("imageGeneration: <non-object> falls back to defaults with stderr warn", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: 123, // primitive, not an object
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        // Falls back to DEFAULT_CONFIG.imageGeneration entirely.
+        expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
+        expect(stderrWrites.join("")).toContain("imageGeneration");
+      });
+    });
+
+    it("imageGeneration: null falls back to defaults", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: null,
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
+    });
+
+    it("imageGeneration: [] (array) falls back to defaults", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: ["/srv/whatever/"], // array, not object
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
+        expect(stderrWrites.join("")).toContain("imageGeneration");
+      });
+    });
+
+    // ─────────────────────────────────────────────────────────────────
+    // defaultBackend basename guard: backend script names resolve against
+    // ${SKILL_DIR}/scripts/backends/<name>.sh — path separators / .. /
+    // control characters could escape the backends directory or break
+    // shell invocation. Reject malformed values at load time.
+    // ─────────────────────────────────────────────────────────────────
+    it("loadConfig rejects defaultBackend containing path separators", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultBackend: "../escape/script" },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultBackend).toBe(
+          DEFAULT_CONFIG.imageGeneration.defaultBackend,
+        );
+        expect(stderrWrites.join("")).toContain(
+          "imageGeneration.defaultBackend",
+        );
+      });
+    });
+
+    it("loadConfig rejects defaultBackend with control characters / NUL bytes", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultBackend: "evil\x00null" },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultBackend).toBe(
+          DEFAULT_CONFIG.imageGeneration.defaultBackend,
+        );
+      });
+    });
+
+    it("loadConfig rejects empty / whitespace-only defaultBackend", () => {
+      withCapturedStderr((stderrWrites) => {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultBackend: "" },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultBackend).toBe(
+          DEFAULT_CONFIG.imageGeneration.defaultBackend,
+        );
+      });
+    });
+
+    it("loadConfig accepts a clean basename for defaultBackend", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: { defaultBackend: "anthropic-claude-image" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.defaultBackend).toBe(
+        "anthropic-claude-image",
+      );
     });
   });
 });

@@ -187,6 +187,214 @@ export function resolveModel(
 }
 
 // ============================================================
+// Image generation resolver (run-ai-images / ai-image-edit)
+// ============================================================
+
+/**
+ * Reasoning effort allowed for image-generation backends. Subset of the
+ * text-side `ReasoningEffort` — the OpenAI `image_gen` tool does not
+ * benefit from `minimal` / `low` / `xhigh` in practice, so we keep the
+ * surface narrow. Out-of-enum values fall back to
+ * `HARNESS_IMAGE_DEFAULT_REASONING_EFFORT`.
+ */
+export type ImageReasoningEffort = "medium" | "high";
+
+/**
+ * Aspect ratio enum for the run-ai-images engine `--aspect` flag.
+ * Backend honours these as native output (no resize); the 5 ratios cover
+ * the most common UX targets. Out-of-enum values fall back to "1:1".
+ */
+export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";
+
+/**
+ * Compile-time defaults for image generation. Diverges intentionally
+ * from the text-side `HARNESS_DEFAULT_MODEL = "gpt-5.5"` because the
+ * OpenAI `image_gen` tool is currently only available on `gpt-5.4`
+ * (Codex CLI tool surface). Flipping this constant is a
+ * breaking change — prefer per-project override via
+ * `imageGeneration.defaultModel` in `harness.config.json`.
+ */
+export const HARNESS_IMAGE_DEFAULT_MODEL = "gpt-5.4";
+export const HARNESS_IMAGE_DEFAULT_REASONING_EFFORT: ImageReasoningEffort =
+  "medium";
+export const HARNESS_IMAGE_DEFAULT_BACKEND = "codex-image-gen";
+export const HARNESS_IMAGE_DEFAULT_ASPECT: ImageAspectRatio = "1:1";
+export const HARNESS_IMAGE_DEFAULT_COUNT = 4;
+
+export const VALID_IMAGE_REASONING_EFFORTS: readonly ImageReasoningEffort[] = [
+  "medium",
+  "high",
+] as const;
+
+export const VALID_IMAGE_ASPECT_RATIOS: readonly ImageAspectRatio[] = [
+  "1:1",
+  "3:2",
+  "2:3",
+  "16:9",
+  "9:16",
+] as const;
+
+/**
+ * Image-generation config surface. Mirrors the schema's
+ * `imageGeneration.*` keys 1:1 and is consumed by `resolveImageModel`.
+ * Defined here rather than imported from `config.ts` to keep the
+ * resolver pure (no `node:fs` / loader dependency) and re-usable in
+ * tests / CLI / editors that don't load `harness.config.json`.
+ */
+export interface ImageGenerationConfig {
+  defaultBackend: string;
+  defaultModel: string;
+  defaultReasoning: ImageReasoningEffort;
+  defaultAspect: ImageAspectRatio;
+  defaultCount: number;
+  /**
+   * Sanitised at config-load time (see `validateImageGeneration` in
+   * `config.ts`) — entries are guaranteed to be non-empty absolute
+   * paths free of `..` segments / control characters. **v0**: the
+   * resolver carries this list through but does not itself enforce
+   * it; the consuming skill script (run-ai-images / ai-image-edit
+   * after P2 plugin migration) is responsible for rejecting
+   * `--ref-image` paths that fall outside the allowlist before the
+   * backend runs.
+   */
+  refImageAllowlistPrefixes: string[];
+}
+
+export type ImageResolutionSource =
+  | "agent-override"
+  | "image-default"
+  | "harness-default";
+
+export interface ImageModelResolution {
+  /** Resolved Codex / image-backend model slug (after alias lookup). */
+  model: string;
+  /** Resolved reasoning effort (validated against {medium, high}). */
+  reasoningEffort: ImageReasoningEffort;
+  /** Backend script name (e.g. `codex-image-gen`). */
+  backend: string;
+  /** Where the resolution drew the model slug from. */
+  source: ImageResolutionSource;
+  /** True when the resolved `model` was looked up via `models.codex.aliases`. */
+  aliasResolved: boolean;
+  aliasName?: string;
+}
+
+function pickImageReasoningEffort(
+  candidate: string | undefined,
+): ImageReasoningEffort | undefined {
+  if (
+    candidate &&
+    VALID_IMAGE_REASONING_EFFORTS.includes(candidate as ImageReasoningEffort)
+  ) {
+    return candidate as ImageReasoningEffort;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve the effective (model, reasoningEffort, backend) tuple for an
+ * image-generation skill invocation.
+ *
+ * Precedence (highest → lowest):
+ *   1. `models.agents[normalizeAgentName(agentName)].model`
+ *      / `.reasoningEffort` — per-agent override (e.g. project pinned
+ *      `image-gen` to a different model than `image-edit`).
+ *   2. `imageConfig.defaultModel` / `defaultReasoning` — image-wide
+ *      project default.
+ *   3. `HARNESS_IMAGE_DEFAULT_*` — compile-time fallback.
+ *
+ * Backend precedence is independent: `imageConfig.defaultBackend` →
+ * `HARNESS_IMAGE_DEFAULT_BACKEND`. Per-agent backend override is not
+ * supported in v0 (would multiply the surface without a concrete use
+ * case; revisit when a project pins different backends per skill).
+ *
+ * Alias resolution reuses `models.codex.aliases` so projects can
+ * declare a single alias map (`{ "image-strong": "gpt-5.4-vision-pro" }`)
+ * and reference it from both text and image surfaces.
+ *
+ * Pure function — callers (bin/harness model resolve image-gen, agent
+ * Invocation Rules templates) can safely depend on it in tests.
+ */
+export function resolveImageModel(
+  imageConfig: ImageGenerationConfig | undefined,
+  modelsConfig: ModelsConfig | undefined,
+  agentName: string,
+): ImageModelResolution {
+  const normalizedAgent = normalizeAgentName(agentName);
+  const agentCfg = modelsConfig?.agents?.[normalizedAgent];
+
+  // Resolve model + source. Use trimmed values for the predicate so
+  // whitespace-only entries fall through to the next layer instead of
+  // being treated as valid model identifiers.
+  const agentModelRaw = agentCfg?.model;
+  const agentModel =
+    typeof agentModelRaw === "string" ? agentModelRaw.trim() : "";
+  const imageModelRaw = imageConfig?.defaultModel;
+  const imageModel =
+    typeof imageModelRaw === "string" ? imageModelRaw.trim() : "";
+
+  let model: string;
+  let modelSource: ImageResolutionSource;
+  let aliasName: string | undefined;
+
+  if (agentModel.length > 0) {
+    const { concrete, alias } = resolveAlias(modelsConfig, agentModel);
+    model = concrete;
+    modelSource = "agent-override";
+    aliasName = alias;
+  } else if (imageModel.length > 0) {
+    const { concrete, alias } = resolveAlias(modelsConfig, imageModel);
+    model = concrete;
+    modelSource = "image-default";
+    aliasName = alias;
+  } else {
+    model = HARNESS_IMAGE_DEFAULT_MODEL;
+    modelSource = "harness-default";
+    aliasName = undefined;
+  }
+
+  // Resolve reasoningEffort. Agent override (if valid for image surface)
+  // > image-default > harness-default. Invalid values are silently
+  // dropped and the chain continues — matches resolveModel's behaviour
+  // for bad effort values.
+  const agentEffort = pickImageReasoningEffort(agentCfg?.reasoningEffort);
+  const imageEffort = pickImageReasoningEffort(imageConfig?.defaultReasoning);
+  const reasoningEffort: ImageReasoningEffort =
+    agentEffort ?? imageEffort ?? HARNESS_IMAGE_DEFAULT_REASONING_EFFORT;
+
+  // Source promotion: if the model came from the image-default / harness-
+  // default chain BUT the agent supplied a valid reasoningEffort, lift
+  // the source to "agent-override" so `harness model resolve image-gen`
+  // surfaces the per-agent customisation. Mirrors resolveModel's
+  // hasValidAgentEffort guard.
+  const source: ImageResolutionSource =
+    modelSource !== "agent-override" && agentEffort !== undefined
+      ? "agent-override"
+      : modelSource;
+
+  // Backend resolution is independent — agent overrides do not (yet)
+  // touch the backend. Empty / whitespace-only strings are rejected as
+  // well as undefined (an empty backend would resolve to a non-existent
+  // script `${SKILL_DIR}/scripts/backends/.sh`).
+  const backendRaw = imageConfig?.defaultBackend;
+  const backendCandidate =
+    typeof backendRaw === "string" ? backendRaw.trim() : "";
+  const backend =
+    backendCandidate.length > 0
+      ? backendCandidate
+      : HARNESS_IMAGE_DEFAULT_BACKEND;
+
+  return {
+    model,
+    reasoningEffort,
+    backend,
+    source,
+    aliasResolved: aliasName !== undefined,
+    ...(aliasName !== undefined ? { aliasName } : {}),
+  };
+}
+
+// ============================================================
 // Deprecation / migration check
 // ============================================================
 

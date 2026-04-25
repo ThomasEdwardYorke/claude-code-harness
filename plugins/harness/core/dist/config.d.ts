@@ -6,6 +6,8 @@
  * Every guardrail that depends on project-specific values (R10/R11 etc.)
  * reads from the `HarnessConfig` on `RuleContext.config`.
  */
+import { type ImageAspectRatio, type ImageGenerationConfig, type ImageReasoningEffort } from "./models/resolver.js";
+export { type ImageAspectRatio, type ImageGenerationConfig, type ImageReasoningEffort, };
 export type HarnessLanguage = "en" | "ja";
 export type TamperingSeverity = "approve" | "ask" | "deny";
 /**
@@ -493,6 +495,13 @@ export interface HarnessConfig {
     postToolUseFailure: PostToolUseFailureConfig;
     configChange: ConfigChangeConfig;
     subagentStart: SubagentStartConfig;
+    /**
+     * Image-generation skill registry. Always populated post-merge —
+     * `DEFAULT_CONFIG.imageGeneration` ships full defaults so callers do
+     * not need optional chaining. The user-facing JSON surface still
+     * accepts partial overrides (sibling keys keep their defaults).
+     */
+    imageGeneration: ImageGenerationConfig;
     /**
      * Optional model registry. When absent, harness resolves to
      * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).

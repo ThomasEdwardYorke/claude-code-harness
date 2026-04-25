@@ -8,7 +8,31 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import {
+  HARNESS_IMAGE_DEFAULT_ASPECT,
+  HARNESS_IMAGE_DEFAULT_BACKEND,
+  HARNESS_IMAGE_DEFAULT_COUNT,
+  HARNESS_IMAGE_DEFAULT_MODEL,
+  HARNESS_IMAGE_DEFAULT_REASONING_EFFORT,
+  VALID_IMAGE_ASPECT_RATIOS,
+  VALID_IMAGE_REASONING_EFFORTS,
+  type ImageAspectRatio,
+  type ImageGenerationConfig,
+  type ImageReasoningEffort,
+} from "./models/resolver.js";
+
+// Re-export the types so config.ts consumers (HarnessConfig field
+// callers, downstream skill scripts that import from `@cc-triad-relay/core`)
+// can pick up the canonical definitions without reaching into the
+// `models/resolver` subpath. resolver.ts is the single source of truth
+// — duplicating the declarations here would let the two files drift
+// silently on enum extensions.
+export {
+  type ImageAspectRatio,
+  type ImageGenerationConfig,
+  type ImageReasoningEffort,
+};
 
 // ============================================================
 // Type definitions
@@ -500,6 +524,12 @@ export interface ModelsConfig {
   agents?: Record<string, ModelsAgentRegistryConfig>;
 }
 
+// `ImageReasoningEffort`, `ImageAspectRatio`, and `ImageGenerationConfig`
+// are re-exported from `./models/resolver.js` (see top-of-file imports).
+// resolver.ts is the canonical source of truth for the image surface —
+// duplicating the declarations here would let the two files drift on
+// enum extensions.
+
 export interface HarnessConfig {
   /** Human-readable project name (shown in messages). */
   projectName: string;
@@ -534,6 +564,13 @@ export interface HarnessConfig {
   postToolUseFailure: PostToolUseFailureConfig;
   configChange: ConfigChangeConfig;
   subagentStart: SubagentStartConfig;
+  /**
+   * Image-generation skill registry. Always populated post-merge —
+   * `DEFAULT_CONFIG.imageGeneration` ships full defaults so callers do
+   * not need optional chaining. The user-facing JSON surface still
+   * accepts partial overrides (sibling keys keep their defaults).
+   */
+  imageGeneration: ImageGenerationConfig;
   /**
    * Optional model registry. When absent, harness resolves to
    * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).
@@ -644,6 +681,19 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     agentTypeNotes: {},
     maxTotalBytes: 4096,
   },
+  imageGeneration: {
+    // v0 codex-image-gen backend defaults — image_gen tool dependency
+    // on the resolver's `HARNESS_IMAGE_DEFAULT_MODEL` constant (Codex
+    // CLI). Future Anthropic or OpenAI SDK backends will
+    // add sibling keys; new knobs require schema + resolver coupling
+    // so DEFAULT_CONFIG is never the only source of truth.
+    defaultBackend: HARNESS_IMAGE_DEFAULT_BACKEND,
+    defaultModel: HARNESS_IMAGE_DEFAULT_MODEL,
+    defaultReasoning: HARNESS_IMAGE_DEFAULT_REASONING_EFFORT,
+    defaultAspect: HARNESS_IMAGE_DEFAULT_ASPECT,
+    defaultCount: HARNESS_IMAGE_DEFAULT_COUNT,
+    refImageAllowlistPrefixes: [],
+  },
   // `models` is intentionally absent from DEFAULT_CONFIG. The compile-time
   // fallback lives in `src/models/resolver.ts` as `HARNESS_DEFAULT_MODEL`
   // so that an unconfigured project surfaces as `source: "harness-default"`
@@ -743,6 +793,9 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
         ...(partial.subagentStart?.agentTypeNotes ?? {}),
       },
     },
+    imageGeneration: validateImageGeneration(
+      mergeImageGenerationConfig(partial.imageGeneration),
+    ),
     ...(() => {
       const merged = mergeModelsConfig(partial.models);
       return merged ? { models: merged } : {};
@@ -821,6 +874,234 @@ function validateTddEnforce(cfg: TddEnforceConfig): TddEnforceConfig {
     };
   }
   return cfg;
+}
+
+// `VALID_IMAGE_REASONING_EFFORTS` and `VALID_IMAGE_ASPECT_RATIOS` are
+// imported from `./models/resolver.js` at the top of this file —
+// resolver.ts is the canonical source of truth so the runtime allowlist
+// tracks the type union without manual sync (avoiding a divergence
+// hazard where one file silently extends the union without the other).
+
+/**
+ * Type-guard the user-supplied `imageGeneration` partial before
+ * spreading it over `DEFAULT_CONFIG.imageGeneration`. Without this
+ * guard, malformed shapes (`null`, `42`, `"oops"`, `[]`, etc.) would
+ * silently spread as `{}` (or worse, splice array indices into the
+ * merged object) and the user would never learn that their config
+ * was ignored.
+ *
+ */
+function mergeImageGenerationConfig(
+  partial: unknown,
+): ImageGenerationConfig {
+  if (partial === undefined) {
+    return { ...DEFAULT_CONFIG.imageGeneration };
+  }
+  if (
+    partial === null ||
+    typeof partial !== "object" ||
+    Array.isArray(partial)
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration=${sanitiseConfigValueForStderr(
+        partial,
+      )} must be a JSON object; falling back to defaults.\n`,
+    );
+    return { ...DEFAULT_CONFIG.imageGeneration };
+  }
+  return {
+    ...DEFAULT_CONFIG.imageGeneration,
+    ...(partial as Partial<ImageGenerationConfig>),
+  };
+}
+
+/**
+ * Sanitise a value before writing it to stderr. The user-supplied input
+ * may carry ANSI escape sequences, NUL bytes, or other C0 / DEL / C1
+ * control characters that downstream log scrapers would interpret as
+ * terminal cursor / colour controls. Replace them with `?` so the
+ * report stays readable and audit-safe.
+ *
+ */
+function sanitiseConfigValueForStderr(value: unknown): string {
+  return JSON.stringify(value).replace(
+    // C0 (excluding LF / CR / TAB which JSON.stringify already escapes
+    // to \\n / \\r / \\t) + DEL + C1 range. Anything that survives is
+    // printable ASCII or properly escaped Unicode.
+    /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,
+    "?",
+  );
+}
+
+/**
+ * Guard against `imageGeneration.defaultReasoning` / `defaultAspect` /
+ * `defaultCount` / `refImageAllowlistPrefixes` carrying invalid shapes.
+ * Falls back to the default for the offending field (rather than
+ * rejecting the whole section) so a malformed knob does not pull down
+ * adjacent valid overrides.
+ *
+ * - **defaultReasoning** / **defaultAspect**: enum check, fall back to
+ *   `DEFAULT_CONFIG.imageGeneration.*`.
+ * - **defaultCount**: integer in [1, 16]. Schema enforces this for
+ *   schema-aware tools, but the loader runs before schema validation
+ *   so we duplicate the range check here as a runtime guard.
+ * - **refImageAllowlistPrefixes**: each entry must be a non-empty
+ *   absolute path string without `..` segments or control characters.
+ *   Invalid entries are dropped (preserving the rest of the array).
+ *
+ * stderr output uses `sanitiseConfigValueForStderr` so attacker-
+ * controlled values cannot inject ANSI escape codes / NUL bytes into
+ * harness diagnostics.
+ */
+function validateImageGeneration(
+  cfg: ImageGenerationConfig,
+): ImageGenerationConfig {
+  let next = cfg;
+  if (
+    !VALID_IMAGE_REASONING_EFFORTS.includes(
+      next.defaultReasoning as ImageReasoningEffort,
+    )
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultReasoning=${sanitiseConfigValueForStderr(
+        next.defaultReasoning,
+      )} is not one of ${JSON.stringify(
+        VALID_IMAGE_REASONING_EFFORTS,
+      )}; falling back to "${DEFAULT_CONFIG.imageGeneration.defaultReasoning}".\n`,
+    );
+    next = {
+      ...next,
+      defaultReasoning: DEFAULT_CONFIG.imageGeneration.defaultReasoning,
+    };
+  }
+  if (
+    !VALID_IMAGE_ASPECT_RATIOS.includes(
+      next.defaultAspect as ImageAspectRatio,
+    )
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultAspect=${sanitiseConfigValueForStderr(
+        next.defaultAspect,
+      )} is not one of ${JSON.stringify(
+        VALID_IMAGE_ASPECT_RATIOS,
+      )}; falling back to "${DEFAULT_CONFIG.imageGeneration.defaultAspect}".\n`,
+    );
+    next = {
+      ...next,
+      defaultAspect: DEFAULT_CONFIG.imageGeneration.defaultAspect,
+    };
+  }
+  // defaultBackend basename guard. Backend script names resolve
+  // against `${SKILL_DIR}/scripts/backends/<name>.sh` at invocation
+  // time — a value containing path separators or `..` segments could
+  // escape the backends directory and execute arbitrary scripts.
+  // Reject malformed values (path separators / control chars / empty
+  // / whitespace-only) at load time and fall back to the shipped
+  // backend.
+  if (
+    typeof next.defaultBackend !== "string" ||
+    next.defaultBackend.trim().length === 0 ||
+    next.defaultBackend.includes("/") ||
+    next.defaultBackend.includes("\\") ||
+    next.defaultBackend.split(/[\\/]/).some((seg) => seg === "..") ||
+    /[\x00-\x1f\x7f-\x9f]/.test(next.defaultBackend)
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultBackend=${sanitiseConfigValueForStderr(
+        next.defaultBackend,
+      )} must be a non-empty basename without path separators or control characters; falling back to "${
+        DEFAULT_CONFIG.imageGeneration.defaultBackend
+      }".\n`,
+    );
+    next = {
+      ...next,
+      defaultBackend: DEFAULT_CONFIG.imageGeneration.defaultBackend,
+    };
+  } else if (next.defaultBackend !== next.defaultBackend.trim()) {
+    // Surrounding whitespace is benign; normalise so downstream
+    // consumers do not see padded backend names.
+    next = { ...next, defaultBackend: next.defaultBackend.trim() };
+  }
+  // defaultCount range guard. Schema declares minimum 1 / maximum 16
+  // but loadConfig runs before schema validation, so re-enforce here.
+  if (
+    typeof next.defaultCount !== "number" ||
+    !Number.isInteger(next.defaultCount) ||
+    next.defaultCount < 1 ||
+    next.defaultCount > 16
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultCount=${sanitiseConfigValueForStderr(
+        next.defaultCount,
+      )} is not an integer in [1, 16]; falling back to ${
+        DEFAULT_CONFIG.imageGeneration.defaultCount
+      }.\n`,
+    );
+    next = {
+      ...next,
+      defaultCount: DEFAULT_CONFIG.imageGeneration.defaultCount,
+    };
+  }
+  // refImageAllowlistPrefixes element guard. Drop any entry that is
+  // not a non-empty absolute path without `..` segments or control
+  // characters. Falls through to the default (empty array) when the
+  // entire input is malformed (non-array).
+  if (!Array.isArray(next.refImageAllowlistPrefixes)) {
+    process.stderr.write(
+      `[harness config] imageGeneration.refImageAllowlistPrefixes=${sanitiseConfigValueForStderr(
+        next.refImageAllowlistPrefixes,
+      )} is not an array; falling back to ${JSON.stringify(
+        DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes,
+      )}.\n`,
+    );
+    next = {
+      ...next,
+      refImageAllowlistPrefixes:
+        DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes,
+    };
+  } else {
+    const dropped: number[] = [];
+    const cleanPrefixes: string[] = [];
+    for (let i = 0; i < next.refImageAllowlistPrefixes.length; i += 1) {
+      const entry = next.refImageAllowlistPrefixes[i];
+      if (
+        typeof entry === "string" &&
+        entry.length > 0 &&
+        // Cross-platform absolute-path detection. node:path's
+        // `isAbsolute` covers POSIX (`/foo`), Windows drive letters
+        // (`C:\foo`), and UNC paths (`\\server\share`).
+        isAbsolute(entry) &&
+        // No traversal *segments*. Splitting on both POSIX (`/`) and
+        // Windows (`\\`) separators lets a legitimate filename like
+        // `foo..bar` survive while the `..` segment (the actual path-
+        // traversal vector) is rejected on either platform.
+        !entry.split(/[\\/]/).some((segment) => segment === "..") &&
+        // No control characters / NUL byte / DEL / C1 range — these
+        // would confuse downstream path comparison and log output.
+        !/[\x00-\x1f\x7f-\x9f]/.test(entry)
+      ) {
+        cleanPrefixes.push(entry);
+      } else {
+        dropped.push(i);
+      }
+    }
+    if (dropped.length > 0) {
+      process.stderr.write(
+        `[harness config] imageGeneration.refImageAllowlistPrefixes dropped ${
+          dropped.length
+        } invalid entr${
+          dropped.length === 1 ? "y" : "ies"
+        } (indices ${JSON.stringify(
+          dropped,
+        )}); each entry must be a non-empty absolute path without ".." segments or control characters.\n`,
+      );
+      next = {
+        ...next,
+        refImageAllowlistPrefixes: cleanPrefixes,
+      };
+    }
+  }
+  return next;
 }
 
 const VALID_RELEASE_STRATEGIES: readonly ReleaseStrategy[] = [

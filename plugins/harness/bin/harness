@@ -8,7 +8,10 @@
  *   harness doctor                Diagnose local environment
  *   harness rules list            List active guardrail rules
  *   harness rules test <command>  Dry-run a bash command against R01-R13
- *   harness model resolve <agent> Print effective Codex model for <agent> (JSON)
+ *   harness model resolve <agent> Print effective Codex model for <agent> (JSON).
+ *                                  When <agent> is `image-gen` or `image-edit`, dispatches
+ *                                  to the image resolver and prints {model, reasoningEffort,
+ *                                  backend, source, ...}.
  *   harness model check [--strict]  Flag deprecated models vs ~/.codex/models_cache.json
  *   harness migrate [--from PATH] Migrate legacy v2 state to the v3 JSON store
  *   harness --version
@@ -55,6 +58,7 @@ function printUsage() {
       "  harness rules list            List active guardrail rules",
       "  harness rules test <cmd>      Dry-run a bash command against R01-R13",
       "  harness model resolve <agent> Print effective Codex model for <agent>",
+      "                                  (image-gen / image-edit dispatch to image resolver)",
       "  harness model check [--strict]  Flag deprecated models vs models_cache.json",
       "  harness migrate [--from D]    Migrate legacy .claude/state to v3 JSON",
       "  harness --version",
@@ -419,6 +423,46 @@ async function loadProjectModelsConfig() {
   return cfg?.models;
 }
 
+/**
+ * Load the project's full image-generation surface (`imageGeneration` +
+ * `models` for the shared alias map / per-agent override). Returns
+ * `{ imageGeneration: undefined, models: undefined }` when the core
+ * build is missing **or** the project has no `harness.config.json`.
+ *
+ * The "no config file" case is critical for the CLI: without this
+ * check, `loadConfigSafe` would synthesise `DEFAULT_CONFIG.imageGeneration`
+ * and the resolver would emit `source: "image-default"` for an
+ * unconfigured project — masking the distinction between shipped
+ * behaviour and explicit user intent. Returning undefined makes
+ * `harness model resolve image-gen` correctly emit
+ * `source: "harness-default"` until the user pins something.
+ */
+async function loadProjectImageGenerationConfig() {
+  const corePath = resolveCorePath();
+  if (corePath === null) return { imageGeneration: undefined, models: undefined };
+  const projectDir = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  const userConfigPath = resolve(projectDir, "harness.config.json");
+  if (!existsSync(userConfigPath)) {
+    return { imageGeneration: undefined, models: undefined };
+  }
+  const configPath = corePath.replace("index.js", "config.js");
+  const mod = await import(`file://${configPath.replace(/\\/g, "/")}`);
+  const cfg = mod.loadConfigSafe
+    ? mod.loadConfigSafe(projectDir)
+    : mod.loadConfig(projectDir);
+  return {
+    imageGeneration: cfg?.imageGeneration,
+    models: cfg?.models,
+  };
+}
+
+// Reserved agent names that route to `resolveImageModel` instead of the
+// text-side `resolveModel`. Keep this list small and explicit so a
+// project cannot rebind a text agent to the image resolver by naming
+// collision (would silently flip the source enum from "agent-override"
+// to "image-default").
+const IMAGE_AGENT_NAMES = new Set(["image-gen", "image-edit"]);
+
 function loadCodexModelsCache() {
   const home = homedir();
   const cachePath = join(home, ".codex", "models_cache.json");
@@ -473,6 +517,19 @@ async function cmdModelResolve(agent) {
       "harness model resolve: core build not found. Run `npm run build`.\n",
     );
     return 1;
+  }
+  // Dispatch image agents to `resolveImageModel` so `image-gen` /
+  // `image-edit` honour the `imageGeneration.*` config surface and the
+  // image-side compile-time defaults (image_gen tool dependency).
+  const normalized =
+    typeof mod.normalizeAgentName === "function"
+      ? mod.normalizeAgentName(agent)
+      : String(agent ?? "").trim();
+  if (IMAGE_AGENT_NAMES.has(normalized)) {
+    const { imageGeneration, models } = await loadProjectImageGenerationConfig();
+    const resolution = mod.resolveImageModel(imageGeneration, models, agent);
+    process.stdout.write(JSON.stringify(resolution, null, 2) + "\n");
+    return 0;
   }
   const config = await loadProjectModelsConfig();
   const resolution = mod.resolveModel(config, agent);
