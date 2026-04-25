@@ -117,6 +117,117 @@ exit_code: <N>
 stderr: <last 20 lines>
 ```
 
+## Output File Redirect (optional, prompt-driven)
+
+Long-running Codex review tasks (CodeRabbit-style multi-file analysis,
+full PR review JSON) routinely produce 5,000+ line output. Returning
+that output as the agent's response value loads the entire payload into
+the *parent* (caller) subagent's context — when the parent dispatches
+multiple `codex-sync` agents in parallel, those payloads accumulate and
+frequently exhaust the parallel subagent context budget before the
+agents can return. A 100% timeout / lost-result rate has been observed
+when 3+ long-running Codex reviews run in parallel.
+
+To prevent that subagent context overflow, callers may instruct this
+agent to write Codex stdout to a file and return only the file path.
+The contract:
+
+1. **Trigger marker** — the caller places a marker line anywhere in the
+   prompt body matching `[output-file: <absolute-path-to-result>]`
+   (case-insensitive; recommended at the very top or bottom of the
+   prompt for readability). Spaces between the colon and the path are
+   tolerated.
+2. **Path validation** — the path **must be absolute** (begin with
+   `/`). Relative paths are rejected with a fatal `ERROR`. The agent
+   additionally warns when the path is outside `/tmp/`, `${TMPDIR}`,
+   the caller's `${WORKDIR}` (if exported), or the current working
+   directory tree, but proceeds on the caller's responsibility.
+3. **Redirect execution** — when the marker is present, the agent runs
+   the Codex command with stdout (and stderr) redirected to the
+   resolved path:
+   ```bash
+   node "$CODEX_COMPANION" task --prompt-file /tmp/codex-prompt-<rand>.md > "<output-file>" 2>&1
+   ```
+4. **Agent return value (redirect mode)** — *only* the following
+   minimal lines, with no other prose, summary, or JSON body:
+   ```text
+   OUTPUT_PATH=<absolute-path>
+   OUTPUT_BYTES=<file-size-in-bytes>
+   ```
+   When the underlying Codex run exits non-zero, the agent appends a
+   third line `EXIT_CODE=<n>` so the caller can decide whether to
+   retry. The total response body stays under ~120 bytes regardless of
+   Codex output size, so the parent subagent context budget is not
+   touched.
+5. **Caller responsibility** — read the file via the `Read` tool to
+   ingest the actual Codex result, then delete the file when done.
+   The agent does **not** clean up automatically (the path may be
+   intentionally persisted for archival).
+6. **Compatibility (legacy / inline mode)** — when the marker is
+   **absent**, the agent behaves exactly as before this section was
+   added: the original inline-stdout return is used unchanged, subject
+   to `TASK_MAX_OUTPUT_LENGTH` truncation as documented in the next
+   section. This keeps single-shot callers (e.g. quick diagnostic
+   queries) unaffected — the redirect contract is opt-in.
+
+### Invocation snippet (redirect mode)
+
+```bash
+# $PROMPT_BODY: caller's full prompt as received by this agent (the verbatim
+#   text the parent dispatched). When the trigger marker is present, we extract
+#   the path, then materialize the prompt to a temp file before invoking
+#   codex-companion (the upstream task subcommand requires --prompt-file or
+#   stdin; this snippet always uses --prompt-file for shell-safety, mirroring
+#   the long-prompt example in Invocation Rule 7).
+
+# Step 1: extract optional output-file marker from the prompt body
+# (case-insensitive, tolerates spaces around the colon).
+# Path body is restricted to printable chars only so a malicious caller
+# cannot smuggle control characters / null bytes / newlines through the
+# marker — those would bypass the `case` validation below and reach the
+# `> "$OUTPUT_FILE"` redirect (Codex Phase 7 minor m1: regex narrowing).
+OUTPUT_FILE="$(printf '%s' "$PROMPT_BODY" \
+  | grep -oiE '\[output-file:[[:space:]]*[[:print:]]+\]' \
+  | head -1 \
+  | sed -E 's/^\[[oO][uU][tT][pP][uU][tT]-[fF][iI][lL][eE]:[[:space:]]*//' \
+  | sed 's/]$//')"
+
+if [ -n "$OUTPUT_FILE" ]; then
+  # Step 2: validate the output path before we redirect anything.
+  case "$OUTPUT_FILE" in
+    /tmp/*|"${TMPDIR:-/tmp}"*|"${WORKDIR:-/nonexistent}"*|"$(pwd)"/*)
+      : # inside an allowed area
+      ;;
+    /*)
+      echo "WARN: output-file '$OUTPUT_FILE' is absolute but outside tmp / cwd; proceeding (caller responsibility)" >&2
+      ;;
+    *)
+      echo "ERROR: output-file path '$OUTPUT_FILE' must be absolute (begin with /)" >&2
+      exit 1
+      ;;
+  esac
+
+  # Step 3: materialize the prompt to a temp file so codex-companion can read
+  # it via --prompt-file (the safe path for any prompt — long, multi-line, or
+  # containing shell metacharacters). The temp file is removed in the trap.
+  PROMPT_FILE="$(mktemp -t codex-prompt-XXXXXX.md)"
+  trap 'rm -f "$PROMPT_FILE"' EXIT
+  printf '%s' "$PROMPT_BODY" > "$PROMPT_FILE"
+
+  # Step 4: run Codex with stdout+stderr redirected to the requested file.
+  # The agent's response value will be the OUTPUT_PATH/OUTPUT_BYTES lines
+  # below — Codex's actual output is read by the caller from $OUTPUT_FILE.
+  node "$CODEX_COMPANION" task --prompt-file "$PROMPT_FILE" > "$OUTPUT_FILE" 2>&1
+  RC=$?
+  echo "OUTPUT_PATH=$OUTPUT_FILE"
+  echo "OUTPUT_BYTES=$(wc -c < "$OUTPUT_FILE" 2>/dev/null | tr -d ' ' || echo 0)"
+  [ "$RC" -ne 0 ] && echo "EXIT_CODE=$RC"
+  exit "$RC"
+fi
+# (marker absent → fall through to legacy inline-stdout invocation,
+#  which uses its own mktemp for --prompt-file per Invocation Rule 7)
+```
+
 ## Handling Mid-Response Truncation
 
 This agent's final response can be middle-truncated by Claude Code's

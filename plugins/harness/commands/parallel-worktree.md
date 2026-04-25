@@ -2,7 +2,7 @@
 name: parallel-worktree
 description: "複数サブタスクを git worktree 並列で開発するオーケストレータスキル (Model A: 単一 Claude + Agent-tool subagent)。coordinator が worktree 生成 / worker dispatch / 担当表同期 / マージ順序 / コンフリクト解消を orchestrate する。各 worker は TDD + Codex Phase 4-5 を実行し、Phase 5.5-7 は coordinator が取りまとめて実行する。単一リポジトリ (worktree なし) でもサブタスク数 1 の縮退モードとして利用可。Use when implementing 2+ independent sub-tasks in parallel with maximum quality."
 allowed-tools: ["Read", "Write", "Edit", "Grep", "Glob", "Bash", "Agent", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskStop", "TaskOutput"]
-argument-hint: "[--spec=<json-file>] [--feature-branch=<base>] [--max-parallel=N] [--profile=chill|assertive|strict] [--dry-run] [--no-commit]"
+argument-hint: "[spec|feature-branch|max-parallel|max-codex-parallel|profile|dry-run|no-commit]"
 ---
 
 # `/parallel-worktree` — worktree 並列 TDD 開発オーケストレータ (Model A)
@@ -151,6 +151,7 @@ coordinator は `$ARGUMENTS` から以下を抽出し、各 worktree への `/td
 
 - `--profile=chill|assertive|strict`: Phase 5.5 / 6 の疑似 / 本物 CodeRabbit に伝播
 - `--no-commit`: Phase 8 commit step を抑制 (tdd-implement 側で skip)
+- `--max-codex-parallel=N` (default 1, integer >= 1): worker が Phase 4 で発射する `node codex-companion.mjs task` の同時実行上限。worker prompt 冒頭に `export MAX_CODEX_PARALLEL=$N` として inject し、Phase 4 の Codex 呼出を `scripts/codex-semaphore.sh` で wrap させる (subagent context overflow / parallel timeout 防止)
 
 ```bash
 # $ARGUMENTS を配列化 (zsh でも 0-based に揃える)
@@ -159,6 +160,7 @@ read -r -a ARGS_TOKENS <<< "$ARGUMENTS"
 
 PROFILE="chill"
 NO_COMMIT=""
+MAX_CODEX_PARALLEL="1"
 for tok in "${ARGS_TOKENS[@]}"; do
   case "$tok" in
     --profile=chill|--profile=assertive|--profile=strict)
@@ -166,6 +168,16 @@ for tok in "${ARGS_TOKENS[@]}"; do
       ;;
     --no-commit)
       NO_COMMIT="--no-commit"
+      ;;
+    --max-codex-parallel=*)
+      v="${tok#--max-codex-parallel=}"
+      # 整数 >= 1 を強制 (semaphore は max=0 を許容しないため runtime fail を避ける)
+      if [[ "$v" =~ ^[0-9]+$ ]] && [ "$v" -ge 1 ]; then
+        MAX_CODEX_PARALLEL="$v"
+      else
+        echo "ERROR: --max-codex-parallel must be integer >= 1 (got '$v')" >&2
+        exit 1
+      fi
       ;;
   esac
 done
@@ -175,6 +187,11 @@ done
 # materialize 後 (例):
 #   /tdd-implement T-12 --profile=assertive --no-commit
 #   /tdd-implement T-13 --profile=assertive
+#
+# また worker prompt 冒頭に env export を 1 行付与する (Codex 並列度制御):
+#   export MAX_CODEX_PARALLEL=$MAX_CODEX_PARALLEL
+# worker (harness:worker agent) は Phase 4 Codex 呼出時にこの env を読み、
+# scripts/codex-semaphore.sh acquire/release で同時実行を制限する。
 ```
 
 ## 実行フロー (Model A: worker 責務範囲)
@@ -188,7 +205,11 @@ done
 - 全既存テスト維持
 
 ### Phase 4: Codex 並列検証 (必須)
-Bash で Codex CLI を直接呼んでレビュー依頼:
+Bash で Codex CLI を直接呼んでレビュー依頼。3+ worker が同時に Codex を叩くと
+parent subagent context が overflow し、各 worker が Codex 完了時に結果を return
+できず全件 timeout する (再現率 100%)。これを防ぐため `scripts/codex-semaphore.sh`
+で Codex 並列度を coordinator 指定の `MAX_CODEX_PARALLEL` (default 1) に制限する:
+
 ```bash
 CODEX_COMPANION="$(ls -d "$HOME/.claude/plugins/cache/openai-codex/codex/"*/scripts/codex-companion.mjs 2>/dev/null | tail -n1)"
 # Fail-fast: codex plugin 未 install / cache 未展開で node を無引数呼びすると分かりにくい
@@ -197,7 +218,52 @@ if [ -z "$CODEX_COMPANION" ] || [ ! -f "$CODEX_COMPANION" ]; then
   echo "ERROR: codex-companion.mjs not found. Run /codex:setup or reinstall codex plugin." >&2
   exit 1
 fi
-node "$CODEX_COMPANION" task "実装レビュー: <task概要>" --effort medium
+
+# Codex parallelism control: resolve the semaphore script path. The coordinator
+# forwards MAX_CODEX_PARALLEL (default 1) via env. The harness plugin's
+# marketplace name is allowed to differ between installs, so make it overridable
+# via HARNESS_MARKETPLACE_NAME (default: cc-triad-relay, the upstream-shipped
+# name); fall back to both the active install location and the cached one for
+# resilience across plugin reinstalls.
+HARNESS_MARKETPLACE_NAME="${HARNESS_MARKETPLACE_NAME:-cc-triad-relay}"
+SEM_BIN=""
+for CAND in \
+  "$HOME/.claude/plugins/marketplaces/${HARNESS_MARKETPLACE_NAME}/plugins/harness/scripts/codex-semaphore.sh" \
+  "$HOME/.claude/plugins/cache/${HARNESS_MARKETPLACE_NAME}/harness/scripts/codex-semaphore.sh"; do
+  if [ -x "$CAND" ]; then SEM_BIN="$CAND"; break; fi
+done
+MAX_PAR="${MAX_CODEX_PARALLEL:-1}"
+
+if [ -n "$SEM_BIN" ] && [ "$MAX_PAR" -ge 1 ]; then
+  SLOT=$("$SEM_BIN" acquire "$MAX_PAR")
+  trap "'$SEM_BIN' release '$SLOT'" EXIT INT TERM
+  node "$CODEX_COMPANION" task "実装レビュー: <task概要>" --effort medium
+  "$SEM_BIN" release "$SLOT"
+  trap - EXIT INT TERM
+else
+  # Semaphore unavailable. Behaviour depends on requested parallelism:
+  #   MAX_PAR > 1 → fatal exit. Silently falling back to unconstrained
+  #     parallel Codex re-introduces the subagent context overflow that this
+  #     guard was added to prevent (observed: 3+ long-running parallel reviews
+  #     hit a 100% timeout / lost-result rate). Refusing here forces the
+  #     operator to fix the install (semaphore script missing) before paying
+  #     for another lost-result run.
+  #   MAX_PAR == 1 (sequential, the safe default) → WARN + continue. A single
+  #     Codex review cannot overflow context, so the legacy unconstrained path
+  #     is acceptable as a graceful degradation when semaphore is missing.
+  if [ "$MAX_PAR" -gt 1 ]; then
+    echo "ERROR: scripts/codex-semaphore.sh not found but --max-codex-parallel=$MAX_PAR > 1." >&2
+    echo "       refusing to fall back to unconstrained parallel Codex (subagent context overflow risk)." >&2
+    echo "       fix: ensure the harness plugin marketplace (HARNESS_MARKETPLACE_NAME, default cc-triad-relay) is installed and codex-semaphore.sh is executable." >&2
+    exit 1
+  fi
+  # MAX_PAR=1: caller intent is "no parallel Codex anyway", so the missing
+  # semaphore degrades cleanly. WARN explicitly so an operator who *did*
+  # set MAX_CODEX_PARALLEL=1 in env (vs default-1) can still see that the
+  # semaphore install is missing and would silently fail if they raise N.
+  echo "WARN: scripts/codex-semaphore.sh not found. MAX_CODEX_PARALLEL=$MAX_PAR is honored as sequential, but raising it without installing the semaphore script will fall back to fatal exit. Install: ensure the harness plugin marketplace (HARNESS_MARKETPLACE_NAME, default cc-triad-relay) is present and codex-semaphore.sh is executable." >&2
+  node "$CODEX_COMPANION" task "実装レビュー: <task概要>" --effort medium
+fi
 ```
 
 ### Phase 5: Codex レビューループ (必須)
@@ -229,7 +295,8 @@ PR 作成はしない (coordinator 実施)。
 
 ### 並列数の調整
 
-- `--max-parallel=N` 未指定なら `min(サブタスク数, 4)`
+- `--max-parallel=N` 未指定なら `min(サブタスク数, 4)` — worker (Agent tool subagent) の同時実行数
+- `--max-codex-parallel=N` (default 1) — 各 worker が Phase 4 で発射する Codex CLI の同時実行数。`scripts/codex-semaphore.sh` 経由で lock-dir-based semaphore (mkdir 原子性) を使い制御。`--max-parallel=4 --max-codex-parallel=2` のように **「worker 数 ≥ Codex 並列度」を逆転させない**こと (worker が semaphore で全員 sleep する状況を避ける)
 - Agent は `run_in_background=true`
 
 ---

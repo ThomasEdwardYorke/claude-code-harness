@@ -209,8 +209,17 @@ describe("tdd-implement command の profile 引数伝播", () => {
 describe("parallel-worktree command の profile 引数伝播", () => {
   const content = readCommand("parallel-worktree");
 
-  it("argument-hint に --profile= allowlist を含む", () => {
-    expect(content).toMatch(/argument-hint[\s\S]{0,300}?--profile=\(?chill\|assertive\|strict/);
+  // argument-hint は strict format `[word|word|...]` (token のみ) なので、`--profile=...` の
+  // allowlist は frontmatter ではなく spec 本文側に記述する。token 存在 + body allowlist の 2 段でチェック。
+  it("argument-hint frontmatter に profile token を含む (strict format)", () => {
+    const fm = extractFrontmatter(content);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)+\])"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("profile");
+  });
+
+  it("spec 本文に --profile= allowlist (chill|assertive|strict) が記述されている", () => {
+    expect(content).toMatch(/--profile=\(?chill\|assertive\|strict/);
   });
 
   it("<profile> 抽象 placeholder を使わず、$PROFILE / 実値例に置き換える", () => {
@@ -2202,6 +2211,113 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 });
 
 
+// ============================================================
+// session-handoff archive: design decision ask step
+// archive subcommand に「恒久 design decision を `design-decisions.md` に
+// 追記するか」を operator に問う step を強制する。recent session で複数の
+// confirmed design decision を archive 直前まで忘れかけた状況を再発防止
+// するための structural reminder。
+// 設計要点:
+//   - ask は archive subcommand のみで発火 (init / update では出さない)
+//   - non-blocking (operator は skip 可) だが、skip 時は理由を archive footer に
+//     残すことが必須 (omission を audit 可能にする)
+//   - archive file が初期書出された後に走る (operator が session context を
+//     既に確認した状態で問う)
+// ============================================================
+describe("session-handoff skill — archive design-decision ask step", () => {
+  const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
+  const readSkill = (): string => readFileSync(skillPath, "utf-8");
+  const archiveSection = (): string => {
+    const body = readSkill();
+    // `### \`archive\`` から次の H3 (`### `) または H2 (`## `) まで。
+    // H4 (`#### `) は内部要素として section に含める。
+    const m = body.match(/### `archive`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+  const initSection = (): string => {
+    const body = readSkill();
+    const m = body.match(/### `init`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+  const updateSection = (): string => {
+    const body = readSkill();
+    const m = body.match(/### `update`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+
+  it("archive subcommand 説明に design decision ask step が明示されている", () => {
+    const sec = archiveSection();
+    expect(sec.length).toBeGreaterThan(100);
+    // "design decision" / "恒久方針" のいずれかと "ask" / "確認" / "問う" の組合せを要求。
+    // 単に "design-decisions.md" への参照だけでは不十分 (それは既存運用ルールの言及)。
+    const hasDesignDecisionTopic =
+      /design[-\s]?decision|恒久方針|恒久的[\s\S]{0,10}方針/i.test(sec);
+    const hasAskVerb =
+      /\bask\b|問う|問い合わせ|確認(する|を)|prompt the operator|operator に(問|聞|確認)/i.test(sec);
+    expect(hasDesignDecisionTopic).toBe(true);
+    expect(hasAskVerb).toBe(true);
+  });
+
+  it("ask step は archive subcommand のみに存在する (init / update には漏出しない)", () => {
+    // ask step は archive 完了直後の structural reminder であり、
+    // init (新規ディレクトリ作成) や update (current/backlog 最新化) では発火しない。
+    const initSec = initSection();
+    const updateSec = updateSection();
+    // init / update セクションには "permanent design decision" の ask 構文が無いことを保証
+    const askRegex =
+      /(ask|prompt|問う|問い合わせ)[\s\S]{0,80}(design[-\s]?decision|恒久方針)/i;
+    expect(askRegex.test(initSec)).toBe(false);
+    expect(askRegex.test(updateSec)).toBe(false);
+    // archive にはあることを確認 (既に上の test でも見ているが、negative test と対で持つ)
+    const archiveSec = archiveSection();
+    expect(askRegex.test(archiveSec)).toBe(true);
+  });
+
+  it("ask step は non-blocking (skip 可) であることを明示する", () => {
+    const sec = archiveSection();
+    // operator が skip できる (non-blocking) ことを明示。
+    // CodeRabbit (PR #26 R2 nitpick): "skip(?:pable)?(?!\\s*reason)" は "skip 理由"
+    // のような非許可語の前でも通過するため、明示的な「許可」トークン (may/can skip,
+    // skip 可/可能/may/allowed/optional/permitted, スキップ可/可能) のみに限定する。
+    expect(sec).toMatch(
+      /non[-\s]?blocking|(?:may|can)\s+skip|skip\s*(?:可|可能|may|allowed|optional|permitted)|スキップ(?:可|可能)/i,
+    );
+  });
+
+  it("ask step を skip した場合は理由を archive 内に記録することが必須", () => {
+    const sec = archiveSection();
+    // skip 時の挙動: skip 理由を archive footer / 末尾に必ず記録する旨。
+    // "skip reason" / "skip した理由" / "理由を記録" 相当の表現を要求。
+    const skipReasonRequired =
+      /skip\s*reason|skip\s*[\s\S]{0,40}(reason|理由)|理由[\s\S]{0,30}(record|記録|残す)|skip 時[\s\S]{0,40}記録/i;
+    expect(sec).toMatch(skipReasonRequired);
+  });
+
+  it("ask step は archive file が初期書出された後に実行される (順序明示)", () => {
+    const sec = archiveSection();
+    // archive 書き出し後に ask する旨を明示 (operator が session context を持った状態で問う)
+    // "after the archive file is written" / "archive 書き出し後" / "after writing" 相当
+    const orderExplicit =
+      /after\s+(?:the\s+)?archive[\s\S]{0,60}(?:written|writ|create)|archive[\s\S]{0,40}(?:書き?出|書出|生成|作成)後|書き?出した?後|after archive (?:is\s+)?(?:written|created)/i;
+    expect(orderExplicit.test(sec)).toBe(true);
+  });
+
+  it("Self-Validation Checklist の archive (mutating) 群に design decision ask 実行確認 item が追加されている", () => {
+    const body = readSkill();
+    // Self-Validation Checklist セクション内 (init / update / archive 共通 mutating 群)
+    const checklistMatch = body.match(
+      /### `init`\s*\/\s*`update`\s*\/\s*`archive`[\s\S]*?(?=\n###\s+[^#\s]|\n## [^#]|$)/,
+    );
+    const checklistSec = checklistMatch?.[0] ?? "";
+    expect(checklistSec.length).toBeGreaterThan(50);
+    // checklist に "design decision ask" 実行確認の checkbox item が存在
+    expect(checklistSec).toMatch(
+      /-\s*\[\s*\]\s*[\s\S]{0,200}(?:design[-\s]?decision|恒久方針)[\s\S]{0,100}(?:ask|問|確認|prompt|skip)/i,
+    );
+  });
+});
+
+
 // harness-setup check が session-handoff を認識する (harness setup check 統合 invariant)
 describe("session-handoff skill — harness-setup check 統合", () => {
   it("harness-setup.md の check 対象 command list に commands/session-handoff.md パス形式で含まれる", () => {
@@ -3404,5 +3520,243 @@ describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 
     expect(step5).toMatch(
       /(?:next session|次セッション|即着手|ready to start)/i,
     );
+  });
+});
+
+// =============================================================================
+// Codex subagent context overflow 構造改善 — output file-redirect contract /
+// --max-codex-parallel flag / lock-dir-based semaphore の不変条件
+// =============================================================================
+//
+// 背景: 3+ 並列で長時間 Codex review を走らせると、各 subagent が完了を待つ間に
+// Read/Grep で context を蓄積し、Codex 完了時に長文 review JSON を return できず
+// 全件 timeout する事故が観測された (再現率 100%)。本セクションは subagent
+// context overflow 解決策 (output file-redirect + Codex parallelism cap) が
+// shipped spec で永続的に維持されることを担保する。
+
+describe("agents/codex-sync.md の output file-redirect contract", () => {
+  const content = readAgent("codex-sync");
+
+  it("output-file marker (caller が prompt 内に置く) の構文を spec で説明している", () => {
+    // [output-file: <absolute-path>] (case-insensitive) を prompt body 内に
+    // 置けば agent が stdout を file に redirect する契約。
+    expect(content).toMatch(/\[output-file:/i);
+    expect(content).toMatch(/output-file/i);
+  });
+
+  it("redirect mode の return value が OUTPUT_PATH= / OUTPUT_BYTES= のみであることを明示", () => {
+    expect(content).toMatch(/OUTPUT_PATH=/);
+    expect(content).toMatch(/OUTPUT_BYTES=/);
+  });
+
+  it("動機 (subagent context overflow / parallel timeout) を spec に記述", () => {
+    // 100% timeout 観測の根拠を spec に残し、将来の維持判断を可能にする。
+    expect(content).toMatch(/subagent\s+context|parallel|context\s+(overflow|exhaust|budget)/i);
+  });
+
+  it("absolute path 制約 (相対 path 拒否) を明示", () => {
+    expect(content).toMatch(/absolute|must\s+begin\s+with\s+\/|\/tmp\//i);
+  });
+
+  it("marker 不在時は従来 inline return (後方互換) と明示", () => {
+    expect(content).toMatch(/(absent|marker.*not|without).*(inline|original|legacy|before)/i);
+  });
+});
+
+describe("commands/parallel-worktree.md の --max-codex-parallel flag", () => {
+  const content = readCommand("parallel-worktree");
+
+  it("--max-codex-parallel=N flag を spec で説明", () => {
+    expect(content).toMatch(/--max-codex-parallel=/);
+  });
+
+  it("default 1 (sequential) を明示", () => {
+    expect(content).toMatch(/--max-codex-parallel[\s\S]{0,200}default\s*1|default[\s\S]{0,40}1[\s\S]{0,80}--max-codex-parallel/i);
+  });
+
+  it("argument-hint frontmatter にも flag が含まれる", () => {
+    const fm = extractFrontmatter(content);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)+\])"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("max-codex-parallel");
+  });
+
+  it("scripts/codex-semaphore.sh への参照あり (実装本体の場所を spec から特定可能)", () => {
+    expect(content).toMatch(/codex-semaphore\.sh/);
+  });
+
+  it("MAX_CODEX_PARALLEL env var を worker prompt に forward する旨を明示", () => {
+    expect(content).toMatch(/MAX_CODEX_PARALLEL/);
+  });
+
+  it("argv parser が --max-codex-parallel= を整数として validate する", () => {
+    // bash case 文で flag 抽出 + 整数判定が記述されていること
+    expect(content).toMatch(/--max-codex-parallel=\*/);
+    expect(content).toMatch(/--max-codex-parallel[\s\S]{0,200}(integer|>=\s*1|\^\[0-9\]\+\$)/i);
+  });
+});
+
+describe("commands/pseudo-coderabbit-loop.md の --max-codex-parallel flag + output-file 統合", () => {
+  const content = readCommand("pseudo-coderabbit-loop");
+
+  it("--max-codex-parallel=N flag を spec で説明", () => {
+    expect(content).toMatch(/--max-codex-parallel=/);
+  });
+
+  it("argument-hint frontmatter にも flag が含まれる", () => {
+    const fm = extractFrontmatter(content);
+    const hint = /^argument-hint:\s*"(\[[\w-]+(?:\|[\w-]+)+\])"$/m.exec(fm)?.[1];
+    expect(hint).toBeDefined();
+    expect(hint).toContain("max-codex-parallel");
+  });
+
+  it("coderabbit-mimic spawn 時に [output-file: marker を prompt body に inject する旨", () => {
+    // pseudo-loop は内部で coderabbit-mimic agent を Codex 経由で
+    // spawn する。長文 findings JSON が parent context を埋めないよう、
+    // output file-redirect marker を必ず使う方針を spec に記述。
+    expect(content).toMatch(/\[output-file:/i);
+    expect(content).toMatch(/mktemp|tmp.*pseudo-cr|TMP_RESULT/);
+  });
+});
+
+describe("scripts/codex-semaphore.sh — lock-dir-based semaphore (Codex parallelism cap 実装本体)", () => {
+  const SCRIPT_PATH = resolve(PLUGIN_ROOT, "scripts", "codex-semaphore.sh");
+  let content: string;
+  try {
+    content = readFileSync(SCRIPT_PATH, "utf-8");
+  } catch {
+    content = "";
+  }
+
+  it("file が存在する", () => {
+    expect(content.length).toBeGreaterThan(100);
+  });
+
+  it("bash shebang を持つ (POSIX semantics 必須)", () => {
+    expect(content).toMatch(/^#!\/usr\/bin\/env\s+bash|^#!\/bin\/bash/);
+  });
+
+  it("acquire <max> サブコマンドを実装", () => {
+    expect(content).toMatch(/acquire\)/);
+  });
+
+  it("release <slot> サブコマンドを実装", () => {
+    expect(content).toMatch(/release\)/);
+  });
+
+  it("status サブコマンドを実装 (debug 用)", () => {
+    expect(content).toMatch(/status\)/);
+  });
+
+  it("mkdir 原子性で slot lock (POSIX 仕様: 既存 dir mkdir は atomic に EEXIST)", () => {
+    expect(content).toMatch(/mkdir\s+["']?\$\{?LOCK_DIR\}?\/slot-/);
+  });
+
+  it("stale slot を時間経過で reap する (timeout 死亡 process 想定)", () => {
+    expect(content).toMatch(/STALE|stale|find[\s\S]{0,80}-mmin/i);
+  });
+
+  it("HARNESS_CODEX_SEMAPHORE_DIR env で lock dir を override 可能", () => {
+    expect(content).toMatch(/HARNESS_CODEX_SEMAPHORE_DIR/);
+  });
+
+  it("set -euo pipefail (誤動作早期検出)", () => {
+    expect(content).toMatch(/set\s+-euo\s+pipefail/);
+  });
+
+  it("DEADLINE_SECS は STALE_SECS と独立した env で制御", () => {
+    // 30-min STALE_SECS == 30-min deadline 設計は max=1 で 3 worker queued +
+    // 10-min review chain の境界で timeout する。deadline を別 env var に
+    // 分離し、default も 3600s に拡張する不変条件。
+    expect(content).toMatch(/HARNESS_CODEX_SEMAPHORE_DEADLINE_SECS/);
+    expect(content).toMatch(/DEADLINE_SECS\s*=\s*"?\$\{HARNESS_CODEX_SEMAPHORE_DEADLINE_SECS:-3600\}/);
+    // acquire deadline は STALE_SECS ではなく DEADLINE_SECS を使う
+    expect(content).toMatch(/deadline=\$\(\(\s*\$\(date\s+\+%s\)\s*\+\s*DEADLINE_SECS\s*\)\)/);
+  });
+
+  it("acquire timeout error が DEADLINE_SECS 値を表示する (debug helper)", () => {
+    // STALE_SECS を表示すると stale 閾値と timeout 値の混同に逆戻りするため、
+    // timeout 値は DEADLINE_SECS であることを caller に明示。
+    expect(content).toMatch(/timed out after \$\{DEADLINE_SECS\}s/);
+  });
+
+  it("stale reap が pid liveness check (kill -0) で active worker を保護する", () => {
+    // Stale reap の TOCTOU race 対策: marker file の mtime が STALE_SECS を
+    // 超えていても、owning pid が `kill -0` で生存確認できる場合は slot を
+    // reap しない。長い Codex review (>30 min) で blocked な worker の slot
+    // が reap されて peer が二重所有する事故を防ぐ。
+    expect(content).toMatch(/kill\s+-0\s+"\$pid"/);
+    // 仕様 invariant: `has_live_owner=1` なら continue (skip reap)
+    expect(content).toMatch(/has_live_owner[\s\S]{0,200}continue/);
+  });
+});
+
+describe("agents/codex-sync.md — output-file marker の regex narrowing", () => {
+  const content = readAgent("codex-sync");
+
+  it("marker 内 path は printable chars のみ受理 (control chars / null byte 拒否)", () => {
+    // grep regex `[[:print:]]+` で control characters / null bytes / 改行を
+    // marker 抽出段階で reject。redirect target に shell metacharacter が
+    // 流れ込む経路を 1 段早くで遮断する defensive narrowing。
+    expect(content).toMatch(/grep\s+-oiE[\s\S]{0,80}\[\[:print:\]\]\+/);
+    // [^]]+ (非 narrow) パターンが残っていないことを併せ確認 (regression guard)。
+    expect(content).not.toMatch(/grep\s+-oiE[\s\S]{0,80}\[\^\]\]\+\\\]/);
+  });
+});
+
+describe("commands/parallel-worktree.md — semaphore 不在時 WARN message 明示化", () => {
+  const content = readCommand("parallel-worktree");
+
+  it("WARN message が 'install ... codex-semaphore.sh' に言及 (operator が修復可能)", () => {
+    // semaphore 不在 + MAX_PAR=1 で silent unconstrained に落ちると、operator が
+    // MAX_PAR を後から上げた時に突然 fatal exit になる (operator 視点で意図不明)。
+    // WARN で install 手段を明示することで、修復経路を runtime に提示。
+    expect(content).toMatch(/MAX_CODEX_PARALLEL[\s\S]{0,150}sequential[\s\S]{0,150}fatal\s+exit/i);
+    expect(content).toMatch(/Install[\s\S]{0,150}codex-semaphore\.sh/);
+  });
+});
+
+describe("commands/parallel-worktree.md — semaphore 不在時の silent fallback ガード", () => {
+  const content = readCommand("parallel-worktree");
+
+  it("MAX_PAR > 1 で SEM_BIN 不在の場合 fatal exit する旨を spec 化", () => {
+    // subagent context overflow を silent fallback で再発させないため、
+    // semaphore 不在 + 並列 > 1 は ERROR + exit 1 を強制。
+    expect(content).toMatch(/MAX_PAR.*-gt\s*1[\s\S]{0,400}exit\s+1/);
+    expect(content).toMatch(/refusing\s+to\s+fall\s+back|context\s+overflow\s+risk/i);
+  });
+
+  it("MAX_PAR == 1 で SEM_BIN 不在の場合は WARN + continue (sequential は安全)", () => {
+    // sequential (default) で semaphore が無いのは致命傷ではない (overflow しない)。
+    // WARN message は "honored as sequential" の文言で sequential degrade を明示
+    // し、install 手段も併記する不変条件。
+    expect(content).toMatch(/WARN[\s\S]{0,400}honored\s+as\s+sequential/i);
+  });
+});
+
+describe("commands/pseudo-coderabbit-loop.md — --max-codex-parallel が現状 no-op であることの明示", () => {
+  const content = readCommand("pseudo-coderabbit-loop");
+
+  it("spec 内で no-op と明示 (誤誘導防止)", () => {
+    // caller が --max-codex-parallel=3 を渡しても本 skill 内では並列度制御は
+    // 発火しないことを明示。実際の発火点は /parallel-worktree Phase 4。
+    expect(content).toMatch(/no-op/i);
+    expect(content).toMatch(/parallel-worktree[\s\S]{0,200}Phase\s*4/i);
+  });
+});
+
+describe("agents/codex-sync.md — output file-redirect の PROMPT_FILE materialize", () => {
+  const content = readAgent("codex-sync");
+
+  it("redirect mode の invocation snippet が mktemp で PROMPT_FILE を materialize する", () => {
+    // snippet 内で `node ... --prompt-file "$PROMPT_FILE"` を呼ぶ前に
+    // PROMPT_FILE が必ず作られていること (未定義変数による silent empty
+    // file 渡し → Codex 即時失敗を防ぐ)。
+    expect(content).toMatch(/PROMPT_FILE=\s*"?\$\(\s*mktemp[\s\S]{0,100}codex-prompt/);
+    expect(content).toMatch(/printf\s+'%s'\s+"\$PROMPT_BODY"\s+>\s+"\$PROMPT_FILE"/);
+  });
+
+  it("PROMPT_FILE を trap で必ず削除 (temp file leak 防止)", () => {
+    expect(content).toMatch(/trap\s+'rm\s+-f\s+"\$PROMPT_FILE"'\s+EXIT/);
   });
 });
