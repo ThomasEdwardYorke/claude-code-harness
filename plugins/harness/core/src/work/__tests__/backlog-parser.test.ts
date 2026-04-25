@@ -200,9 +200,9 @@ describe("parseBacklog", () => {
         [
           "### [High] T-001 Hyphen id",
           "",
-          "### [High] phase-1.task-9f Mixed dot+hyphen",
+          "### [High] phase-1.task-2 Mixed dot+hyphen",
           "",
-          "### [High] PARTS-12 Uppercase prefix",
+          "### [High] MYPROJ-001 Uppercase prefix",
           "",
           "### [High] 2026.04.25 Numeric date-style id",
           "",
@@ -212,8 +212,8 @@ describe("parseBacklog", () => {
       expect(entries).toHaveLength(4);
       expect(entries.map((e) => e.id)).toEqual([
         "T-001",
-        "phase-1.task-9f",
-        "PARTS-12",
+        "phase-1.task-2",
+        "MYPROJ-001",
         "2026.04.25",
       ]);
     });
@@ -498,6 +498,65 @@ describe("parseBacklog", () => {
       expect(entries).toHaveLength(1);
       // No YAML applied — heading defaults retained.
       expect(entries[0]?.status).toBe("pending");
+    });
+
+    it("recovers from an unclosed YAML fence by stopping at the next heading", () => {
+      // Edge case caught by adversarial review: an unterminated ```yaml
+      // fence must not silently swallow every following entry until EOF.
+      // The parser walks forward to the next entry heading and treats the
+      // fence as unclosed (warn + partial body parse), then resumes from
+      // the heading so subsequent entries are still dispatched.
+      const path = writeBacklog(
+        projectRoot,
+        [
+          "### [High] T-001 Unclosed fence entry",
+          "",
+          "```yaml",
+          "priority: Critical",
+          "status: in_progress",
+          "",
+          "### [High] T-002 Recovered next entry",
+          "",
+          "```yaml",
+          "status: review",
+          "```",
+          "",
+        ].join("\n"),
+      );
+      const entries = parseBacklog(path);
+      // Both entries must be present — recovery worked.
+      expect(entries).toHaveLength(2);
+      expect(entries[0]?.id).toBe("T-001");
+      // Partial YAML body was parsed before recovery: priority + status
+      // applied to the first entry from the unclosed block.
+      expect(entries[0]?.priority).toBe("Critical");
+      expect(entries[0]?.status).toBe("in_progress");
+      // Second entry's own YAML block was parsed independently.
+      expect(entries[1]?.id).toBe("T-002");
+      expect(entries[1]?.status).toBe("review");
+    });
+
+    it("recovers from an unclosed YAML fence at end of file", () => {
+      // Same recovery, simpler shape: fence opens at end of file with no
+      // closing fence and no following heading. Parser should consume the
+      // remaining lines as YAML body, warn, and return the single entry.
+      const path = writeBacklog(
+        projectRoot,
+        [
+          "### [High] T-001 Last entry, unclosed fence",
+          "",
+          "```yaml",
+          "status: in_progress",
+          "priority: Critical",
+          "",
+        ].join("\n"),
+      );
+      const entries = parseBacklog(path);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.id).toBe("T-001");
+      // Partial body parsed despite missing closing fence.
+      expect(entries[0]?.status).toBe("in_progress");
+      expect(entries[0]?.priority).toBe("Critical");
     });
   });
 
