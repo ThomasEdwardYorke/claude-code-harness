@@ -103,6 +103,63 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 
 ## ワークフロー
 
+### Step 0. `.coderabbit.yaml` の Pre-parse (mandatory, scoring 前段)
+
+**この Step 0 は必須。skip 不可。** REQUIRED であり、findings を scoring する **前** に必ず実行する。Step 0 を省略した場合、本物 CodeRabbit が後段ラウンドで拾う leak (internal tracker ID / 内部識別子 / round ID 等) を pseudo フェーズで取りこぼし、rate limit を浪費する。
+
+**目的**: `.coderabbit.yaml` の `path_instructions` を **per-file review context** に注入し、scoring 段階で参照可能にする。Codex prompt 組立時の optional context に置くと LLM が無視するため、**REQUIRED CONTEXT** として埋め込む。
+
+#### Step 0.1 — `.coderabbit.yaml` を repo root まで walk up
+
+reviewed file が worktree / sub-directory 配下にある場合でも `.coderabbit.yaml` を確実に拾うため、ファイルの位置から **親ディレクトリ方向に walk up** し repo root まで遡る。最も近い `.coderabbit.yaml` を採用する (monorepo / nested config を許容)。
+
+```bash
+# REPO_ROOT は Step 1 で `cd "$REPO_ROOT"` 済の前提。worktree / nested の
+# 場合は、reviewed file の親ディレクトリ方向に walk up し、最も近い
+# `.coderabbit.yaml` を採用する。
+CODERABBIT_YAML=""
+DIR="$REPO_ROOT"
+while [ "$DIR" != "/" ] && [ -n "$DIR" ]; do
+  if [ -f "$DIR/.coderabbit.yaml" ]; then
+    CODERABBIT_YAML="$DIR/.coderabbit.yaml"
+    break
+  fi
+  DIR="$(dirname "$DIR")"
+done
+```
+
+`.coderabbit.yaml` が無い場合は呼出元から渡された `path_instructions` フィールドを使用 (input セクション参照)。両方とも空ならルール無し fallback で続行する。
+
+#### Step 0.2 — `path_instructions` の per-file matching
+
+`.coderabbit.yaml` を `yaml` パーサ (Python `yaml.safe_load` / `yq` / `jq` のいずれか利用可能なもの) で解釈し、`reviews.path_instructions` を取り出す。各 entry は **`path` glob + `instructions` body の組** として扱い、両者を必ず一緒に保持する (`path` だけ match して body を捨ててはならない)。
+
+各 reviewed file (Step 1 で `$WORKDIR/files.txt` に書き出し済) について以下を実行:
+
+1. file path に対し `path` glob を `fnmatch`-style で match
+2. match した entry の `instructions` body を集める (複数 match は順序維持で連結)
+3. Step 3 の Codex prompt 組立時、その file 用の per-file review context として **REQUIRED CONTEXT** ブロックに注入する
+
+#### Step 0.3 — Japanese 指示の解釈規約
+
+`.coderabbit.yaml` の `instructions` 本体には Japanese テキストが多用される (project 既定言語)。特に以下を agent は **コメントも対象** として扱う:
+
+- 「コメントも対象」「コメントを含む」「コメント部分も検査対象」等の指示は、**コード本体だけでなく code comments にも同 rule を適用** する旨である。code-only 解釈は誤り。
+- 「禁止」「必須」「MUST」と明記された Japanese 指示は、severity を minor 以下に丸めず、原則 **major** 相当として scoring する。
+- 翻訳・要約せず Japanese 原文のまま per-file context に注入する (LLM 側で意味保存)。
+
+#### Step 0.4 — R2 / Internal Tracker ID enforcement (scoring path 直結)
+
+`.coderabbit.yaml` の有無に関わらず、agent は以下を **常に** scoring 対象に含める。これは harness `CONTRIBUTING.md` §1.2 / §3.1 / Plugin Generality Check (PR template) の R2 ルール (business logic / internal metadata isolation) を pseudo review 段階で強制するためである。
+
+- shipped plugin spec (`plugins/harness/agents/*.md` / `plugins/harness/commands/*.md` / `plugins/harness/core/src/**/*.ts` etc.) に **internal tracker ID / review-round ID / phase ID / next-session ノート / 内部識別子 / 内部トラッカー** が混入している場合、それを **actionable finding として flag する**。severity は最低でも `minor`、scoping (commit message 限定 vs shipped spec 混入) を確認した上で原則 `major` (category=`config` または `style`、`actionable=true`)。
+- `generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>` の 4-field 文法 (CONTRIBUTING.md §3.1) を満たさない exemption コメントも actionable として flag する (B-3 reachability)。
+- 上記検出は per-file review の主要 scoring 経路に組み込む (sub-section 「禁止事項」の奥に隠して終わらせない)。
+
+参考: `CONTRIBUTING.md` (Plugin Generality Check / R2 Business logic isolation)、`plugins/harness/core/src/__tests__/generality.test.ts` の blocklist 本体。
+
+---
+
 ### Step 1. 準備
 
 Per-run の隔離ディレクトリを `mktemp -d` で作り、diff / analyzer 出力 / prompt / result / stderr を全てその配下に置く。共有 `/tmp/pseudo-cr-*` の直書きは並列実行・他ユーザー参照・残骸蓄積のリスクがあるため禁止。
