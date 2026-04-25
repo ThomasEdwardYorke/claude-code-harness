@@ -3215,3 +3215,122 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
     expect(source).toMatch(/Refer to teammates by name|teammate|by name, never by UUID/i);
   });
 });
+
+describe("imageGeneration schema invariants (run-ai-images / ai-image-edit registry)", () => {
+  // Background: D-44 introduced the imageGeneration config surface so
+  // projects can pin the backend / default model / aspect ratio for the
+  // run-ai-images engine without editing skill markdown. The invariants
+  // below lock in the v0 shipping shape so future contributors cannot
+  // silently relax the strict keyset, drop the enum bounds on
+  // defaultReasoning / defaultAspect, or remove the integer range on
+  // defaultCount that prevents accidental fan-outs of >16 parallel
+  // image generations.
+  const schemaSource = readFileSync(
+    resolve(PLUGIN_ROOT, "schemas", "harness.config.schema.json"),
+    "utf-8",
+  );
+
+  it("harness.config.schema.json exposes a strict imageGeneration section", () => {
+    const schema = JSON.parse(schemaSource);
+    const imgProps = schema.properties?.imageGeneration;
+    expect(imgProps).toBeDefined();
+    expect(imgProps.type).toBe("object");
+    expect(imgProps.additionalProperties).toBe(false);
+    // Lock the complete keyset, not just presence. additionalProperties:
+    // false guards the user-facing schema, but without an exact-keyset
+    // assertion here a future contributor could silently add a 7th
+    // shipped property that the resolver / skill spec do not consume.
+    const keys = Object.keys(imgProps.properties).sort();
+    expect(keys).toEqual([
+      "defaultAspect",
+      "defaultBackend",
+      "defaultCount",
+      "defaultModel",
+      "defaultReasoning",
+      "refImageAllowlistPrefixes",
+    ]);
+  });
+
+  it("imageGeneration.defaultReasoning is restricted to {medium, high}", () => {
+    const schema = JSON.parse(schemaSource);
+    const reasoning =
+      schema.properties.imageGeneration.properties.defaultReasoning;
+    expect(reasoning.type).toBe("string");
+    expect([...reasoning.enum].sort()).toEqual(["high", "medium"]);
+    expect(reasoning.default).toBe("medium");
+  });
+
+  it("imageGeneration.defaultAspect is restricted to the 5 supported ratios", () => {
+    const schema = JSON.parse(schemaSource);
+    const aspect =
+      schema.properties.imageGeneration.properties.defaultAspect;
+    expect(aspect.type).toBe("string");
+    expect([...aspect.enum].sort()).toEqual(
+      ["1:1", "16:9", "2:3", "3:2", "9:16"].sort(),
+    );
+    expect(aspect.default).toBe("1:1");
+  });
+
+  it("imageGeneration.defaultCount declares 1-16 integer range and default 4", () => {
+    const schema = JSON.parse(schemaSource);
+    const count =
+      schema.properties.imageGeneration.properties.defaultCount;
+    expect(count.type).toBe("integer");
+    expect(count.minimum).toBe(1);
+    // 16 is the same upper bound as work.maxParallel / worktree.maxParallel
+    // — keeps fan-out reasoning consistent across the surface.
+    expect(count.maximum).toBe(16);
+    expect(count.default).toBe(4);
+  });
+
+  it("imageGeneration.defaultBackend default is codex-image-gen (v0 shipping backend)", () => {
+    const schema = JSON.parse(schemaSource);
+    const backend =
+      schema.properties.imageGeneration.properties.defaultBackend;
+    expect(backend.type).toBe("string");
+    expect(backend.default).toBe("codex-image-gen");
+  });
+
+  it("imageGeneration.defaultModel default is gpt-5.4 (image_gen tool dependency, intentional divergence from text default)", () => {
+    const schema = JSON.parse(schemaSource);
+    const model =
+      schema.properties.imageGeneration.properties.defaultModel;
+    expect(model.type).toBe("string");
+    // Intentional divergence from the text-side `gpt-5.5` default — the
+    // image_gen tool is currently only available on gpt-5.4 (Codex CLI
+    // tool surface, 2026-04-25). Flipping this constant is a breaking
+    // change tracked separately.
+    expect(model.default).toBe("gpt-5.4");
+  });
+
+  it("imageGeneration.refImageAllowlistPrefixes is a string array (default empty = unrestricted)", () => {
+    const schema = JSON.parse(schemaSource);
+    const allowlist =
+      schema.properties.imageGeneration.properties.refImageAllowlistPrefixes;
+    expect(allowlist.type).toBe("array");
+    expect(allowlist.items.type).toBe("string");
+    // Default empty = no restriction; non-empty = caller must supply
+    // ref-image paths under the listed prefixes (security-sensitive).
+    expect(allowlist.default).toEqual([]);
+  });
+
+  it("bin/harness model resolve dispatches image-gen / image-edit to resolveImageModel", () => {
+    const binSource = readFileSync(
+      resolve(PLUGIN_ROOT, "bin", "harness"),
+      "utf-8",
+    );
+    // The CLI must route the two reserved image agent names to the
+    // image-side resolver — without this dispatch a future user running
+    // `harness model resolve image-gen` would silently get the text-side
+    // gpt-5.5 default, missing the image_gen tool dependency entirely.
+    expect(binSource).toContain("resolveImageModel");
+    expect(binSource).toContain("image-gen");
+    expect(binSource).toContain("image-edit");
+    // Lock the explicit dispatch set so a contributor cannot widen it
+    // by accident (e.g. dropping `image-edit` or adding an unrelated
+    // text agent).
+    expect(binSource).toMatch(
+      /IMAGE_AGENT_NAMES\s*=\s*new Set\(\["image-gen", "image-edit"\]\)/,
+    );
+  });
+});

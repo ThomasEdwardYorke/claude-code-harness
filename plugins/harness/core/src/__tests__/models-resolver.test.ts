@@ -2,10 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   HARNESS_DEFAULT_MODEL,
   HARNESS_DEFAULT_REASONING_EFFORT,
+  HARNESS_IMAGE_DEFAULT_BACKEND,
+  HARNESS_IMAGE_DEFAULT_MODEL,
+  HARNESS_IMAGE_DEFAULT_REASONING_EFFORT,
+  VALID_IMAGE_REASONING_EFFORTS,
   VALID_REASONING_EFFORTS,
   checkModels,
   normalizeAgentName,
+  resolveImageModel,
   resolveModel,
+  type ImageGenerationConfig,
   type ModelsCacheSnapshot,
   type ModelsConfig,
 } from "../models/resolver";
@@ -384,5 +390,214 @@ describe("models/resolver — checkModels", () => {
     ).toBe(true);
     // Dedup is still reflected in the summary list.
     expect(report.referencedModels).toEqual(["gpt-5.4"]);
+  });
+});
+
+describe("models/resolver — resolveImageModel", () => {
+  // Background: image_gen tool is currently only available on `gpt-5.4`
+  // (via Codex CLI's `image_gen` tool surface, 2026-04-25), so the
+  // image-side compile-time fallback intentionally diverges from the
+  // text-side `HARNESS_DEFAULT_MODEL = "gpt-5.5"`. Keep this divergence
+  // explicit — flipping the image default is a breaking change.
+  describe("compile-time defaults", () => {
+    it("HARNESS_IMAGE_DEFAULT_MODEL pins gpt-5.4 (image_gen tool dependency)", () => {
+      expect(HARNESS_IMAGE_DEFAULT_MODEL).toBe("gpt-5.4");
+    });
+
+    it("HARNESS_IMAGE_DEFAULT_REASONING_EFFORT is medium", () => {
+      expect(HARNESS_IMAGE_DEFAULT_REASONING_EFFORT).toBe("medium");
+    });
+
+    it("HARNESS_IMAGE_DEFAULT_BACKEND is codex-image-gen", () => {
+      expect(HARNESS_IMAGE_DEFAULT_BACKEND).toBe("codex-image-gen");
+    });
+
+    it("VALID_IMAGE_REASONING_EFFORTS lists exactly {medium, high} (image_gen accepts only these)", () => {
+      // Subset of the text-side VALID_REASONING_EFFORTS — image generation
+      // does not benefit from minimal/low/xhigh in practice (image_gen tool
+      // contract) so we keep the surface narrow and let `validateImageGen`
+      // fall back if a user supplies anything else.
+      expect([...VALID_IMAGE_REASONING_EFFORTS]).toEqual(["medium", "high"]);
+    });
+  });
+
+  describe("precedence: agent-override > image-default > harness-default", () => {
+    it("returns harness-default when imageConfig and modelsConfig are both undefined", () => {
+      const result = resolveImageModel(undefined, undefined, "image-gen");
+      expect(result.model).toBe(HARNESS_IMAGE_DEFAULT_MODEL);
+      expect(result.reasoningEffort).toBe(HARNESS_IMAGE_DEFAULT_REASONING_EFFORT);
+      expect(result.backend).toBe(HARNESS_IMAGE_DEFAULT_BACKEND);
+      expect(result.source).toBe("harness-default");
+      expect(result.aliasResolved).toBe(false);
+    });
+
+    it("uses imageConfig.defaultModel when set (image-default source)", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "gpt-5.5",
+        defaultReasoning: "high",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      expect(result.model).toBe("gpt-5.5");
+      expect(result.reasoningEffort).toBe("high");
+      expect(result.backend).toBe("codex-image-gen");
+      expect(result.source).toBe("image-default");
+    });
+
+    it("per-agent override (models.agents[agentName].model) wins over imageConfig.defaultModel", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        agents: {
+          "image-gen": { model: "gpt-5.5" },
+        },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      expect(result.model).toBe("gpt-5.5");
+      expect(result.source).toBe("agent-override");
+    });
+
+    it("normalizes agentName variants (harness:image-edit, image-edit.md)", () => {
+      const modelsConfig: ModelsConfig = {
+        agents: {
+          "image-edit": { model: "gpt-5.5" },
+        },
+      };
+      const result = resolveImageModel(
+        undefined,
+        modelsConfig,
+        "harness:image-edit.md",
+      );
+      expect(result.model).toBe("gpt-5.5");
+      expect(result.source).toBe("agent-override");
+    });
+
+    it("agent-override reasoningEffort wins over imageConfig.defaultReasoning", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        agents: {
+          "image-gen": { model: "gpt-5.5", reasoningEffort: "high" },
+        },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      expect(result.reasoningEffort).toBe("high");
+      expect(result.source).toBe("agent-override");
+    });
+
+    it("agent-only reasoningEffort (no model) still promotes source to agent-override", () => {
+      // Regression guard mirroring resolveModel's same-shaped invariant —
+      // an effort-only override on the agents.* side must not be silently
+      // dropped because resolveImageModel branched on `agentCfg?.model`
+      // first.
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        agents: {
+          "image-gen": { reasoningEffort: "high" },
+        },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      expect(result.model).toBe("gpt-5.4"); // image-default
+      expect(result.reasoningEffort).toBe("high");
+      expect(result.source).toBe("agent-override");
+    });
+
+    it("invalid agent reasoningEffort (outside {medium, high}) falls back to image-default", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "gpt-5.4",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        agents: {
+          // `low` is valid for text models but not for image models.
+          "image-gen": { model: "gpt-5.5", reasoningEffort: "low" },
+        },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      expect(result.model).toBe("gpt-5.5"); // model override still applies
+      expect(result.reasoningEffort).toBe("medium"); // falls back to image-default
+    });
+  });
+
+  describe("alias resolution (shared with text models)", () => {
+    it("resolves imageConfig.defaultModel through models.codex.aliases", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "image-strong",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const modelsConfig: ModelsConfig = {
+        codex: {
+          aliases: { "image-strong": "gpt-5.4-vision-pro" },
+        },
+      };
+      const result = resolveImageModel(imageConfig, modelsConfig, "image-gen");
+      expect(result.model).toBe("gpt-5.4-vision-pro");
+      expect(result.aliasResolved).toBe(true);
+      expect(result.aliasName).toBe("image-strong");
+    });
+
+    it("returns model verbatim when alias map misses", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "codex-image-gen",
+        defaultModel: "custom-image-preview",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      expect(result.model).toBe("custom-image-preview");
+      expect(result.aliasResolved).toBe(false);
+    });
+  });
+
+  describe("backend propagation", () => {
+    it("uses imageConfig.defaultBackend when set", () => {
+      const imageConfig: ImageGenerationConfig = {
+        defaultBackend: "anthropic-claude-image",
+        defaultModel: "claude-image-1",
+        defaultReasoning: "medium",
+        defaultAspect: "1:1",
+        defaultCount: 4,
+        refImageAllowlistPrefixes: [],
+      };
+      const result = resolveImageModel(imageConfig, undefined, "image-gen");
+      expect(result.backend).toBe("anthropic-claude-image");
+    });
+
+    it("falls back to HARNESS_IMAGE_DEFAULT_BACKEND when imageConfig is undefined", () => {
+      const result = resolveImageModel(undefined, undefined, "image-edit");
+      expect(result.backend).toBe(HARNESS_IMAGE_DEFAULT_BACKEND);
+    });
   });
 });

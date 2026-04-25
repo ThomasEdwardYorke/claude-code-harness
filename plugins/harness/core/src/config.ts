@@ -9,6 +9,13 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  HARNESS_IMAGE_DEFAULT_ASPECT,
+  HARNESS_IMAGE_DEFAULT_BACKEND,
+  HARNESS_IMAGE_DEFAULT_COUNT,
+  HARNESS_IMAGE_DEFAULT_MODEL,
+  HARNESS_IMAGE_DEFAULT_REASONING_EFFORT,
+} from "./models/resolver.js";
 
 // ============================================================
 // Type definitions
@@ -500,6 +507,55 @@ export interface ModelsConfig {
   agents?: Record<string, ModelsAgentRegistryConfig>;
 }
 
+/**
+ * Image-generation skill registry. Populated via DEFAULT_CONFIG so
+ * downstream consumers (skill scripts, `harness model resolve image-gen`)
+ * never need optional chaining. Mirrors the JSON schema's
+ * `imageGeneration.*` keys 1:1.
+ *
+ * The compile-time fallback for the model is intentionally distinct
+ * from the text-side `HARNESS_DEFAULT_MODEL` (image_gen tool dependency
+ * — see `HARNESS_IMAGE_DEFAULT_MODEL` in `src/models/resolver.ts` for
+ * the canonical value). The resolver
+ * (`src/models/resolver.ts::resolveImageModel`) emits precedence:
+ *   agent-override > image-default > harness-default.
+ */
+export type ImageReasoningEffort = "medium" | "high";
+export type ImageAspectRatio = "1:1" | "3:2" | "2:3" | "16:9" | "9:16";
+
+export interface ImageGenerationConfig {
+  /**
+   * Backend script name. Resolved against
+   * `${SKILL_DIR}/scripts/backends/<name>.sh` at invocation time.
+   * v0 ships `codex-image-gen`.
+   */
+  defaultBackend: string;
+  /**
+   * Codex model slug used by the default backend. May reference an
+   * alias declared in `models.codex.aliases`. Default is the
+   * `HARNESS_IMAGE_DEFAULT_MODEL` constant exported from
+   * `src/models/resolver.ts` (currently the only Codex model that
+   * exposes the OpenAI image_gen tool).
+   */
+  defaultModel: string;
+  /** `codex exec --effort` value injected into the backend invocation. */
+  defaultReasoning: ImageReasoningEffort;
+  /** Default aspect ratio when callers do not pass `--aspect`. */
+  defaultAspect: ImageAspectRatio;
+  /**
+   * Default number of parallel images when callers do not pass `-n`.
+   * Range 1-16 (matches `work.maxParallel` upper bound).
+   */
+  defaultCount: number;
+  /**
+   * Absolute path prefixes that ref-image arguments must start with.
+   * Empty array (default) = unrestricted (local-user trust boundary).
+   * Non-empty = caller-supplied `--ref-image` paths must resolve under
+   * one of the listed prefixes.
+   */
+  refImageAllowlistPrefixes: string[];
+}
+
 export interface HarnessConfig {
   /** Human-readable project name (shown in messages). */
   projectName: string;
@@ -534,6 +590,13 @@ export interface HarnessConfig {
   postToolUseFailure: PostToolUseFailureConfig;
   configChange: ConfigChangeConfig;
   subagentStart: SubagentStartConfig;
+  /**
+   * Image-generation skill registry. Always populated post-merge —
+   * `DEFAULT_CONFIG.imageGeneration` ships full defaults so callers do
+   * not need optional chaining. The user-facing JSON surface still
+   * accepts partial overrides (sibling keys keep their defaults).
+   */
+  imageGeneration: ImageGenerationConfig;
   /**
    * Optional model registry. When absent, harness resolves to
    * `HARNESS_DEFAULT_MODEL` (see `src/models/resolver.ts`).
@@ -644,6 +707,19 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     agentTypeNotes: {},
     maxTotalBytes: 4096,
   },
+  imageGeneration: {
+    // v0 codex-image-gen backend defaults — image_gen tool dependency
+    // on the resolver's `HARNESS_IMAGE_DEFAULT_MODEL` constant (Codex
+    // CLI, 2026-04-25). Future Anthropic or OpenAI SDK backends will
+    // add sibling keys; new knobs require schema + resolver coupling
+    // so DEFAULT_CONFIG is never the only source of truth.
+    defaultBackend: HARNESS_IMAGE_DEFAULT_BACKEND,
+    defaultModel: HARNESS_IMAGE_DEFAULT_MODEL,
+    defaultReasoning: HARNESS_IMAGE_DEFAULT_REASONING_EFFORT,
+    defaultAspect: HARNESS_IMAGE_DEFAULT_ASPECT,
+    defaultCount: HARNESS_IMAGE_DEFAULT_COUNT,
+    refImageAllowlistPrefixes: [],
+  },
   // `models` is intentionally absent from DEFAULT_CONFIG. The compile-time
   // fallback lives in `src/models/resolver.ts` as `HARNESS_DEFAULT_MODEL`
   // so that an unconfigured project surfaces as `source: "harness-default"`
@@ -743,6 +819,10 @@ function mergeConfig(partial: Partial<HarnessConfig>): HarnessConfig {
         ...(partial.subagentStart?.agentTypeNotes ?? {}),
       },
     },
+    imageGeneration: validateImageGeneration({
+      ...DEFAULT_CONFIG.imageGeneration,
+      ...(partial.imageGeneration ?? {}),
+    }),
     ...(() => {
       const merged = mergeModelsConfig(partial.models);
       return merged ? { models: merged } : {};
@@ -821,6 +901,71 @@ function validateTddEnforce(cfg: TddEnforceConfig): TddEnforceConfig {
     };
   }
   return cfg;
+}
+
+const VALID_IMAGE_REASONING_EFFORTS: readonly ImageReasoningEffort[] = [
+  "medium",
+  "high",
+];
+const VALID_IMAGE_ASPECT_RATIOS: readonly ImageAspectRatio[] = [
+  "1:1",
+  "3:2",
+  "2:3",
+  "16:9",
+  "9:16",
+];
+
+/**
+ * Guard against `imageGeneration.defaultReasoning` / `defaultAspect`
+ * being set to a string outside their respective unions (e.g. typo
+ * like `"ultra"` or unsupported aspect like `"21:9"`). Falls back to
+ * the default and writes a single warning line to stderr per offending
+ * field so consumers (skill scripts, `harness model resolve image-gen`)
+ * never need to defensively handle an unknown enum value.
+ *
+ * Numeric / array fields are passed through unchanged — JSON schema
+ * already enforces the integer range and array shape; runtime
+ * validation here would duplicate that work.
+ */
+function validateImageGeneration(
+  cfg: ImageGenerationConfig,
+): ImageGenerationConfig {
+  let next = cfg;
+  if (
+    !VALID_IMAGE_REASONING_EFFORTS.includes(
+      next.defaultReasoning as ImageReasoningEffort,
+    )
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultReasoning=${JSON.stringify(
+        next.defaultReasoning,
+      )} is not one of ${JSON.stringify(
+        VALID_IMAGE_REASONING_EFFORTS,
+      )}; falling back to "${DEFAULT_CONFIG.imageGeneration.defaultReasoning}".\n`,
+    );
+    next = {
+      ...next,
+      defaultReasoning: DEFAULT_CONFIG.imageGeneration.defaultReasoning,
+    };
+  }
+  if (
+    !VALID_IMAGE_ASPECT_RATIOS.includes(
+      next.defaultAspect as ImageAspectRatio,
+    )
+  ) {
+    process.stderr.write(
+      `[harness config] imageGeneration.defaultAspect=${JSON.stringify(
+        next.defaultAspect,
+      )} is not one of ${JSON.stringify(
+        VALID_IMAGE_ASPECT_RATIOS,
+      )}; falling back to "${DEFAULT_CONFIG.imageGeneration.defaultAspect}".\n`,
+    );
+    next = {
+      ...next,
+      defaultAspect: DEFAULT_CONFIG.imageGeneration.defaultAspect,
+    };
+  }
+  return next;
 }
 
 const VALID_RELEASE_STRATEGIES: readonly ReleaseStrategy[] = [

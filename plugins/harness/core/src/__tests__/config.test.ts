@@ -538,4 +538,157 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.codex.sync?.checkTaskMaxOutputLength).toBe(true);
     });
   });
+
+  describe("imageGeneration section (run-ai-images / ai-image-edit skill registry)", () => {
+    // Background: harness ships two skills that drive the OpenAI image_gen
+    // tool through the Codex CLI — `run-ai-images` (engine) and
+    // `ai-image-edit` (wrap). The `imageGeneration` config surface lets
+    // projects pin the backend, default model, default aspect ratio, and
+    // ref-image allowlist once instead of repeating these knobs across
+    // every invocation. Defaults match the v0 codex-image-gen backend
+    // (gpt-5.4 — image_gen tool dependency at 2026-04-25).
+    it("DEFAULT_CONFIG.imageGeneration exposes the v0 codex-image-gen backend defaults", () => {
+      expect(DEFAULT_CONFIG.imageGeneration).toBeDefined();
+      expect(DEFAULT_CONFIG.imageGeneration.defaultBackend).toBe("codex-image-gen");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultModel).toBe("gpt-5.4");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultReasoning).toBe("medium");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultAspect).toBe("1:1");
+      expect(DEFAULT_CONFIG.imageGeneration.defaultCount).toBe(4);
+      expect(DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes).toEqual([]);
+    });
+
+    it("loadConfig deep-merges imageGeneration partial overrides without dropping siblings", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: { defaultModel: "gpt-5.5" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.defaultModel).toBe("gpt-5.5");
+      // Sibling fields keep DEFAULT_CONFIG values.
+      expect(cfg.imageGeneration.defaultBackend).toBe("codex-image-gen");
+      expect(cfg.imageGeneration.defaultReasoning).toBe("medium");
+      expect(cfg.imageGeneration.defaultAspect).toBe("1:1");
+      expect(cfg.imageGeneration.defaultCount).toBe(4);
+      expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([]);
+    });
+
+    it("loadConfig accepts user override of defaultCount within 1-16 range", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: { defaultCount: 8, defaultAspect: "16:9" },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.defaultCount).toBe(8);
+      expect(cfg.imageGeneration.defaultAspect).toBe("16:9");
+    });
+
+    it("loadConfig replaces refImageAllowlistPrefixes wholesale (array semantics)", () => {
+      writeFileSync(
+        join(projectRoot, "harness.config.json"),
+        JSON.stringify({
+          imageGeneration: {
+            refImageAllowlistPrefixes: [
+              "/srv/projects/assets/",
+              "/tmp/safe/",
+            ],
+          },
+        }),
+      );
+      const cfg = loadConfig(projectRoot);
+      expect(cfg.imageGeneration.refImageAllowlistPrefixes).toEqual([
+        "/srv/projects/assets/",
+        "/tmp/safe/",
+      ]);
+    });
+
+    it("loadConfig falls back to default defaultReasoning on non-enum value (with stderr warn)", () => {
+      // Mirrors the validateRelease / validateTddEnforce pattern: invalid
+      // enum values fall back to DEFAULT_CONFIG so consumers never need a
+      // fifth `default:` branch in their switch statements.
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultReasoning: "ultra" }, // not in {medium, high}
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultReasoning).toBe("medium"); // default
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("imageGeneration.defaultReasoning");
+        expect(warnings).toContain("ultra");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("loadConfig falls back to default defaultAspect on non-enum value (with stderr warn)", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: { defaultAspect: "21:9" }, // not in allowed enum
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultAspect).toBe("1:1"); // default
+        const warnings = stderrWrites.join("");
+        expect(warnings).toContain("imageGeneration.defaultAspect");
+        expect(warnings).toContain("21:9");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+
+    it("valid enum values pass through without warning", () => {
+      const stderrWrites: string[] = [];
+      const originalWrite = process.stderr.write.bind(process.stderr);
+      (process.stderr.write as unknown as (chunk: string) => boolean) = (
+        chunk: string,
+      ) => {
+        stderrWrites.push(chunk);
+        return true;
+      };
+      try {
+        writeFileSync(
+          join(projectRoot, "harness.config.json"),
+          JSON.stringify({
+            imageGeneration: {
+              defaultReasoning: "high",
+              defaultAspect: "9:16",
+            },
+          }),
+        );
+        const cfg = loadConfig(projectRoot);
+        expect(cfg.imageGeneration.defaultReasoning).toBe("high");
+        expect(cfg.imageGeneration.defaultAspect).toBe("9:16");
+        expect(stderrWrites.join("")).toBe("");
+      } finally {
+        (process.stderr.write as unknown as typeof originalWrite) =
+          originalWrite;
+      }
+    });
+  });
 });
