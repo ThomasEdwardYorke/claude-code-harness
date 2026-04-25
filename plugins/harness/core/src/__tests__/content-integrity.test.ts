@@ -2202,6 +2202,110 @@ describe("session-handoff skill — check v2 3 機能 (Structural / Content / Sy
 });
 
 
+// ============================================================
+// session-handoff archive: design decision ask step (9b)
+// archive subcommand に「恒久 design decision を `design-decisions.md` に
+// 追記するか」を operator に問う step を強制する。直近セッションで
+// 6 件の confirmed design decision を archive 直前まで忘れかけた事案を
+// 再発防止するための structural reminder。
+// 設計要点:
+//   - ask は archive subcommand のみで発火 (init / update では出さない)
+//   - non-blocking (operator は skip 可) だが、skip 時は理由を archive footer に
+//     残すことが必須 (omission を audit 可能にする)
+//   - archive file が初期書出された後に走る (operator が session context を
+//     既に確認した状態で問う)
+// ============================================================
+describe("session-handoff skill — archive design-decision ask step (9b)", () => {
+  const skillPath = resolve(PLUGIN_ROOT, "commands/session-handoff.md");
+  const readSkill = (): string => readFileSync(skillPath, "utf-8");
+  const archiveSection = (): string => {
+    const body = readSkill();
+    // `### \`archive\`` から次の H3 (`### `) または H2 (`## `) まで。
+    // H4 (`#### `) は内部要素として section に含める。
+    const m = body.match(/### `archive`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+  const initSection = (): string => {
+    const body = readSkill();
+    const m = body.match(/### `init`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+  const updateSection = (): string => {
+    const body = readSkill();
+    const m = body.match(/### `update`[\s\S]*?(?=\n(?:###\s+[^#\s]|##\s+[^#\s])|$)/);
+    return m?.[0] ?? "";
+  };
+
+  it("archive subcommand 説明に design decision ask step が明示されている", () => {
+    const sec = archiveSection();
+    expect(sec.length).toBeGreaterThan(100);
+    // "design decision" / "恒久方針" のいずれかと "ask" / "確認" / "問う" の組合せを要求。
+    // 単に "design-decisions.md" への参照だけでは不十分 (それは既存運用ルールの言及)。
+    const hasDesignDecisionTopic =
+      /design[-\s]?decision|恒久方針|恒久的[\s\S]{0,10}方針/i.test(sec);
+    const hasAskVerb =
+      /\bask\b|問う|問い合わせ|確認(する|を)|prompt the operator|operator に(問|聞|確認)/i.test(sec);
+    expect(hasDesignDecisionTopic).toBe(true);
+    expect(hasAskVerb).toBe(true);
+  });
+
+  it("ask step は archive subcommand のみに存在する (init / update には漏出しない)", () => {
+    // ask step は archive 完了直後の structural reminder であり、
+    // init (新規ディレクトリ作成) や update (current/backlog 最新化) では発火しない。
+    const initSec = initSection();
+    const updateSec = updateSection();
+    // init / update セクションには "permanent design decision" の ask 構文が無いことを保証
+    const askRegex =
+      /(ask|prompt|問う|問い合わせ)[\s\S]{0,80}(design[-\s]?decision|恒久方針)/i;
+    expect(askRegex.test(initSec)).toBe(false);
+    expect(askRegex.test(updateSec)).toBe(false);
+    // archive にはあることを確認 (既に上の test でも見ているが、negative test と対で持つ)
+    const archiveSec = archiveSection();
+    expect(askRegex.test(archiveSec)).toBe(true);
+  });
+
+  it("ask step は non-blocking (skip 可) であることを明示する", () => {
+    const sec = archiveSection();
+    // operator が skip できる (non-blocking) ことを明示
+    expect(sec).toMatch(
+      /non[-\s]?blocking|skip(?:pable)?(?!\s*reason)|skip\s*(?:可|可能|may|allowed)|スキップ(?:可|可能)/i,
+    );
+  });
+
+  it("ask step を skip した場合は理由を archive 内に記録することが必須", () => {
+    const sec = archiveSection();
+    // skip 時の挙動: skip 理由を archive footer / 末尾に必ず記録する旨。
+    // "skip reason" / "skip した理由" / "理由を記録" 相当の表現を要求。
+    const skipReasonRequired =
+      /skip\s*reason|skip\s*[\s\S]{0,40}(reason|理由)|理由[\s\S]{0,30}(record|記録|残す)|skip 時[\s\S]{0,40}記録/i;
+    expect(sec).toMatch(skipReasonRequired);
+  });
+
+  it("ask step は archive file が初期書出された後に実行される (順序明示)", () => {
+    const sec = archiveSection();
+    // archive 書き出し後に ask する旨を明示 (operator が session context を持った状態で問う)
+    // "after the archive file is written" / "archive 書き出し後" / "after writing" 相当
+    const orderExplicit =
+      /after\s+(?:the\s+)?archive[\s\S]{0,60}(?:written|writ|create)|archive[\s\S]{0,40}(?:書き?出|書出|生成|作成)後|書き?出した?後|after archive (?:is\s+)?(?:written|created)/i;
+    expect(orderExplicit.test(sec)).toBe(true);
+  });
+
+  it("Self-Validation Checklist の archive (mutating) 群に design decision ask 実行確認 item が追加されている", () => {
+    const body = readSkill();
+    // Self-Validation Checklist セクション内 (init / update / archive 共通 mutating 群)
+    const checklistMatch = body.match(
+      /### `init`\s*\/\s*`update`\s*\/\s*`archive`[\s\S]*?(?=\n###\s+[^#\s]|\n## [^#]|$)/,
+    );
+    const checklistSec = checklistMatch?.[0] ?? "";
+    expect(checklistSec.length).toBeGreaterThan(50);
+    // checklist に "design decision ask" 実行確認の checkbox item が存在
+    expect(checklistSec).toMatch(
+      /-\s*\[\s*\]\s*[\s\S]{0,200}(?:design[-\s]?decision|恒久方針)[\s\S]{0,100}(?:ask|問|確認|prompt|skip)/i,
+    );
+  });
+});
+
+
 // harness-setup check が session-handoff を認識する (harness setup check 統合 invariant)
 describe("session-handoff skill — harness-setup check 統合", () => {
   it("harness-setup.md の check 対象 command list に commands/session-handoff.md パス形式で含まれる", () => {
