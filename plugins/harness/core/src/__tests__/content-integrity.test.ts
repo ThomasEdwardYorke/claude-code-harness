@@ -3450,6 +3450,79 @@ describe("imageGeneration schema invariants (run-ai-images / ai-image-edit regis
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 / 3 / 5)
+// 内部レビューで「handoff 分岐後の後続手順が plans-mode 固定にならないこと」を
+// 契約として固定するため、各 Step に Plans-mode / Handoff-mode 両サブセクションが
+// 存在することを regression として強制する。
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 / Step 3 / Step 5)", () => {
+  const content = readCommand("harness-work");
+
+  it("Pre-flight が taskTrackerMode で task source を分岐確認する", () => {
+    // Pre-flight bash block 内で taskTrackerMode を読み、handoff branch を持つ
+    const preflight = /### Pre-flight[\s\S]*?(?=\n### |\n## )/.exec(content)?.[0] ?? "";
+    expect(preflight).toMatch(/taskTrackerMode/);
+    expect(preflight).toMatch(/handoffPaths\.backlog/);
+    expect(preflight).toMatch(/case[\s\S]{0,400}?handoff\)/);
+  });
+
+  it("Step 1 で handoff モード時の parseBacklog 経路が記述されている", () => {
+    const step1 = /### Step 1:[\s\S]*?(?=\n### Step 2)/.exec(content)?.[0] ?? "";
+    expect(step1).toMatch(/Plans-mode/);
+    expect(step1).toMatch(/Handoff-mode/);
+    expect(step1).toMatch(/parseBacklog\(/);
+    expect(step1).toMatch(/BacklogEntry/);
+    expect(step1).toMatch(/status\s*===?\s*"pending"|status:\s*pending/i);
+  });
+
+  it("Step 1 handoff サブセクションが Plans.md を読まない旨を明示", () => {
+    const step1 = /### Step 1:[\s\S]*?(?=\n### Step 2)/.exec(content)?.[0] ?? "";
+    // handoff モードで Plans.md を読まないことを spec 上で明示。
+    // Handoff-mode コンテキスト内に Plans.md への "読まない/不要/参照しない" 否定が
+    // 連続することを 2 要件組合せで強制 (lone alternation だと false-positive する)。
+    expect(step1).toMatch(
+      /Handoff-mode[\s\S]{0,800}?Plans\.md[\s\S]{0,120}?(?:読まない|不要|参照しない)/i,
+    );
+  });
+
+  it("Step 3 で handoff モード時の current.md / backlog.md 更新が記述されている", () => {
+    const step3 = /### Step 3:[\s\S]*?(?=\n### Step 4)/.exec(content)?.[0] ?? "";
+    expect(step3).toMatch(/Plans-mode/);
+    expect(step3).toMatch(/Handoff-mode/);
+    expect(step3).toMatch(/current\.md/);
+    expect(step3).toMatch(/backlog\.md/);
+    expect(step3).toMatch(/in_progress/);
+  });
+
+  it("Step 3 が design-decisions.md の append-only invariant を破らない記述", () => {
+    const step3 = /### Step 3:[\s\S]*?(?=\n### Step 4)/.exec(content)?.[0] ?? "";
+    expect(step3).toMatch(/design-decisions\.md[\s\S]{0,200}?(append-only|append only|触らない)/);
+  });
+
+  it("Step 5 で handoff モード時の backlog entry done 化 + archive trigger が記述されている", () => {
+    const step5 = /### Step 5:[\s\S]*?(?=\n## |\n---)/.exec(content)?.[0] ?? "";
+    expect(step5).toMatch(/Plans-mode/);
+    expect(step5).toMatch(/Handoff-mode/);
+    expect(step5).toMatch(/backlog\.md[\s\S]{0,400}?done/);
+    expect(step5).toMatch(/session-handoff archive|archive\/session-/);
+  });
+
+  it("Step 5 handoff が current.md update / next session 即着手の記述を含む", () => {
+    const step5 = /### Step 5:[\s\S]*?(?=\n## |\n---)/.exec(content)?.[0] ?? "";
+    // 条件 1: current.md の更新動詞 (case-insensitive + 日英 synonym 許容)
+    expect(step5).toMatch(
+      /current\.md[\s\S]{0,300}?(?:update|更新|最新化|latest state)/i,
+    );
+    // 条件 2: test 名の「next session 即着手」を実際に検証
+    // (回帰テストとして、タイトルと検証契約を一致させる: synonym は日英両対応)
+    expect(step5).toMatch(
+      /(?:next session|次セッション|即着手|ready to start)/i,
+    );
+  });
+});
+
 // =============================================================================
 // Codex subagent context overflow 構造改善 — output file-redirect contract /
 // --max-codex-parallel flag / lock-dir-based semaphore の不変条件

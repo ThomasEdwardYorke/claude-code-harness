@@ -107,6 +107,40 @@
           "default": "Plans.md",
           "description": "Relative path to the project's task / plan file. Consumed by pre-compact and task-lifecycle hooks to read assignment tables before compaction."
         },
+        "taskTrackerMode": {
+          "type": "string",
+          "enum": ["plans", "handoff"],
+          "default": "plans",
+          "description": "Task source consumed by /harness-work and related dispatchers. `plans` (default) reads the legacy flat `Plans.md` markdown file. `handoff` opts into the 4-layer handoff structure (roadmap / backlog / current / decisions). When set to `handoff`, `handoffPaths` MUST be populated with all four file paths; missing or malformed entries trigger a stderr warning and silent fall-back to `plans` mode so skills never see an undefined dispatch source."
+        },
+        "handoffPaths": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "4-layer handoff document paths required when `taskTrackerMode === \"handoff\"`. All four entries are project-relative (anchored at projectRoot); absolute paths and `..` segments are rejected at load time. Wholesale-replace semantics — the user-supplied object is used verbatim (no merge with defaults) because partial overrides would yield silently incomplete configs. The field is preserved for forward-compat when `taskTrackerMode === \"plans\"` (an author can flip the mode later without re-typing the paths).",
+          "required": ["roadmap", "backlog", "current", "decisions"],
+          "properties": {
+            "roadmap": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Phase / Week / Task definition file with YAML frontmatter (source-of-truth for AC, depends_on, estimated)."
+            },
+            "backlog": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Priority-ordered dispatchable view consumed by /harness-work. Contains heading-driven entries plus optional YAML metadata blocks."
+            },
+            "current": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Bird's-eye index file consumed by /session-handoff check (Latest state / Top priority / Quick-start)."
+            },
+            "decisions": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Append-only design decisions log."
+            }
+          }
+        },
         "assignmentSectionMarkers": {
           "type": "array",
           "items": { "type": "string" },
@@ -148,7 +182,19 @@
           }
         },
         "failFast": { "type": "boolean", "default": true }
-      }
+      },
+      "allOf": [
+        {
+          "description": "When taskTrackerMode is 'handoff', require handoffPaths so the dispatcher cannot fall through to undefined behavior.",
+          "if": {
+            "properties": { "taskTrackerMode": { "const": "handoff" } },
+            "required": ["taskTrackerMode"]
+          },
+          "then": {
+            "required": ["handoffPaths"]
+          }
+        }
+      ]
     },
     "security": {
       "type": "object",
