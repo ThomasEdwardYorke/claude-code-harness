@@ -188,7 +188,7 @@ done
 #   /tdd-implement T-12 --profile=assertive --no-commit
 #   /tdd-implement T-13 --profile=assertive
 #
-# また worker prompt 冒頭に env export を 1 行付与する (案 C: Codex 並列度制御):
+# また worker prompt 冒頭に env export を 1 行付与する (Codex 並列度制御):
 #   export MAX_CODEX_PARALLEL=$MAX_CODEX_PARALLEL
 # worker (harness:worker agent) は Phase 4 Codex 呼出時にこの env を読み、
 # scripts/codex-semaphore.sh acquire/release で同時実行を制限する。

@@ -3431,9 +3431,9 @@ describe("commands/pseudo-coderabbit-loop.md の --max-codex-parallel flag + out
   });
 
   it("coderabbit-mimic spawn 時に [output-file: marker を prompt body に inject する旨", () => {
-    // 案 A 連携: pseudo-loop は内部で coderabbit-mimic agent を Codex 経由で
+    // pseudo-loop は内部で coderabbit-mimic agent を Codex 経由で
     // spawn する。長文 findings JSON が parent context を埋めないよう、
-    // marker 経由の file-redirect を必ず使う方針を spec に記述。
+    // output file-redirect marker を必ず使う方針を spec に記述。
     expect(content).toMatch(/\[output-file:/i);
     expect(content).toMatch(/mktemp|tmp.*pseudo-cr|TMP_RESULT/);
   });
