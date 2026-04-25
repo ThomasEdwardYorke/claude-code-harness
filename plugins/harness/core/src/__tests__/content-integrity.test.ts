@@ -3395,10 +3395,14 @@ describe("commands/harness-work.md — handoff mode 分岐 (Pre-flight / Step 1 
 
   it("Step 5 handoff が current.md update / next session 即着手の記述を含む", () => {
     const step5 = /### Step 5:[\s\S]*?(?=\n## |\n---)/.exec(content)?.[0] ?? "";
-    // case-insensitive + 日本語/英語の synonym (update / 更新 / 最新化 / latest state)
-    // を許容して大小文字・語彙差分に対する false-negative を回避。
+    // 条件 1: current.md の更新動詞 (case-insensitive + 日英 synonym 許容)
     expect(step5).toMatch(
       /current\.md[\s\S]{0,300}?(?:update|更新|最新化|latest state)/i,
+    );
+    // 条件 2: test 名の「next session 即着手」を実際に検証
+    // (回帰テストとして、タイトルと検証契約を一致させる: synonym は日英両対応)
+    expect(step5).toMatch(
+      /(?:next session|次セッション|即着手|ready to start)/i,
     );
   });
 });
