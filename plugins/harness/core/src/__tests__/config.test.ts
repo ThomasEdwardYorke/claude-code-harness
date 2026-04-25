@@ -546,7 +546,7 @@ describe("loadConfig / loadConfigSafe", () => {
     // projects pin the backend, default model, default aspect ratio, and
     // ref-image allowlist once instead of repeating these knobs across
     // every invocation. Defaults match the v0 codex-image-gen backend
-    // (gpt-5.4 — image_gen tool dependency at 2026-04-25).
+    // (gpt-5.4 — image_gen tool dependency).
     it("DEFAULT_CONFIG.imageGeneration exposes the v0 codex-image-gen backend defaults", () => {
       expect(DEFAULT_CONFIG.imageGeneration).toBeDefined();
       expect(DEFAULT_CONFIG.imageGeneration.defaultBackend).toBe("codex-image-gen");
@@ -692,11 +692,11 @@ describe("loadConfig / loadConfigSafe", () => {
     });
 
     // ─────────────────────────────────────────────────────────────────
-    // Adversarial follow-ups (Codex review 2026-04-25):
-    // MAJOR-1 defaultCount range / MAJOR-2 refImageAllowlistPrefixes /
-    // MINOR-1 stderr sanitisation / MINOR-2 type-confusion guard.
+    // Defensive coverage: range / allowlist / sanitisation / type-confusion
+    // guards layered on top of the schema (loadConfig runs before schema
+    // validation, so the runtime guards must mirror the static contract).
     // ─────────────────────────────────────────────────────────────────
-    it("MAJOR-1: loadConfig falls back to default defaultCount on out-of-range value (with stderr warn)", () => {
+    it("loadConfig falls back to default defaultCount on out-of-range value (with stderr warn)", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -723,7 +723,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MAJOR-1: loadConfig falls back to default defaultCount on negative / zero value", () => {
+    it("loadConfig falls back to default defaultCount on negative / zero value", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -748,7 +748,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MAJOR-1: loadConfig falls back when defaultCount is non-integer", () => {
+    it("loadConfig falls back when defaultCount is non-integer", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -773,7 +773,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MAJOR-2: loadConfig drops refImageAllowlistPrefixes entries with .. / non-absolute paths", () => {
+    it("loadConfig drops refImageAllowlistPrefixes entries with .. / non-absolute paths", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -811,7 +811,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MAJOR-2: loadConfig drops refImageAllowlistPrefixes entries with control characters / NUL bytes", () => {
+    it("loadConfig drops refImageAllowlistPrefixes entries with control characters / NUL bytes", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -843,7 +843,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MAJOR-2: loadConfig drops non-string refImageAllowlistPrefixes entries", () => {
+    it("loadConfig drops non-string refImageAllowlistPrefixes entries", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -876,7 +876,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MINOR-1: stderr warnings sanitize ANSI escape sequences in offending values", () => {
+    it("stderr warnings sanitize ANSI escape sequences in offending values", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -908,7 +908,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MINOR-2: imageGeneration: <non-object> falls back to defaults with stderr warn", () => {
+    it("imageGeneration: <non-object> falls back to defaults with stderr warn", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (
@@ -934,7 +934,7 @@ describe("loadConfig / loadConfigSafe", () => {
       }
     });
 
-    it("MINOR-2: imageGeneration: null falls back to defaults", () => {
+    it("imageGeneration: null falls back to defaults", () => {
       writeFileSync(
         join(projectRoot, "harness.config.json"),
         JSON.stringify({
@@ -945,7 +945,7 @@ describe("loadConfig / loadConfigSafe", () => {
       expect(cfg.imageGeneration).toEqual(DEFAULT_CONFIG.imageGeneration);
     });
 
-    it("MINOR-2: imageGeneration: [] (array) falls back to defaults", () => {
+    it("imageGeneration: [] (array) falls back to defaults", () => {
       const stderrWrites: string[] = [];
       const originalWrite = process.stderr.write.bind(process.stderr);
       (process.stderr.write as unknown as (chunk: string) => boolean) = (

@@ -121,7 +121,7 @@ export function resolveModel(config, agentName) {
  * Compile-time defaults for image generation. Diverges intentionally
  * from the text-side `HARNESS_DEFAULT_MODEL = "gpt-5.5"` because the
  * OpenAI `image_gen` tool is currently only available on `gpt-5.4`
- * (Codex CLI tool surface, 2026-04-25). Flipping this constant is a
+ * (Codex CLI tool surface). Flipping this constant is a
  * breaking change — prefer per-project override via
  * `imageGeneration.defaultModel` in `harness.config.json`.
  */
@@ -215,7 +215,7 @@ export function resolveImageModel(imageConfig, modelsConfig, agentName) {
     // touch the backend. An empty string is rejected as well as undefined
     // (an empty backend would resolve to a non-existent script
     // `${SKILL_DIR}/scripts/backends/.sh`, which is worse than falling
-    // back to the shipped default). Codex adversarial NITPICK 2026-04-25.
+    // back to the shipped default).
     const backend = typeof imageConfig?.defaultBackend === "string" &&
         imageConfig.defaultBackend.length > 0
         ? imageConfig.defaultBackend

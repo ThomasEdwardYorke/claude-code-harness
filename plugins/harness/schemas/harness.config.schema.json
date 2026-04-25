@@ -362,7 +362,7 @@
         "defaultModel": {
           "type": "string",
           "default": "gpt-5.4",
-          "description": "Codex model slug used by the default backend. Intentionally diverges from the text-side `HARNESS_DEFAULT_MODEL = gpt-5.5` because the OpenAI image_gen tool is currently only available on `gpt-5.4` (Codex CLI tool surface, 2026-04-25). May reference an alias declared in `models.codex.aliases`. Override at runtime via `RUN_AI_IMAGES_CODEX_MODEL` env var."
+          "description": "Codex model slug used by the default backend. Intentionally diverges from the text-side `HARNESS_DEFAULT_MODEL = gpt-5.5` because the OpenAI image_gen tool is currently only available on `gpt-5.4` (Codex CLI tool surface). May reference an alias declared in `models.codex.aliases`. Override at runtime via `RUN_AI_IMAGES_CODEX_MODEL` env var."
         },
         "defaultReasoning": {
           "type": "string",

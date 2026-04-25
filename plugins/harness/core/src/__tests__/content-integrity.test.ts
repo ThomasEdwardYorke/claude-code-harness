@@ -3217,11 +3217,11 @@ describe("codex-sync truncate mitigation (TASK_MAX_OUTPUT_LENGTH guardrail)", ()
 });
 
 describe("imageGeneration schema invariants (run-ai-images / ai-image-edit registry)", () => {
-  // Background: D-44 introduced the imageGeneration config surface so
-  // projects can pin the backend / default model / aspect ratio for the
-  // run-ai-images engine without editing skill markdown. The invariants
-  // below lock in the v0 shipping shape so future contributors cannot
-  // silently relax the strict keyset, drop the enum bounds on
+  // Background: the imageGeneration config surface lets projects pin
+  // the backend / default model / aspect ratio for the run-ai-images
+  // engine without editing skill markdown. The invariants below lock
+  // in the v0 shipping shape so future contributors cannot silently
+  // relax the strict keyset, drop the enum bounds on
   // defaultReasoning / defaultAspect, or remove the integer range on
   // defaultCount that prevents accidental fan-outs of >16 parallel
   // image generations.
@@ -3298,8 +3298,7 @@ describe("imageGeneration schema invariants (run-ai-images / ai-image-edit regis
     expect(model.type).toBe("string");
     // Intentional divergence from the text-side `gpt-5.5` default — the
     // image_gen tool is currently only available on gpt-5.4 (Codex CLI
-    // tool surface, 2026-04-25). Flipping this constant is a breaking
-    // change tracked separately.
+    // tool surface). Flipping this constant is a breaking change.
     expect(model.default).toBe("gpt-5.4");
   });
 

@@ -7,7 +7,7 @@
  * reads from the `HarnessConfig` on `RuleContext.config`.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { HARNESS_IMAGE_DEFAULT_ASPECT, HARNESS_IMAGE_DEFAULT_BACKEND, HARNESS_IMAGE_DEFAULT_COUNT, HARNESS_IMAGE_DEFAULT_MODEL, HARNESS_IMAGE_DEFAULT_REASONING_EFFORT, VALID_IMAGE_ASPECT_RATIOS, VALID_IMAGE_REASONING_EFFORTS, } from "./models/resolver.js";
 // ============================================================
 // Defaults
@@ -114,7 +114,7 @@ export const DEFAULT_CONFIG = {
     imageGeneration: {
         // v0 codex-image-gen backend defaults — image_gen tool dependency
         // on the resolver's `HARNESS_IMAGE_DEFAULT_MODEL` constant (Codex
-        // CLI, 2026-04-25). Future Anthropic or OpenAI SDK backends will
+        // CLI). Future Anthropic or OpenAI SDK backends will
         // add sibling keys; new knobs require schema + resolver coupling
         // so DEFAULT_CONFIG is never the only source of truth.
         defaultBackend: HARNESS_IMAGE_DEFAULT_BACKEND,
@@ -293,8 +293,8 @@ function validateTddEnforce(cfg) {
 // `VALID_IMAGE_REASONING_EFFORTS` and `VALID_IMAGE_ASPECT_RATIOS` are
 // imported from `./models/resolver.js` at the top of this file —
 // resolver.ts is the canonical source of truth so the runtime allowlist
-// tracks the type union without manual sync. (Codex pseudo-CodeRabbit
-// nitpick 2026-04-25.)
+// tracks the type union without manual sync (avoiding a divergence
+// hazard where one file silently extends the union without the other).
 /**
  * Type-guard the user-supplied `imageGeneration` partial before
  * spreading it over `DEFAULT_CONFIG.imageGeneration`. Without this
@@ -303,7 +303,6 @@ function validateTddEnforce(cfg) {
  * merged object) and the user would never learn that their config
  * was ignored.
  *
- * Codex adversarial review 2026-04-25 MINOR-2.
  */
 function mergeImageGenerationConfig(partial) {
     if (partial === undefined) {
@@ -327,7 +326,6 @@ function mergeImageGenerationConfig(partial) {
  * terminal cursor / colour controls. Replace them with `?` so the
  * report stays readable and audit-safe.
  *
- * Codex adversarial review 2026-04-25 MINOR-1.
  */
 function sanitiseConfigValueForStderr(value) {
     return JSON.stringify(value).replace(
@@ -347,15 +345,14 @@ function sanitiseConfigValueForStderr(value) {
  *   `DEFAULT_CONFIG.imageGeneration.*`.
  * - **defaultCount**: integer in [1, 16]. Schema enforces this for
  *   schema-aware tools, but the loader runs before schema validation
- *   so we duplicate the range check here. (Codex MAJOR-1.)
+ *   so we duplicate the range check here as a runtime guard.
  * - **refImageAllowlistPrefixes**: each entry must be a non-empty
- *   absolute path string (`/...`) without `..` segments or control
- *   characters. Invalid entries are dropped (preserving the rest of
- *   the array). (Codex MAJOR-2.)
+ *   absolute path string without `..` segments or control characters.
+ *   Invalid entries are dropped (preserving the rest of the array).
  *
  * stderr output uses `sanitiseConfigValueForStderr` so attacker-
  * controlled values cannot inject ANSI escape codes / NUL bytes into
- * harness diagnostics. (Codex MINOR-1.)
+ * harness diagnostics.
  */
 function validateImageGeneration(cfg) {
     let next = cfg;
@@ -373,9 +370,8 @@ function validateImageGeneration(cfg) {
             defaultAspect: DEFAULT_CONFIG.imageGeneration.defaultAspect,
         };
     }
-    // defaultCount range guard (Codex MAJOR-1). Schema declares
-    // minimum 1 / maximum 16 but loadConfig runs before schema
-    // validation, so re-enforce here.
+    // defaultCount range guard. Schema declares minimum 1 / maximum 16
+    // but loadConfig runs before schema validation, so re-enforce here.
     if (typeof next.defaultCount !== "number" ||
         !Number.isInteger(next.defaultCount) ||
         next.defaultCount < 1 ||
@@ -386,10 +382,10 @@ function validateImageGeneration(cfg) {
             defaultCount: DEFAULT_CONFIG.imageGeneration.defaultCount,
         };
     }
-    // refImageAllowlistPrefixes element guard (Codex MAJOR-2). Drop
-    // any entry that is not a non-empty absolute path without `..`
-    // segments or control characters. Falls through to the default
-    // (empty array) when the entire input is malformed (non-array).
+    // refImageAllowlistPrefixes element guard. Drop any entry that is
+    // not a non-empty absolute path without `..` segments or control
+    // characters. Falls through to the default (empty array) when the
+    // entire input is malformed (non-array).
     if (!Array.isArray(next.refImageAllowlistPrefixes)) {
         process.stderr.write(`[harness config] imageGeneration.refImageAllowlistPrefixes=${sanitiseConfigValueForStderr(next.refImageAllowlistPrefixes)} is not an array; falling back to ${JSON.stringify(DEFAULT_CONFIG.imageGeneration.refImageAllowlistPrefixes)}.\n`);
         next = {
@@ -404,15 +400,15 @@ function validateImageGeneration(cfg) {
             const entry = next.refImageAllowlistPrefixes[i];
             if (typeof entry === "string" &&
                 entry.length > 0 &&
-                // Absolute path on POSIX (and the harness shipped target). A
-                // future Windows port can extend this with a drive-letter
-                // check.
-                entry.startsWith("/") &&
-                // No traversal *segments*. Splitting on `/` lets a legitimate
-                // filename like `foo..bar` survive while the `..` segment
-                // (which is the actual path-traversal vector) is rejected.
-                // Codex pseudo-CodeRabbit nitpick 2026-04-25.
-                !entry.split("/").some((segment) => segment === "..") &&
+                // Cross-platform absolute-path detection. node:path's
+                // `isAbsolute` covers POSIX (`/foo`), Windows drive letters
+                // (`C:\foo`), and UNC paths (`\\server\share`).
+                isAbsolute(entry) &&
+                // No traversal *segments*. Splitting on both POSIX (`/`) and
+                // Windows (`\\`) separators lets a legitimate filename like
+                // `foo..bar` survive while the `..` segment (the actual path-
+                // traversal vector) is rejected on either platform.
+                !entry.split(/[\\/]/).some((segment) => segment === "..") &&
                 // No control characters / NUL byte / DEL / C1 range — these
                 // would confuse downstream path comparison and log output.
                 !/[\x00-\x1f\x7f-\x9f]/.test(entry)) {

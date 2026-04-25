@@ -395,9 +395,9 @@ describe("models/resolver — checkModels", () => {
 
 describe("models/resolver — resolveImageModel", () => {
   // Background: image_gen tool is currently only available on `gpt-5.4`
-  // (via Codex CLI's `image_gen` tool surface, 2026-04-25), so the
-  // image-side compile-time fallback intentionally diverges from the
-  // text-side `HARNESS_DEFAULT_MODEL = "gpt-5.5"`. Keep this divergence
+  // (via the Codex CLI's `image_gen` tool surface), so the image-side
+  // compile-time fallback intentionally diverges from the text-side
+  // `HARNESS_DEFAULT_MODEL = "gpt-5.5"`. Keep this divergence
   // explicit — flipping the image default is a breaking change.
   describe("compile-time defaults", () => {
     it("HARNESS_IMAGE_DEFAULT_MODEL pins gpt-5.4 (image_gen tool dependency)", () => {
@@ -601,7 +601,7 @@ describe("models/resolver — resolveImageModel", () => {
     });
   });
 
-  describe("edge cases (Codex adversarial NITPICK-5)", () => {
+  describe("edge cases (defensive handling of empty / null / non-string inputs)", () => {
     it("falls back to defaults when agentName is empty string", () => {
       const result = resolveImageModel(undefined, undefined, "");
       expect(result.model).toBe(HARNESS_IMAGE_DEFAULT_MODEL);
