@@ -109,20 +109,25 @@ CodeRabbit の実装原理（LLM + 静的解析オーケストレーション + 
 
 **目的**: `.coderabbit.yaml` の `path_instructions` を **per-file review context** に注入し、scoring 段階で参照可能にする。Codex prompt 組立時の optional context に置くと LLM が無視するため、**REQUIRED CONTEXT** として埋め込む。
 
-#### Step 0.1 — `.coderabbit.yaml` を repo root まで walk up
+#### Step 0.1 — `.coderabbit.yaml` を reviewed file から repo root へ walk up
 
-reviewed file が worktree / sub-directory 配下にある場合でも `.coderabbit.yaml` を確実に拾うため、ファイルの位置から **親ディレクトリ方向に walk up** し repo root まで遡る。最も近い `.coderabbit.yaml` を採用する (monorepo / nested config を許容)。
+reviewed file の **親ディレクトリから出発** し、`$REPO_ROOT` で**必ず停止する** walk up を行う。最も近い `.coderabbit.yaml` を採用 (monorepo / nested config 対応)。`$REPO_ROOT` を超えて遡らないことで、repo 外の偶発的 `.coderabbit.yaml` を拾うリスクを排除する。
 
 ```bash
-# REPO_ROOT は Step 1 で `cd "$REPO_ROOT"` 済の前提。worktree / nested の
-# 場合は、reviewed file の親ディレクトリ方向に walk up し、最も近い
-# `.coderabbit.yaml` を採用する。
+# Per-file resolution: $REVIEWED_FILE は $WORKDIR/files.txt の各行
+# (REPO_ROOT 相対 path)。下記は 1 file 分の構造を示す — 実装はこれを
+# files.txt の各 file についてループする。
 CODERABBIT_YAML=""
-DIR="$REPO_ROOT"
-while [ "$DIR" != "/" ] && [ -n "$DIR" ]; do
+DIR="$(cd "$REPO_ROOT/$REVIEWED_FILE" 2>/dev/null && pwd -P || dirname "$REPO_ROOT/$REVIEWED_FILE")"
+# `cd` は file path には適用できないので、parent dir を直接取る。
+DIR="$(dirname "$REPO_ROOT/$REVIEWED_FILE")"
+while [ -n "$DIR" ]; do
   if [ -f "$DIR/.coderabbit.yaml" ]; then
     CODERABBIT_YAML="$DIR/.coderabbit.yaml"
     break
+  fi
+  if [ "$DIR" = "$REPO_ROOT" ]; then
+    break  # repo root に到達 (config 不在で fallback へ)
   fi
   DIR="$(dirname "$DIR")"
 done
@@ -132,7 +137,7 @@ done
 
 #### Step 0.2 — `path_instructions` の per-file matching
 
-`.coderabbit.yaml` を `yaml` パーサ (Python `yaml.safe_load` / `yq` / `jq` のいずれか利用可能なもの) で解釈し、`reviews.path_instructions` を取り出す。各 entry は **`path` glob + `instructions` body の組** として扱い、両者を必ず一緒に保持する (`path` だけ match して body を捨ててはならない)。
+`.coderabbit.yaml` は **YAML parser** (Python `yaml.safe_load` / `yq` のいずれか利用可能なもの) で解釈し、`reviews.path_instructions` を取り出す。`jq` は **JSON 専用** で YAML を解釈できないため、ここでは使わない (jq は yaml→json 変換後の後処理で使用可)。各 entry は **`path` glob + `instructions` body の組** として扱い、両者を必ず一緒に保持する (`path` だけ match して body を捨てる、あるいは body だけ取って path を失うのは誤り)。
 
 各 reviewed file (Step 1 で `$WORKDIR/files.txt` に書き出し済) について以下を実行:
 
@@ -152,7 +157,7 @@ done
 
 `.coderabbit.yaml` の有無に関わらず、agent は以下を **常に** scoring 対象に含める。これは harness `CONTRIBUTING.md` §1.2 / §3.1 / Plugin Generality Check (PR template) の R2 ルール (business logic / internal metadata isolation) を pseudo review 段階で強制するためである。
 
-- shipped plugin spec (`plugins/harness/agents/*.md` / `plugins/harness/commands/*.md` / `plugins/harness/core/src/**/*.ts` etc.) に **internal tracker ID / review-round ID / phase ID / next-session ノート / 内部識別子 / 内部トラッカー** が混入している場合、それを **actionable finding として flag する**。severity は最低でも `minor`、scoping (commit message 限定 vs shipped spec 混入) を確認した上で原則 `major` (category=`config` または `style`、`actionable=true`)。
+- shipped plugin spec (`plugins/harness/agents/*.md` / `plugins/harness/commands/*.md` / `plugins/harness/core/src/**/*.ts` etc.) に **internal tracker ID / review-round ID / phase ID / next-session ノート / 内部識別子 / 内部トラッカー** が混入している場合、それを **actionable finding として flag する**。severity は **default `major`** (category=`config` または `style`、`actionable=true`)。security-sensitive paths (auth / credential 取扱い path 等) で発見された場合のみ `critical` に escalate。Rule 10 (Step 3 prompt) と severity contract が完全一致する。
 - `generality-exemption: <pattern-ids> | <issue-key> | <expiry> | <reason>` の 4-field 文法 (CONTRIBUTING.md §3.1) を満たさない exemption コメントも actionable として flag する (B-3 reachability)。
 - 上記検出は per-file review の主要 scoring 経路に組み込む (sub-section 「禁止事項」の奥に隠して終わらせない)。
 

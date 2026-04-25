@@ -1,7 +1,7 @@
 /**
  * core/src/__tests__/agent-coderabbit-mimic-content.test.ts
  *
- * `coderabbit-mimic` agent prompt のコンテンツ不変条件 (Task 9a).
+ * `coderabbit-mimic` agent prompt のコンテンツ不変条件 (strict pre-parse regression).
  *
  * 目的:
  *   `/pseudo-coderabbit-loop --local` 経由で agent が呼ばれたとき、
@@ -44,7 +44,7 @@ function readAgent(name: string): string {
   return readFileSync(resolve(PLUGIN_ROOT, "agents", `${name}.md`), "utf-8");
 }
 
-describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse (Task 9a)", () => {
+describe("coderabbit-mimic agent: .coderabbit.yaml strict pre-parse regression", () => {
   const content = readAgent("coderabbit-mimic");
 
   // -----------------------------------------------------------------
