@@ -219,13 +219,17 @@ if [ -z "$CODEX_COMPANION" ] || [ ! -f "$CODEX_COMPANION" ]; then
   exit 1
 fi
 
-# Codex 並列度制御 (案 C): semaphore script の path resolve.
-# coordinator から forward された MAX_CODEX_PARALLEL (default 1) を採用。
-# 配布パスは marketplace 名で複数候補をフォールバック (cc-triad-relay 主、後方互換用に過去名も探す)。
+# Codex parallelism control: resolve the semaphore script path. The coordinator
+# forwards MAX_CODEX_PARALLEL (default 1) via env. The harness plugin's
+# marketplace name is allowed to differ between installs, so make it overridable
+# via HARNESS_MARKETPLACE_NAME (default: cc-triad-relay, the upstream-shipped
+# name); fall back to both the active install location and the cached one for
+# resilience across plugin reinstalls.
+HARNESS_MARKETPLACE_NAME="${HARNESS_MARKETPLACE_NAME:-cc-triad-relay}"
 SEM_BIN=""
 for CAND in \
-  "$HOME/.claude/plugins/marketplaces/cc-triad-relay/plugins/harness/scripts/codex-semaphore.sh" \
-  "$HOME/.claude/plugins/cache/cc-triad-relay/harness/scripts/codex-semaphore.sh"; do
+  "$HOME/.claude/plugins/marketplaces/${HARNESS_MARKETPLACE_NAME}/plugins/harness/scripts/codex-semaphore.sh" \
+  "$HOME/.claude/plugins/cache/${HARNESS_MARKETPLACE_NAME}/harness/scripts/codex-semaphore.sh"; do
   if [ -x "$CAND" ]; then SEM_BIN="$CAND"; break; fi
 done
 MAX_PAR="${MAX_CODEX_PARALLEL:-1}"
@@ -239,24 +243,25 @@ if [ -n "$SEM_BIN" ] && [ "$MAX_PAR" -ge 1 ]; then
 else
   # Semaphore unavailable. Behaviour depends on requested parallelism:
   #   MAX_PAR > 1 → fatal exit. Silently falling back to unconstrained
-  #     parallel re-introduces the exact subagent context overflow that
-  #     9g was created to prevent (3+ Codex review timeout, 100% reproduction).
-  #     Refusing here forces the operator to fix the install (semaphore script
-  #     missing) before paying for another lost-result run.
+  #     parallel Codex re-introduces the subagent context overflow that this
+  #     guard was added to prevent (observed: 3+ long-running parallel reviews
+  #     hit a 100% timeout / lost-result rate). Refusing here forces the
+  #     operator to fix the install (semaphore script missing) before paying
+  #     for another lost-result run.
   #   MAX_PAR == 1 (sequential, the safe default) → WARN + continue. A single
   #     Codex review cannot overflow context, so the legacy unconstrained path
   #     is acceptable as a graceful degradation when semaphore is missing.
   if [ "$MAX_PAR" -gt 1 ]; then
     echo "ERROR: scripts/codex-semaphore.sh not found but --max-codex-parallel=$MAX_PAR > 1." >&2
-    echo "       refusing to fall back to unconstrained parallel Codex (subagent context overflow risk, 9g)." >&2
-    echo "       fix: ensure the harness plugin (cc-triad-relay) is installed and codex-semaphore.sh is executable." >&2
+    echo "       refusing to fall back to unconstrained parallel Codex (subagent context overflow risk)." >&2
+    echo "       fix: ensure the harness plugin marketplace (HARNESS_MARKETPLACE_NAME, default cc-triad-relay) is installed and codex-semaphore.sh is executable." >&2
     exit 1
   fi
   # MAX_PAR=1: caller intent is "no parallel Codex anyway", so the missing
   # semaphore degrades cleanly. WARN explicitly so an operator who *did*
   # set MAX_CODEX_PARALLEL=1 in env (vs default-1) can still see that the
   # semaphore install is missing and would silently fail if they raise N.
-  echo "WARN: scripts/codex-semaphore.sh not found. MAX_CODEX_PARALLEL=$MAX_PAR is honored as sequential, but raising it without installing the semaphore script will fall back to fatal exit. Install: ensure cc-triad-relay marketplace plugin is present and codex-semaphore.sh is executable." >&2
+  echo "WARN: scripts/codex-semaphore.sh not found. MAX_CODEX_PARALLEL=$MAX_PAR is honored as sequential, but raising it without installing the semaphore script will fall back to fatal exit. Install: ensure the harness plugin marketplace (HARNESS_MARKETPLACE_NAME, default cc-triad-relay) is present and codex-semaphore.sh is executable." >&2
   node "$CODEX_COMPANION" task "実装レビュー: <task概要>" --effort medium
 fi
 ```

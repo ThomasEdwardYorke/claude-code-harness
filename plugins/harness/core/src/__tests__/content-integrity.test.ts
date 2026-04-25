@@ -3335,16 +3335,17 @@ describe("imageGeneration schema invariants (run-ai-images / ai-image-edit regis
 });
 
 // =============================================================================
-// 9g — Codex subagent context overflow 構造改善 (案 A: output file-redirect /
-//      案 C: --max-codex-parallel) の不変条件
+// Codex subagent context overflow 構造改善 — output file-redirect contract /
+// --max-codex-parallel flag / lock-dir-based semaphore の不変条件
 // =============================================================================
 //
 // 背景: 3+ 並列で長時間 Codex review を走らせると、各 subagent が完了を待つ間に
 // Read/Grep で context を蓄積し、Codex 完了時に長文 review JSON を return できず
-// 全件 timeout (再現率 100%)。本セクションは 9g 解決策 (案 A + C) が shipped
-// spec で永続的に維持されることを担保する。
+// 全件 timeout する事故が観測された (再現率 100%)。本セクションは subagent
+// context overflow 解決策 (output file-redirect + Codex parallelism cap) が
+// shipped spec で永続的に維持されることを担保する。
 
-describe("agents/codex-sync.md の output file-redirect contract (9g 案 A)", () => {
+describe("agents/codex-sync.md の output file-redirect contract", () => {
   const content = readAgent("codex-sync");
 
   it("output-file marker (caller が prompt 内に置く) の構文を spec で説明している", () => {
@@ -3373,7 +3374,7 @@ describe("agents/codex-sync.md の output file-redirect contract (9g 案 A)", ()
   });
 });
 
-describe("commands/parallel-worktree.md の --max-codex-parallel flag (9g 案 C)", () => {
+describe("commands/parallel-worktree.md の --max-codex-parallel flag", () => {
   const content = readCommand("parallel-worktree");
 
   it("--max-codex-parallel=N flag を spec で説明", () => {
@@ -3404,7 +3405,7 @@ describe("commands/parallel-worktree.md の --max-codex-parallel flag (9g 案 C)
   });
 });
 
-describe("commands/pseudo-coderabbit-loop.md の --max-codex-parallel flag + output-file 統合 (9g 案 C/A)", () => {
+describe("commands/pseudo-coderabbit-loop.md の --max-codex-parallel flag + output-file 統合", () => {
   const content = readCommand("pseudo-coderabbit-loop");
 
   it("--max-codex-parallel=N flag を spec で説明", () => {
@@ -3425,7 +3426,7 @@ describe("commands/pseudo-coderabbit-loop.md の --max-codex-parallel flag + out
   });
 });
 
-describe("scripts/codex-semaphore.sh — 9g 案 C 実装本体", () => {
+describe("scripts/codex-semaphore.sh — lock-dir-based semaphore (Codex parallelism cap 実装本体)", () => {
   const SCRIPT_PATH = resolve(PLUGIN_ROOT, "scripts", "codex-semaphore.sh");
   let content: string;
   try {
@@ -3470,10 +3471,10 @@ describe("scripts/codex-semaphore.sh — 9g 案 C 実装本体", () => {
     expect(content).toMatch(/set\s+-euo\s+pipefail/);
   });
 
-  it("DEADLINE_SECS は STALE_SECS と独立した env で制御 (Codex review M5)", () => {
-    // Codex review (本 PR M5): 30-min STALE_SECS == 30-min deadline は
-    // max=1 で 3 worker queued + 10-min review chain の境界で timeout する。
-    // deadline を別 env var に分離し、default も拡張済 (3600s) であること。
+  it("DEADLINE_SECS は STALE_SECS と独立した env で制御", () => {
+    // 30-min STALE_SECS == 30-min deadline 設計は max=1 で 3 worker queued +
+    // 10-min review chain の境界で timeout する。deadline を別 env var に
+    // 分離し、default も 3600s に拡張する不変条件。
     expect(content).toMatch(/HARNESS_CODEX_SEMAPHORE_DEADLINE_SECS/);
     expect(content).toMatch(/DEADLINE_SECS\s*=\s*"?\$\{HARNESS_CODEX_SEMAPHORE_DEADLINE_SECS:-3600\}/);
     // acquire deadline は STALE_SECS ではなく DEADLINE_SECS を使う
@@ -3481,12 +3482,12 @@ describe("scripts/codex-semaphore.sh — 9g 案 C 実装本体", () => {
   });
 
   it("acquire timeout error が DEADLINE_SECS 値を表示する (debug helper)", () => {
-    // STALE_SECS を表示すると Codex review M5 の混同に逆戻りするため、
+    // STALE_SECS を表示すると stale 閾値と timeout 値の混同に逆戻りするため、
     // timeout 値は DEADLINE_SECS であることを caller に明示。
     expect(content).toMatch(/timed out after \$\{DEADLINE_SECS\}s/);
   });
 
-  it("stale reap が pid liveness check (kill -0) で active worker を保護する (Codex Phase 7 M2)", () => {
+  it("stale reap が pid liveness check (kill -0) で active worker を保護する", () => {
     // Stale reap の TOCTOU race 対策: marker file の mtime が STALE_SECS を
     // 超えていても、owning pid が `kill -0` で生存確認できる場合は slot を
     // reap しない。長い Codex review (>30 min) で blocked な worker の slot
@@ -3497,7 +3498,7 @@ describe("scripts/codex-semaphore.sh — 9g 案 C 実装本体", () => {
   });
 });
 
-describe("agents/codex-sync.md — output-file marker の regex narrowing (Codex Phase 7 m1)", () => {
+describe("agents/codex-sync.md — output-file marker の regex narrowing", () => {
   const content = readAgent("codex-sync");
 
   it("marker 内 path は printable chars のみ受理 (control chars / null byte 拒否)", () => {
@@ -3510,7 +3511,7 @@ describe("agents/codex-sync.md — output-file marker の regex narrowing (Codex
   });
 });
 
-describe("commands/parallel-worktree.md — semaphore 不在時 WARN message 明示化 (Codex Phase 7 M3)", () => {
+describe("commands/parallel-worktree.md — semaphore 不在時 WARN message 明示化", () => {
   const content = readCommand("parallel-worktree");
 
   it("WARN message が 'install ... codex-semaphore.sh' に言及 (operator が修復可能)", () => {
@@ -3522,12 +3523,12 @@ describe("commands/parallel-worktree.md — semaphore 不在時 WARN message 明
   });
 });
 
-describe("commands/parallel-worktree.md — semaphore 不在時の silent fallback ガード (Codex review C3)", () => {
+describe("commands/parallel-worktree.md — semaphore 不在時の silent fallback ガード", () => {
   const content = readCommand("parallel-worktree");
 
   it("MAX_PAR > 1 で SEM_BIN 不在の場合 fatal exit する旨を spec 化", () => {
-    // 9g の主題 (subagent context overflow) を silent fallback で再発させない:
-    // semaphore 不在 + 並列 > 1 は ERROR + exit 1。
+    // subagent context overflow を silent fallback で再発させないため、
+    // semaphore 不在 + 並列 > 1 は ERROR + exit 1 を強制。
     expect(content).toMatch(/MAX_PAR.*-gt\s*1[\s\S]{0,400}exit\s+1/);
     expect(content).toMatch(/refusing\s+to\s+fall\s+back|context\s+overflow\s+risk/i);
   });
@@ -3535,12 +3536,12 @@ describe("commands/parallel-worktree.md — semaphore 不在時の silent fallba
   it("MAX_PAR == 1 で SEM_BIN 不在の場合は WARN + continue (sequential は安全)", () => {
     // sequential (default) で semaphore が無いのは致命傷ではない (overflow しない)。
     // WARN message は "honored as sequential" の文言で sequential degrade を明示
-    // (Codex Phase 7 M3 で文言拡張済 — install 手段も併記)。
+    // し、install 手段も併記する不変条件。
     expect(content).toMatch(/WARN[\s\S]{0,400}honored\s+as\s+sequential/i);
   });
 });
 
-describe("commands/pseudo-coderabbit-loop.md — --max-codex-parallel が現状 no-op であることの明示 (Codex review C4)", () => {
+describe("commands/pseudo-coderabbit-loop.md — --max-codex-parallel が現状 no-op であることの明示", () => {
   const content = readCommand("pseudo-coderabbit-loop");
 
   it("spec 内で no-op と明示 (誤誘導防止)", () => {
@@ -3551,13 +3552,13 @@ describe("commands/pseudo-coderabbit-loop.md — --max-codex-parallel が現状 
   });
 });
 
-describe("agents/codex-sync.md — output file-redirect の PROMPT_FILE materialize (Codex review C2)", () => {
+describe("agents/codex-sync.md — output file-redirect の PROMPT_FILE materialize", () => {
   const content = readAgent("codex-sync");
 
   it("redirect mode の invocation snippet が mktemp で PROMPT_FILE を materialize する", () => {
-    // Codex review C2: snippet 内で `node ... --prompt-file "$PROMPT_FILE"` を
-    // 呼ぶ前に PROMPT_FILE が必ず作られていること (未定義変数による silent
-    // empty file 渡し → Codex 即時失敗を防ぐ)。
+    // snippet 内で `node ... --prompt-file "$PROMPT_FILE"` を呼ぶ前に
+    // PROMPT_FILE が必ず作られていること (未定義変数による silent empty
+    // file 渡し → Codex 即時失敗を防ぐ)。
     expect(content).toMatch(/PROMPT_FILE=\s*"?\$\(\s*mktemp[\s\S]{0,100}codex-prompt/);
     expect(content).toMatch(/printf\s+'%s'\s+"\$PROMPT_BODY"\s+>\s+"\$PROMPT_FILE"/);
   });
